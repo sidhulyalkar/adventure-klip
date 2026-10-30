@@ -159,3 +159,34 @@ def test_edits_downrank_scene_hypotheses_but_not_hard_exclude(tmp_path,monkeypat
         assert all(c["lowValueContext"]["supportedFraction"]>.25 for c in candidates)
         assert all(c["requiresReview"] for c in candidates)
     assert p.read_bytes()==b"original"
+
+
+
+def test_mark_appends_and_preserves_review_history(tmp_path,monkeypatch):
+    from adventure_intelligence.curation import append_review_label
+    from adventure_intelligence.cli import main
+    folder=tmp_path/"original";folder.mkdir()
+    src=folder/"DJI-0001.MP4"
+    src.write_bytes(b"original bytes")
+    monkeypatch.setattr("adventure_intelligence.indexing.probe",
+                        lambda p:{"duration":25,"audio":False})
+    work=tmp_path/"workspace"
+    asset=index_folder(folder,work,activity="ski")["asset_ids"][0]
+    first=append_review_label(work,asset,"ski_lift",2.,7.,note="on chairlift")
+    second=append_review_label(work,asset,"fall",14.,15.5,note="fell after a turn")
+    assert first["eventId"]!=second["eventId"]
+    with connect(work) as db:
+        events=list(db.execute("SELECT id,kind FROM events WHERE origin='manual'"))
+        assert {r["kind"] for r in events}=={"ski_lift","fall"}
+        assert {r["id"] for r in events}=={first["eventId"],second["eventId"]}
+        assert db.execute("SELECT COUNT(*) FROM episodes WHERE kind='incident_review'").fetchone()[0]==1
+    result=write_diagnostics(work,asset_id=asset)
+    payload=json.loads(Path(result["paths"][0]["json"]).read_text())
+    assert len(payload["reviewedIncidents"])==1
+    assert any(o["category"]=="technique_review" for o in payload["overlays"])
+    assert src.read_bytes()==b"original bytes"
+    with pytest.raises(ValueError,match="already labeled"):
+        append_review_label(work,asset,"fall",14.,15.5)
+    assert main(["--workspace",str(work),"mark",asset,"--kind","crash",
+                 "--start","-1","--end","2"])==2
+    assert src.read_bytes()==b"original bytes"
