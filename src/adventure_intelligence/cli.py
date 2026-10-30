@@ -22,6 +22,7 @@ from .storyboard import plan_storyboard
 from .process import process_folder
 from .history import event_history
 from .safety import protect_source_output
+from .progress import Progress
 
 
 def _print(data):
@@ -54,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     process.add_argument('--allow-removable',action='store_true')
     process.add_argument('--semantic-backend',choices=['histogram','siglip2','owlv2','stack'])
     process.add_argument('--every',type=float,default=4.0)
+    process.add_argument('--no-progress',action='store_true',help='Hide live progress messages on stderr')
+    process.add_argument('--log-file',type=Path,help='Also append progress messages to this file')
     history=sub.add_parser('history',help='Inspect immutable event revisions and review decisions')
     history.add_argument('asset_id')
     imp=sub.add_parser("ingest",help="Copy and verify camera files without modifying the card")
@@ -117,9 +120,14 @@ def main(argv: list[str] | None = None) -> int:
                 pass
             _print({"workspace":str(root),"state":"initialized"})
         elif args.command=='process':
+            if args.log_file is not None:
+                with connect(root) as db:
+                    protect_source_output(db, args.log_file)
+            progress=None if args.no_progress else Progress(log_file=args.log_file)
             result=process_folder(args.source,root,activity=args.activity,
                                   detector=args.detector,allow_removable=args.allow_removable,
-                                  semantic_backend=args.semantic_backend,sample_seconds=args.every)
+                                  semantic_backend=args.semantic_backend,sample_seconds=args.every,
+                                  progress=progress)
             _print(result)
             return 0 if result['status']=='completed' else 1
         elif args.command=="ingest":
