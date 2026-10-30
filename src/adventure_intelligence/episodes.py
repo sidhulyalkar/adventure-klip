@@ -84,6 +84,16 @@ def build_episodes(asset_id: str, events: list[dict], duration_ms: int = 0) -> l
         for group in _groups(matches,15000):
             if len(group)>=2:
                 out.append(_make(asset_id,"wildlife_encounter",group,{"subject_id":subject}))
+    # Only a human-authored crash/near-miss label can create an incident
+    # episode; camera shake and optical flow never create a verified crash.
+    manual_incident_kinds={"crash","fall","wipeout","near_miss",
+                           "unstable_landing","loss_of_control"}
+    for e in events:
+        if e.get("origin")=="manual" and e["kind"] in manual_incident_kinds:
+            out.append(_make(asset_id, "incident_review", [e],
+                             {"requires_review": True,
+                              "source": "manual_event_label",
+                              "kind": e["kind"]}))
     # The full recording is not automatically called a downhill run.
     if events and duration_ms>0:
         summary=_make(asset_id,"recording_summary",events,
