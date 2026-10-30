@@ -3,9 +3,9 @@ from pathlib import Path
 from .ingest import sha_file
 
 
-def verified_digest(path: Path) -> str:
+def verified_digest(path: Path, progress=None) -> str:
     before = path.stat()
-    digest = sha_file(path)
+    digest = sha_file(path, progress=progress)
     after = path.stat()
     fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
     if any(getattr(before, field) != getattr(after, field) for field in fields):
