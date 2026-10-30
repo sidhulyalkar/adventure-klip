@@ -73,6 +73,59 @@ class SiglipProvider:
                 'objects':[],'keypoints':[], 'notes':['Image-text embedding, not object recognition']}
 
 
+
+SCENE_PROMPTS = {
+    "submerged": "First-person action camera filming fully submerged underwater in a clear coral reef, fish and underwater scenery visible.",
+    "at_surface": "First-person snorkeling camera at the ocean surface, waterline, breaking waves, splashes and air visible.",
+    "ski_downhill": "First-person action camera descending a snowy ski slope, traveling downhill between snow-covered trees.",
+    "ski_lift": "First-person video riding on a chairlift or gondola above the ski slope, seated looking at mountains.",
+    "bike_riding": "First-person action camera riding a mountain bike on a dirt trail through a forest.",
+    "bike_stopped": "First-person mountain biking camera stopped beside a trail, standing still with a bike."
+}
+
+
+class ContextProvider(SiglipProvider):
+    """Opt-in text-image scene-state *similarities*, not calibrated probabilities.
+
+    Suitable for provisional submersion / chairlift / stationary context. Image
+    and text embeddings share one frozen model, and prompts are versioned in the
+    cache config. Real DJI qualification is required before auto-rejecting shots.
+    """
+    name = 'context'
+
+    def __init__(self, model_id: str = 'google/siglip2-base-patch16-224'):
+        super().__init__(model_id)
+        self.cache_config = {**self.cache_config, 'prompts': SCENE_PROMPTS,
+                             'purpose': 'relative_scene_similarity_v1'}
+        prompts = list(SCENE_PROMPTS.values())
+        inputs = self.processor(text=prompts, padding='max_length',
+                                truncation=True, return_tensors='pt').to(self.device)
+        with self.torch.inference_mode():
+            vectors = self.model.get_text_features(**inputs)
+            if hasattr(vectors, 'pooler_output'):
+                vectors = vectors.pooler_output
+            self.text_vectors = self.torch.nn.functional.normalize(vectors, dim=-1)
+
+    def describe(self, image_bytes: bytes) -> dict:
+        from PIL import Image
+        import io
+        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        inputs = self.processor(images=image, return_tensors='pt').to(self.device)
+        with self.torch.inference_mode():
+            vector = self.model.get_image_features(**inputs)
+            if hasattr(vector, 'pooler_output'):
+                vector = vector.pooler_output
+            vector = self.torch.nn.functional.normalize(vector, dim=-1)
+            similarities = (vector @ self.text_vectors.T).squeeze(0).float().cpu().tolist()
+        return {'embedding': None, 'objects': [], 'keypoints': [],
+                'sceneScores': {
+                    'method': 'siglip2_image_text_cosine',
+                    'similarities': {name: round(float(value), 6)
+                                     for name, value in zip(SCENE_PROMPTS, similarities)},
+                    'status': 'uncalibrated_hypotheses',
+                },
+                'notes': ['Text-image similarity, not a validated scene classifier']}
+
 class OwlProvider:
     """Optional open-vocabulary detection on sampled frames; scores need validation."""
     name='owlv2'
@@ -133,13 +186,15 @@ def generate_semantics(workspace:Path,*,backend:str='histogram',
         provider=SiglipProvider()
     elif backend=='owlv2':
         provider=OwlProvider()
+    elif backend=='context':
+        provider=ContextProvider()
     elif backend=='stack':
         stack=[SiglipProvider(),OwlProvider()]
         if pose_model is not None:
             stack.append(PoseProvider(pose_model))
         provider=SceneStack(stack)
     else:
-        raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, stack')
+        raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, context, stack')
     from .semantic_jobs import run_semantics
     return run_semantics(workspace,provider,sample_seconds=sample_seconds,limit=limit,
                          max_frames=max_frames,asset_ids=asset_ids,progress=progress)
