@@ -23,6 +23,8 @@ from .process import process_folder
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
+from .acoustics import analyze_audio
+from .submersion import continuity_report
 
 
 def _print(data):
@@ -53,8 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     process.add_argument('--activity',choices=['unknown','ski','bike','snorkeling'],default='unknown')
     process.add_argument('--detector',choices=['baseline','flow'],default='baseline')
     process.add_argument('--allow-removable',action='store_true')
-    process.add_argument('--semantic-backend',choices=['histogram','siglip2','owlv2','stack'])
+    process.add_argument('--semantic-backend',choices=['histogram','siglip2','owlv2','context','stack'])
     process.add_argument('--every',type=float,default=4.0)
+    process.add_argument('--audio-evidence',action='store_true',help='Extract audio-change evidence without inferring breathing')
     process.add_argument('--no-progress',action='store_true',help='Hide live progress messages on stderr')
     process.add_argument('--log-file',type=Path,help='Also append progress messages to this file')
     history=sub.add_parser('history',help='Inspect immutable event revisions and review decisions')
@@ -72,10 +75,13 @@ def main(argv: list[str] | None = None) -> int:
     timeline.add_argument("--source",choices=["pixel-change","optical-flow"],default="pixel-change")
     timeline.add_argument("--bin-ms",type=int,default=2000)
     scene=sub.add_parser("scenes",help="Extract optional sparse image embeddings / detections")
-    scene.add_argument("--backend",choices=["histogram","siglip2","owlv2","stack"],default="histogram")
+    scene.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],default="histogram")
     scene.add_argument("--every",type=float,default=4.0)
     scene.add_argument("--limit",type=int)
     scene.add_argument("--pose-model",type=Path)
+    audio=sub.add_parser('acoustics',help='Extract acoustic-change evidence from indexed videos')
+    audio.add_argument('--limit',type=int)
+    sub.add_parser('continuity',help='Review proposed continuous underwater filming intervals')
     proc=sub.add_parser("analyze",help="Compute low-resolution motion proposals (baseline or optical flow)")
     proc.add_argument("--limit",type=int)
     proc.add_argument("--force",action="store_true")
@@ -97,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--seconds",type=int,default=75)
     plan.add_argument("--output",type=Path)
     plan.add_argument("--style",choices=["chronological","crescendo"],default="chronological")
+    plan.add_argument('--ranking',choices=['legacy','context'],default='legacy')
+    plan.add_argument('--context-policy',choices=['suggest','automatic'],default='suggest')
     render=sub.add_parser("render",help="Render a reviewable MP4 from an exported edit plan")
     render.add_argument("plan",type=Path)
     render.add_argument("--output",type=Path,required=True)
@@ -133,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             result=process_folder(args.source,root,activity=args.activity,
                                   detector=args.detector,allow_removable=args.allow_removable,
                                   semantic_backend=args.semantic_backend,sample_seconds=args.every,
-                                  progress=progress)
+                                  progress=progress,audio_evidence=args.audio_evidence)
             _print(result)
             return 0 if result['status']=='completed' else 1
         elif args.command=="ingest":
@@ -158,6 +166,14 @@ def main(argv: list[str] | None = None) -> int:
                 _print(result)
                 if result['errors']:
                     return 1
+        elif args.command=='acoustics':
+            with lock_workspace(root):
+                output=analyze_audio(root,limit=args.limit,progress=Progress())
+                _print(output)
+                if output['failed']:
+                    return 1
+        elif args.command=='continuity':
+            _print(continuity_report(root))
         elif args.command=="analyze":
             with lock_workspace(root):
                 result=analyze(root,args.limit,args.force,args.detector)
@@ -181,7 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="review":
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":
-            doc=plan_storyboard(root,args.recipe,args.seconds,args.style)
+            doc=plan_storyboard(root,args.recipe,args.seconds,args.style,
+                                ranking=args.ranking,context_policy=args.context_policy)
             if args.output:
                 with connect(root) as db:
                     protect_source_output(db, args.output)
