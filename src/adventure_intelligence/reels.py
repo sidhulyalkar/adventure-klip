@@ -14,6 +14,7 @@ RECIPES={
     "ski-highlights":{"activity":"ski","kinds":{"jump_chain":1.0,"carving_flow":0.9,"tree_weaving":0.9,"technical_feature_chain":0.85,"active_sequence":0.25,"camera_rhythm_candidate":0.17,"sustained_motion_candidate":0.12}},
     "bike-highlights":{"activity":"bike","kinds":{"technical_feature_chain":1.0,"active_sequence":0.35,"camera_rhythm_candidate":0.17,"sustained_motion_candidate":0.12}},
     "snorkel-discoveries":{"activity":"snorkeling","kinds":{"wildlife_encounter":1.0,"active_sequence":0.2,"sustained_motion_candidate":0.10}},
+    "incident-review":{"activity":None,"kinds":{"incident_review":1.0}},
     "best-sequences":{"activity":None,"kinds":{"jump_chain":1.0,"carving_flow":1.0,"tree_weaving":1.0,"technical_feature_chain":1.0,"wildlife_encounter":1.0,"active_sequence":0.5,"camera_rhythm_candidate":0.18,"sustained_motion_candidate":0.12}},
 }
 
