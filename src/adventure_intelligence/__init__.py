@@ -1,2 +1,2 @@
 """Adventure Intelligence, a local-first adventure video processing toolkit."""
-__version__ = "0.3.2"
+__version__ = "0.3.3"
