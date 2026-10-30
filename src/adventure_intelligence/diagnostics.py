@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .catalog import connect
 from .editorial_quality import _scene_frames, raw_motion_for_asset
+from .artifacts import read_artifact
+from .acoustics import AUDIO_VERSION, acoustic_changes
 from .review_signals import diagnostic_summary
 from .safety import protect_source_output
 
@@ -27,8 +29,11 @@ def diagnostics_for_workspace(workspace: Path, *, asset_id: str | None = None) -
             events = [dict(e) for e in db.execute(
                 "SELECT id,origin,kind,start_ms,end_ms,score FROM events "
                 "WHERE asset_id=? ORDER BY start_ms", (row["id"],))]
+            wave = read_artifact(db, workspace, row["id"], AUDIO_VERSION)
+            sound = acoustic_changes(wave["series"]) if wave else []
             doc = diagnostic_summary(dict(row), _scene_frames(db,workspace,row["id"]),
-                                     raw_motion_for_asset(db,workspace,row["id"]), events)
+                                     raw_motion_for_asset(db,workspace,row["id"]), events,
+                                     acoustic_transients=sound)
             assets.append(doc)
     return {"schemaVersion": 1, "assets": assets, "privacy": "local_review_only"}
 
