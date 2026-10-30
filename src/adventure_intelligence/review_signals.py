@@ -216,7 +216,9 @@ def review_cues(activity: str, states: list[dict], disturbances: list[dict],
     for event in disturbances:
         cues.append({
             "startMs": event["startMs"], "endMs": event["endMs"],
-            "title": "Camera jolt followed by a pause",
+            "title": ("Camera jolt with acoustic change" if
+                      event["evidence"].get("acousticTransientNearJolt")
+                      else "Camera jolt followed by a pause"),
             "category": "incident_review",
             "message": "Inspect whether this was a maneuver, fall, camera pan or ordinary filming interruption.",
             "status": "unverified", "evidence": event["evidence"],
@@ -235,11 +237,25 @@ def review_cues(activity: str, states: list[dict], disturbances: list[dict],
 
 
 def diagnostic_summary(asset: dict, frames: list[dict],
-                       series: list[dict], events: list[dict]) -> dict:
+                       series: list[dict], events: list[dict],
+                       acoustic_transients: list[dict] | None = None) -> dict:
     activity = asset["activity"]
     duration_ms = int((asset["duration"] or 0) * 1000)
     states = context_intervals(frames, activity, duration_ms)
     disturbances = disturbance_proposals(series, duration_ms)
+    acoustic_transients = acoustic_transients or []
+    for item in disturbances:
+        jolt = item["evidence"]["joltTimeMs"]
+        coincident = [
+            e for e in acoustic_transients
+            if abs(int(e["startMs"])-jolt) <= 1750
+        ]
+        item["evidence"]["acousticTransientNearJolt"] = bool(coincident)
+        item["evidence"]["acousticTransientCount"] = len(coincident)
+        item["evidence"]["acousticCaveat"] = (
+            "Possible impact sound, movement, environment or microphone noise; "
+            "never a confirmed crash"
+        )
     incidents = manual_incident_reviews(events, duration_ms)
     return {
         "schemaVersion": 1, "algorithm": VERSION,
