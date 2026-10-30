@@ -72,5 +72,9 @@ class Progress:
         if done < total and now - last < self.interval_seconds:
             return
         self._last_updates[stage] = now
-        self.emit(f"{stage}: {label}: {done}/{total} sampled frame(s)")
+        elapsed = now - self.started.setdefault(stage, now)
+        eta = elapsed / done * max(0, total - done) if done else None
+        self.emit(f"{stage}: {label}: {done}/{total} decoded frame(s) | "
+                  f"elapsed {self._duration(elapsed)} | "
+                  f"stage ETA {self._duration(eta)}")
 
