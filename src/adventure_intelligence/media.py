@@ -31,7 +31,8 @@ def probe(path: Path) -> dict:
 
 
 def motion_series(path: Path, fps: int = 2, width: int = 64, height: int = 36,
-                  max_seconds: float | None = None) -> list[dict]:
+                  max_seconds: float | None = None, progress=None,
+                  total_seconds: float | None = None) -> list[dict]:
     """Mean absolute inter-frame pixel change; camera motion and cuts confound this signal.
 
     Bounded RAM, streaming decoder. Time approximated by uniform fps; this is a proposal
@@ -60,6 +61,11 @@ def motion_series(path: Path, fps: int = 2, width: int = 64, height: int = 36,
                 result.append({"t_ms":int(round(index*1000/fps)),"change":round(delta,6)})
             previous = frame
             index += 1
+            if progress is not None:
+                import math
+                seconds = max_seconds if max_seconds is not None else total_seconds
+                expected = max(index, math.ceil(seconds * fps)) if seconds is not None else index
+                progress(index, expected)
     finally:
         proc.stdout.close()
         code = proc.wait(timeout=60)
