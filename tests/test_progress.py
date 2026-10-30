@@ -55,7 +55,7 @@ def test_process_progress_does_not_change_source_and_stdout_is_json(tmp_path, ca
                    "--activity", "ski", "--detector", "flow",
                    "--log-file", str(log_file)])
     streams = capsys.readouterr()
-    assert status == 0
+    assert status == 0, f'stdout={streams.out!r}; stderr={streams.err!r}'
     doc = json.loads(streams.out)
     assert doc["status"] == "completed"
     assert "[klip] index:" in streams.err
