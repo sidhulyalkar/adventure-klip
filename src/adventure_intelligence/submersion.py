@@ -101,3 +101,34 @@ def continuous_underwater_intervals(samples: list[dict], *, duration_ms: int,
             "warning": "Not verified submersion and not a breathing assessment",
         })
     return result
+
+
+def continuity_report(workspace) -> dict:
+    """Read existing cached audio/context evidence; never decode or alter sources."""
+    from .catalog import connect
+    from .artifacts import read_artifact
+    from .acoustics import AUDIO_VERSION, acoustic_changes
+    from .editorial_quality import _scene_frames
+    results = []
+    with connect(workspace) as db:
+        for asset in db.execute("SELECT id,duration FROM assets WHERE activity='snorkeling'"):
+            aid = asset["id"]
+            frames = _scene_frames(db, workspace, aid)
+            samples = submersion_samples(frames)
+            intervals = continuous_underwater_intervals(
+                samples, duration_ms=int((asset["duration"] or 0)*1000))
+            audio = read_artifact(db, workspace, aid, AUDIO_VERSION)
+            transients = acoustic_changes(audio["series"]) if audio else []
+            for interval in intervals:
+                interval["acousticTransients"] = [
+                    e for e in transients
+                    if e["startMs"] < interval["endMs"] and
+                       interval["startMs"] < e["endMs"]]
+            results.append({
+                "assetId": aid, "sampledSceneFrames": len(samples),
+                "audioAvailable": bool(audio and audio["series"]),
+                "intervals": intervals,
+                "status": "candidate_only",
+            })
+    return {"algorithm": "visual_submersion_v1", "assets": results,
+            "interpretation": "Filming continuity, not a breathing or health assessment"}
