@@ -13,11 +13,18 @@ SIDECAR_EXT = {".lrf", ".srt", ".thm", ".jpg", ".xml"}
 CHUNK = 4 * 1024 * 1024
 
 
-def sha_file(path: Path) -> str:
+def sha_file(path: Path, progress=None) -> str:
     hasher = hashlib.sha256()
+    total = path.stat().st_size
+    done = 0
     with path.open("rb") as stream:
         for piece in iter(lambda: stream.read(CHUNK), b""):
             hasher.update(piece)
+            done += len(piece)
+            if progress is not None:
+                progress(done, total)
+    if progress is not None and total == 0:
+        progress(0, 0)
     return hasher.hexdigest()
 
 
