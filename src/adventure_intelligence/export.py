@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from .catalog import connect
 from .sources import resolve_source
+from .safety import protect_source_output
 
 
 def _public_url(url: str) -> bool:
@@ -20,6 +21,7 @@ def export_manifest(workspace: Path, output: Path, media_map: Path | None = None
     if not isinstance(mapping,dict):
         raise ValueError("media-map must be a JSON object keyed by asset id")
     with connect(workspace) as db:
+        protect_source_output(db, output)
         approved=db.execute("""SELECT b.*,e.asset_id,e.kind,e.start_ms,e.end_ms,
            e.confidence, a.activity FROM bindings b JOIN events e ON e.id=b.event_id
            JOIN assets a ON a.id=e.asset_id WHERE b.review_state='approved'

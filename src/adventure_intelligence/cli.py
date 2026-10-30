@@ -21,6 +21,7 @@ from .semantic import generate_semantics
 from .storyboard import plan_storyboard
 from .process import process_folder
 from .history import event_history
+from .safety import protect_source_output
 
 
 def _print(data):
@@ -168,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="plan":
             doc=plan_storyboard(root,args.recipe,args.seconds,args.style)
             if args.output:
+                with connect(root) as db:
+                    protect_source_output(db, args.output)
                 args.output.parent.mkdir(parents=True,exist_ok=True)
                 args.output.write_text(json.dumps(doc,indent=2)+"\n")
             _print(doc)
