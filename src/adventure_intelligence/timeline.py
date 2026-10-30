@@ -12,7 +12,7 @@ from .artifacts import read_artifact
 from .sources import resolve_source
 from .semantic_jobs import completed_document
 
-VERSION='timeline-v1'
+VERSION='timeline-pts-v2'
 
 
 def robust_scale(values: list[float]) -> tuple[float,float]:
@@ -104,22 +104,41 @@ def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=
                     if description is None:
                         continue
                     semantic_file=Path(job['filename'])
-                    for frame in description.get('frames',[]):
-                        # Assign sparse descriptions to the one timeline bin containing the frame.
-                        t=frame.get('tMs',-1)
-                        if t<0 or t>=document['durationMs']:
+                    tracking=description.get('tracking',{})
+                    if isinstance(tracking,dict) and tracking.get('tracks'):
+                        document.setdefault('semanticTracks',[]).extend(
+                            {'semanticFile':semantic_file.name,**track}
+                            for track in tracking['tracks'])
+                    for frame_index,frame in enumerate(description.get('frames',[])):
+                        # Prefer measured source PTS when it belongs to the video-local
+                        # timeline. Preserve the requested seek even when PTS is usable.
+                        requested=frame.get('requestedMs',frame.get('tMs',-1))
+                        observed=frame.get('decodedPtsMs')
+                        use_observed=(isinstance(observed,int) and not isinstance(observed,bool)
+                                      and 0<=observed<document['durationMs'])
+                        t=observed if use_observed else requested
+                        if not isinstance(t,int) or t<0 or t>=document['durationMs']:
                             continue
-                        bin_index=int(t//bin_ms)
+                        basis=('decoded_frame_pts' if use_observed
+                               else 'requested_seek_fallback')
+                        timing={'tMs':t,'requestedMs':requested,
+                                'decodedPtsMs':observed,
+                                'ptsTimeBase':frame.get('ptsTimeBase'),
+                                'timestampBasis':basis}
+                        bin_index=t//bin_ms
                         bin_record=document['bins'][bin_index]
                         bin_record['semanticRef']=semantic_file.name
-                        bin_record.setdefault('semanticRefs',[]).append(semantic_file.name)
+                        refs=bin_record.setdefault('semanticRefs',[])
+                        if semantic_file.name not in refs:
+                            refs.append(semantic_file.name)
                         for obj in frame.get('objects',[]):
-                            bin_record['objects'].append({'tMs':t,**obj})
+                            bin_record['objects'].append({**timing,**obj})
                         for joint in frame.get('keypoints',[]):
-                            bin_record['keypoints'].append({'tMs':t,**joint})
+                            bin_record['keypoints'].append({**timing,**joint})
                         if frame.get('embedding') is not None:
-                            bin_record.setdefault('embeddingFrames',[]).append({'tMs':t,
-                                'semanticFile':semantic_file.name,'frameIndex':description['frames'].index(frame)})
+                            bin_record.setdefault('embeddingFrames',[]).append({
+                                **timing,'semanticFile':semantic_file.name,
+                                'frameIndex':frame_index})
             folder=workspace/'timelines' 
             folder.mkdir(exist_ok=True,parents=True)
             output=folder/f'{aid}-{source}-{bin_ms}.json'
