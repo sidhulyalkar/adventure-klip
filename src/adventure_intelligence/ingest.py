@@ -105,9 +105,17 @@ def ingest(source: Path, workspace: Path, *, activity: str = "unknown",
                 known = db.execute("""SELECT i.asset_id,i.size_bytes,i.mtime_ns,i.quick_signature,
                       a.stored_path FROM imports i JOIN assets a ON a.id=i.asset_id
                       WHERE i.source_key=? ORDER BY i.imported_at DESC""", (key,)).fetchall()
-                if any(k["size_bytes"]==st.st_size and k["mtime_ns"]==st.st_mtime_ns and
-                       k["quick_signature"]==signature and Path(k["stored_path"]).is_file()
-                       for k in known):
+                verified = next((k for k in known if
+                       k["size_bytes"]==st.st_size and k["mtime_ns"]==st.st_mtime_ns and
+                       k["quick_signature"]==signature and
+                       Path(k["stored_path"]).resolve().is_relative_to(workspace/"originals") and
+                       Path(k["stored_path"]).is_file() and
+                       sha_file(Path(k["stored_path"])) == k["asset_id"] and
+                       sha_file(p) == k["asset_id"]), None)
+                if verified is not None:
+                    # A prior video import may have been interrupted before its sidecars.
+                    stats["sidecars"] += import_sidecars(p, workspace/"sidecars"/verified["asset_id"],
+                                                        workspace/"staging")
                     stats["skipped"] += 1
                     continue
                 # Copy to content-addressed path using a temporary file.
@@ -132,9 +140,14 @@ def ingest(source: Path, workspace: Path, *, activity: str = "unknown",
                     # Assets use the digest as id across file extensions.
                     existing = db.execute("SELECT stored_path FROM assets WHERE id=?", (digest,)).fetchone()
                     if existing:
-                        target = Path(existing["stored_path"])
-                        if not target.is_file() or sha_file(target) != digest:
-                            raise IOError(f"Cataloged asset is missing or corrupt: {target}")
+                        # Indexing may point at a removable source. Import must install
+                        # a verified managed copy even when the content is already known.
+                        if dest.exists() and sha_file(dest) != digest:
+                            raise IOError(f"Managed destination checksum mismatch: {dest}")
+                        if not dest.exists():
+                            os.replace(temp_path, dest)
+                        target = dest
+                        db.execute("UPDATE assets SET stored_path=? WHERE id=?", (str(dest),digest))
                         stats["duplicates"] += 1
                     else:
                         os.replace(temp_path, dest)
