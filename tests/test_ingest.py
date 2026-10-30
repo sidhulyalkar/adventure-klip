@@ -54,3 +54,69 @@ def test_symlink_video_is_skipped(tmp_path, fake_probe):
     secret=tmp_path/"secret.mp4";secret.write_bytes(b"not from card")
     (source/"DJI_0001.mp4").symlink_to(secret)
     assert ingest(source,tmp_path/"work")["discovered"]==0
+
+
+@pytest.mark.parametrize('same_path', [True, False])
+def test_index_then_import_survives_source_removal(tmp_path, fake_probe, same_path):
+    from adventure_intelligence.indexing import index_folder
+    source = tmp_path/'indexed'; source.mkdir()
+    video = source/'DJI_0001.mp4'; video.write_bytes(b'precious footage')
+    root = tmp_path/'work'
+    assert index_folder(source, root)['indexed'] == 1
+    card = source
+    if not same_path:
+        card = tmp_path/'card'; card.mkdir()
+        (card/video.name).write_bytes(video.read_bytes())
+    result = ingest(card, root)
+    assert result['errors'] == []
+    assert result['imported'] == 1
+    video.unlink()
+    if not same_path:
+        (card/video.name).unlink()
+    with connect(root) as db:
+        row = db.execute('SELECT * FROM assets').fetchone()
+        stored = Path(row['stored_path'])
+        assert stored.is_relative_to(root/'originals')
+        assert sha_file(stored) == row['id']
+
+
+def test_repeat_import_recovers_late_sidecar(tmp_path, fake_probe):
+    card = tmp_path/'card'; card.mkdir()
+    (card/'DJI_0001.mp4').write_bytes(b'video')
+    root = tmp_path/'work'
+    assert ingest(card, root)['imported'] == 1
+    (card/'DJI_0001.srt').write_bytes(b'telemetry')
+    result = ingest(card, root)
+    assert result['skipped'] == 1 and result['sidecars'] == 1
+    assert result['errors'] == []
+
+
+def test_repeat_import_does_not_accept_corrupt_managed_video(tmp_path, fake_probe):
+    card = tmp_path/'card'; card.mkdir()
+    video = card/'DJI_0001.mp4'; video.write_bytes(b'original')
+    root = tmp_path/'work'
+    ingest(card, root)
+    with connect(root) as db:
+        stored = Path(db.execute('SELECT stored_path FROM assets').fetchone()[0])
+    stored.write_bytes(b'corrupted')
+    result = ingest(card, root)
+    assert result['skipped'] == 0 and len(result['errors']) == 1
+    assert video.read_bytes() == b'original'
+    assert stored.read_bytes() == b'corrupted'  # Preserve evidence; never overwrite silently.
+
+
+def test_reused_filename_changed_middle_preserved_mtime(tmp_path, fake_probe):
+    import os
+    card = tmp_path/'card'; card.mkdir()
+    video = card/'DJI_0001.mp4'
+    video.write_bytes(b'a' * (3*1024*1024))
+    root = tmp_path/'work'
+    ingest(card, root)
+    before = video.stat()
+    with video.open('r+b') as handle:
+        handle.seek(1500000); handle.write(b'b')
+    os.utime(video, ns=(before.st_atime_ns, before.st_mtime_ns))
+    result = ingest(card, root)
+    assert result['imported'] == 1 and result['errors'] == []
+    with connect(root) as db:
+        assert db.execute('SELECT COUNT(*) FROM assets').fetchone()[0] == 2
