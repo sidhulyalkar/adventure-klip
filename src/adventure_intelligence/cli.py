@@ -121,6 +121,12 @@ def main(argv: list[str] | None = None) -> int:
             _print({"workspace":str(root),"state":"initialized"})
         elif args.command=='process':
             if args.log_file is not None:
+                if args.no_progress:
+                    raise ValueError('--log-file cannot be combined with --no-progress')
+                source=args.source.expanduser().resolve()
+                log_path=args.log_file.expanduser().resolve()
+                if log_path.is_relative_to(source):
+                    raise ValueError('Log file cannot be inside the input media folder')
                 with connect(root) as db:
                     protect_source_output(db, args.log_file)
             progress=None if args.no_progress else Progress(log_file=args.log_file)
