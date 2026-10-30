@@ -23,7 +23,7 @@ def protect_source_output(db, output: Path) -> Path:
         source = Path(row[0]).expanduser().resolve()
         if target == source or target.is_relative_to(source.parent):
             raise ValueError(
-                "Output is inside an indexed source-media directory. "
+                "Output cannot overwrite a source video or write inside an indexed source-media directory. "
                 "Save generated files in ~/AdventureAI/exports or ~/AdventureAI/reels."
             )
     return target
