@@ -32,7 +32,7 @@ def completed_document(workspace, job):
         return None
 
 
-def frame_descriptor(provider, raw, t):
+def frame_descriptor(provider, raw, t, timing=None):
     description = provider.describe(raw)
     vector = description.get('embedding')
     if vector is not None:
@@ -49,7 +49,11 @@ def frame_descriptor(provider, raw, t):
     keypoints=description.get('keypoints',[])
     if not isinstance(objects,list) or not isinstance(keypoints,list):
         raise ValueError('Objects and keypoints must be lists')
-    result={'tMs':t,'timestampBasis':'requested_seek_not_measured_pts',
+    result={'tMs':t,'requestedMs':t,
+            'timestampBasis':(timing or {}).get('timestampBasis','requested_seek_pts_unavailable'),
+            'decodedPts':(timing or {}).get('decodedPts'),
+            'ptsTimeBase':(timing or {}).get('ptsTimeBase'),
+            'decodedPtsMs':(timing or {}).get('decodedPtsMs'),
             'embedding':vector,'embeddingInfo':vector_info,
             'objects':[{**obj,'reviewed':False} for obj in objects],
             'keypoints':[{**point,'reviewed':False} for point in keypoints],
@@ -72,7 +76,7 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
     config={'sampler':VERSION,'provider':provider.name,'modelVersion':provider.version,
             'providerConfig':getattr(provider,'cache_config',{}),
             'sampleSeconds':sample_seconds,'maxFrames':max_frames,'width':384,
-            'format':'png','schemaVersion':2}
+            'format':'png','schemaVersion':3,'trackerVersion':'mutual-iou-v1'}
     from importlib.metadata import version, PackageNotFoundError
     config['runtimeVersions']={}
     for package in ('pillow','torch','transformers','mediapipe'):
@@ -130,7 +134,13 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                             db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
                             db.commit()
                             raise OSError('Source changed during semantic extraction')
-                        frame=frame_descriptor(provider,frame_png(path,t),t)
+                        decoded=frame_png(path,t,384,True)
+                        if isinstance(decoded,tuple) and len(decoded)==2:
+                            raw_png,timing=decoded
+                        else:
+                            # Compatibility with legacy bytes-only inference providers.
+                            raw_png,timing=decoded,None
+                        frame=frame_descriptor(provider,raw_png,t,timing)
                         after=path.stat()
                         if any(getattr(before,f)!=getattr(after,f) for f in fields):
                             db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
@@ -151,9 +161,12 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                     db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
                     db.commit()
                     raise OSError('Source changed during semantic extraction')
-                doc={'schemaVersion':2,'assetId':aid,'configId':config_id,
+                from .tracking import associate_boxes
+                tracking=associate_boxes(frames)
+                doc={'schemaVersion':3,'assetId':aid,'configId':config_id,
                      'provider':provider.name,'modelVersion':provider.version,
-                     'config':config,'sampleIntervalMs':step,'frames':frames}
+                     'config':config,'sampleIntervalMs':step,'frames':frames,
+                     'tracking':tracking}
                 filename=f'{aid}-{config_id}.json'
                 target=workspace/'semantics'/filename
                 target.parent.mkdir(parents=True,exist_ok=True)
