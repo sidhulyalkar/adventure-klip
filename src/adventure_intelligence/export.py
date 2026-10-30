@@ -4,9 +4,12 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 from .catalog import connect
+from .sources import resolve_source
 
 
 def _public_url(url: str) -> bool:
+    if not isinstance(url,str):
+        return False
     p=urlparse(url)
     return p.scheme=="https" and bool(p.netloc) and not p.username and not p.password
 
@@ -21,6 +24,12 @@ def export_manifest(workspace: Path, output: Path, media_map: Path | None = None
            e.confidence, a.activity FROM bindings b JOIN events e ON e.id=b.event_id
            JOIN assets a ON a.id=e.asset_id WHERE b.review_state='approved'
            ORDER BY b.world_entity_id,b.id""").fetchall()
+        unavailable=set()
+        for aid in {row['asset_id'] for row in approved}:
+            try:
+                resolve_source(db,db.execute('SELECT * FROM assets WHERE id=?',(aid,)).fetchone())
+            except OSError:
+                unavailable.add(aid)
         episodes=list(db.execute("""SELECT e.id,e.asset_id,e.kind,e.start_ms,e.end_ms,e.score,
            e.event_ids_json,a.activity FROM episodes e JOIN assets a ON a.id=e.asset_id
            ORDER BY e.asset_id,e.start_ms"""))
@@ -28,6 +37,9 @@ def export_manifest(workspace: Path, output: Path, media_map: Path | None = None
     missing=[]
     for b in approved:
         asset=b["asset_id"]
+        if asset in unavailable:
+            missing.append({'binding':b['id'],'assetId':asset,'reason':'source unavailable or changed'})
+            continue
         media=mapping.get(asset,{})
         if not isinstance(media,dict) or not _public_url(media.get("src", "")) or not _public_url(media.get("poster", "")):
             missing.append({"binding":b["id"],"assetId":asset,"reason":"missing approved HTTPS media URLs"})

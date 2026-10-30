@@ -10,6 +10,7 @@ from statistics import median
 from .catalog import connect
 from .artifacts import read_artifact
 from .sources import resolve_source
+from .semantic_jobs import completed_document
 
 VERSION='timeline-v1'
 
@@ -98,8 +99,11 @@ def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=
                         b['events'].append({'id':e['id'],'kind':e['kind'],'confidence':e['confidence'],
                                             'score':e['score'],'origin':e['origin']})
             if attach_semantics:
-                for semantic_file in sorted((workspace/'semantics').glob(f'{aid}-*.json')):
-                    description=json.loads(semantic_file.read_text())
+                for job in db.execute("SELECT j.* FROM semantic_jobs j JOIN semantic_active a ON a.asset_id=j.asset_id AND a.config_id=j.config_id WHERE j.asset_id=? AND j.status='completed' ORDER BY a.provider",(aid,)).fetchall():
+                    description=completed_document(workspace,job)
+                    if description is None:
+                        continue
+                    semantic_file=Path(job['filename'])
                     for frame in description.get('frames',[]):
                         # Assign sparse descriptions to the one timeline bin containing the frame.
                         t=frame.get('tMs',-1)
@@ -108,6 +112,7 @@ def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=
                         bin_index=int(t//bin_ms)
                         bin_record=document['bins'][bin_index]
                         bin_record['semanticRef']=semantic_file.name
+                        bin_record.setdefault('semanticRefs',[]).append(semantic_file.name)
                         for obj in frame.get('objects',[]):
                             bin_record['objects'].append({'tMs':t,**obj})
                         for joint in frame.get('keypoints',[]):
