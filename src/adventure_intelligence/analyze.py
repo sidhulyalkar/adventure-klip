@@ -77,7 +77,7 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
             try:
                 if progress is not None:
                     progress.note("analysis", f"[{file_number}/{len(assets)}] checking {asset_id[:12]}")
-                path=resolve_source(db, row)
+                path=resolve_source(db, row, progress=progress)
                 if not row['duration'] or row['duration'] <= 0:
                     raise ValueError('A positive probed duration is required before analysis')
                 document = None if force else read_artifact(db, workspace, asset_id, series_version)
@@ -102,7 +102,11 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
                                          progress=lambda done, total: progress.frames(stage_name, done, total, path.name))
                     else:
                         series=extractor(path)
-                    if verified_digest(path) != asset_id:
+                    if progress is not None:
+                        progress.note('analysis', f'verifying {path.name} after decoding')
+                    verification=(lambda done,total: progress.bytes('source-check', done, total, path.name)
+                                  if progress is not None else None)
+                    if verified_digest(path, progress=verification) != asset_id:
                         raise OSError('Source changed during extraction')
                     write_artifact(db,workspace,asset_id,series_version,series)
                     result['extracted']+=1
