@@ -4,18 +4,15 @@ No model downloads occur unless explicitly choosing an AI backend. Sparse frame 
 limits cost. Object labels are proposals, not verified species or athlete identification.
 """
 from __future__ import annotations
-import hashlib
-import json
 import math
 from pathlib import Path
 from typing import Protocol
-from .catalog import connect
 from .media import require_tool
 import subprocess
 
 DEFAULT_QUERIES=['person','skier','skis','bicycle','mountain bike','tree','rock',
                  'snow','fish','shark','ray','sea turtle','coral','underwater reef']
-VERSION='scene-sampling-v1'
+VERSION='scene-sampling-v2'
 
 
 class SceneProvider(Protocol):
@@ -60,6 +57,8 @@ class SiglipProvider:
             self.device='cpu'
         self.model.to(self.device)
         self.version=model_id
+        self.cache_config={'resolvedRevision':getattr(self.model.config,'_commit_hash',None),
+                           'imageProcessor':self.processor.image_processor.to_dict()}
     def describe(self,image_bytes:bytes)->dict:
         from PIL import Image
         import io
@@ -82,13 +81,15 @@ class OwlProvider:
         from transformers import pipeline
         self.detector=pipeline('zero-shot-object-detection',model=self.version)
         self.threshold=threshold
+        self.cache_config={'threshold':threshold,'queries':list(DEFAULT_QUERIES),
+            'resolvedRevision':getattr(self.detector.model.config,'_commit_hash',None)}
     def describe(self,image_bytes:bytes)->dict:
         from PIL import Image
         import io
         image=Image.open(io.BytesIO(image_bytes)).convert('RGB')
         detections=self.detector(image,candidate_labels=DEFAULT_QUERIES)
         objects=[{'label':d['label'],'score':float(d['score']),
-                  'bbox':dict(d['box']),'reviewed':False} for d in detections
+                  'bbox':dict(d['box']),'bboxFormat':'xyxy','coordinateSpace':'sampled_image_pixels','reviewed':False} for d in detections
                  if float(d['score'])>=self.threshold]
         return {'embedding':None,'objects':objects,'keypoints':[],
                 'notes':['Zero-shot detection; labels are unverified']}
@@ -106,28 +107,24 @@ def frame_png(path:Path, t_ms:int, width:int=384)->bytes:
 
 def describe_asset(path:Path,duration_ms:int,provider:SceneProvider,
                    *,sample_seconds:float=4.0,max_frames:int=300)->dict:
-    if sample_seconds<=0 or max_frames<=0:
+    if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
         raise ValueError('Sample interval and frame bound must be positive')
     frames=[]
     step=max(1,int(sample_seconds*1000),math.ceil(max(0,duration_ms)/max_frames))
     for t in range(0,max(0,duration_ms),step):
         if len(frames)>=max_frames:
             break
-        desc=provider.describe(frame_png(path,t))
-        embedding=desc.get('embedding')
-        if embedding is not None and (len(embedding)>8192 or not all(
-             isinstance(v,(int,float)) and abs(v)<1e8 for v in embedding)):
-            raise ValueError('Invalid embedding')
-        frames.append({'tMs':t,'embedding':embedding,
-                       'objects':desc.get('objects',[]),
-                       'keypoints':desc.get('keypoints',[]),
-                       'notes':desc.get('notes',[])})
+        from .semantic_jobs import frame_descriptor
+        frames.append(frame_descriptor(provider,frame_png(path,t),t))
     return {'schemaVersion':1,'source':str(path),'provider':provider.name,
             'modelVersion':provider.version,'sampleIntervalMs':step,'frames':frames}
 
 
 def generate_semantics(workspace:Path,*,backend:str='histogram',
-                       sample_seconds:float=4.0,limit:int|None=None,pose_model:Path|None=None)->dict:
+                       sample_seconds:float=4.0,limit:int|None=None,pose_model:Path|None=None,
+                       max_frames:int=300,asset_ids:set[str]|None=None)->dict:
+    if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
+        raise ValueError('Sample interval and frame bound must be positive and finite')
     if backend=='histogram':
         provider=HistogramProvider()
     elif backend=='siglip2':
@@ -141,32 +138,9 @@ def generate_semantics(workspace:Path,*,backend:str='histogram',
         provider=SceneStack(stack)
     else:
         raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, stack')
-    output={'processed':0,'cached':0,'missing':0,'errors':[]}
-    with connect(workspace) as db:
-        for a in db.execute('SELECT * FROM assets ORDER BY created_at,id').fetchall():
-            if limit is not None and output['processed']>=limit:
-                break
-            path=Path(a['stored_path'])
-            if not path.is_file():
-                output['missing']+=1
-                continue
-            namespace=hashlib.sha256(f'{provider.name}:{provider.version}:{sample_seconds}'.encode()).hexdigest()[:12]
-            target=workspace/'semantics'/f'{a["id"]}-{namespace}.json'
-            if target.is_file():
-                output['cached']+=1
-                continue
-            try:
-                result=describe_asset(path,int((a['duration'] or 0)*1000),provider,
-                                       sample_seconds=sample_seconds)
-                result['assetId']=a['id']
-                target.parent.mkdir(parents=True,exist_ok=True)
-                tmp=target.with_suffix('.tmp')
-                tmp.write_text(json.dumps(result,separators=(',',':')))
-                tmp.replace(target)
-                output['processed']+=1
-            except Exception as exc:
-                output['errors'].append({'asset':a['id'],'error':str(exc)})
-    return output
+    from .semantic_jobs import run_semantics
+    return run_semantics(workspace,provider,sample_seconds=sample_seconds,limit=limit,
+                         max_frames=max_frames,asset_ids=asset_ids)
 
 class PoseProvider:
     """Optional MediaPipe human pose. Useful only when a person's body is visible."""
@@ -176,6 +150,8 @@ class PoseProvider:
         import mediapipe as mp
         if not model_path.is_file():
             raise ValueError('A locally downloaded .task human-pose model is required')
+        from .ingest import sha_file
+        self.cache_config={'modelSha256':sha_file(model_path),'mediapipeVersion':mp.__version__}
         self.mp=mp
         options=mp.tasks.vision.PoseLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
@@ -192,7 +168,7 @@ class PoseProvider:
         for person,points in enumerate(result.pose_landmarks):
             for idx,p in enumerate(points):
                 tracks.append({'person':person,'jointIndex':idx,'x':p.x,'y':p.y,
-                               'visibility':p.visibility,'reviewed':False})
+                               'visibility':p.visibility,'coordinateSpace':'normalized_image','reviewed':False})
         return {'embedding':None,'objects':[], 'keypoints':tracks,
                 'notes':['Human pose landmarks; not a first-person camera body pose']}
 
@@ -202,6 +178,8 @@ class SceneStack:
     name='stack'
     def __init__(self,providers:list[SceneProvider]):
         self.providers=providers
+        self.cache_config={'providers':[{'name':p.name,'version':p.version,
+            'config':getattr(p,'cache_config',{})} for p in providers]}
         self.version='+'.join(f'{p.name}:{p.version}' for p in providers)
     def describe(self,image_bytes:bytes)->dict:
         results=[p.describe(image_bytes) for p in self.providers]

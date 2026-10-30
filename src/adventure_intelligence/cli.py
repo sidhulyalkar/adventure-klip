@@ -20,6 +20,7 @@ from .timeline import generate_timelines
 from .semantic import generate_semantics
 from .storyboard import plan_storyboard
 from .process import process_folder
+from .history import event_history
 
 
 def _print(data):
@@ -50,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
     process.add_argument('--activity',choices=['unknown','ski','bike','snorkeling'],default='unknown')
     process.add_argument('--detector',choices=['baseline','flow'],default='baseline')
     process.add_argument('--allow-removable',action='store_true')
+    process.add_argument('--semantic-backend',choices=['histogram','siglip2','owlv2','stack'])
+    process.add_argument('--every',type=float,default=4.0)
+    history=sub.add_parser('history',help='Inspect immutable event revisions and review decisions')
+    history.add_argument('asset_id')
     imp=sub.add_parser("ingest",help="Copy and verify camera files without modifying the card")
     imp.add_argument("source",type=Path)
     imp.add_argument("--activity",choices=["unknown","ski","bike","snorkeling"],default="unknown")
@@ -112,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
             _print({"workspace":str(root),"state":"initialized"})
         elif args.command=='process':
             result=process_folder(args.source,root,activity=args.activity,
-                                  detector=args.detector,allow_removable=args.allow_removable)
+                                  detector=args.detector,allow_removable=args.allow_removable,
+                                  semantic_backend=args.semantic_backend,sample_seconds=args.every)
             _print(result)
             return 0 if result['status']=='completed' else 1
         elif args.command=="ingest":
@@ -128,10 +134,15 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="timeline":
             with lock_workspace(root):
                 _print(generate_timelines(root,source=args.source,bin_ms=args.bin_ms))
+        elif args.command=='history':
+            _print(event_history(root,args.asset_id))
         elif args.command=="scenes":
             with lock_workspace(root):
-                _print(generate_semantics(root,backend=args.backend,sample_seconds=args.every,
-                                          limit=args.limit,pose_model=args.pose_model))
+                result=generate_semantics(root,backend=args.backend,sample_seconds=args.every,
+                                          limit=args.limit,pose_model=args.pose_model)
+                _print(result)
+                if result['errors']:
+                    return 1
         elif args.command=="analyze":
             with lock_workspace(root):
                 result=analyze(root,args.limit,args.force,args.detector)

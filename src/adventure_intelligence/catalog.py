@@ -57,6 +57,32 @@ CREATE TABLE IF NOT EXISTS bindings (
  review_state TEXT NOT NULL CHECK(review_state IN ('proposed', 'approved', 'rejected')),
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS event_revisions (
+ revision_id TEXT PRIMARY KEY, event_id TEXT NOT NULL, asset_id TEXT NOT NULL REFERENCES assets(id),
+ payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS review_history (
+ id INTEGER PRIMARY KEY, binding_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL REFERENCES event_revisions(revision_id),
+ decision TEXT NOT NULL, payload TEXT NOT NULL, reason TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS semantic_jobs (
+ asset_id TEXT NOT NULL REFERENCES assets(id), config_id TEXT NOT NULL,
+ config_json TEXT NOT NULL, status TEXT NOT NULL, error TEXT,
+ filename TEXT, sha256 TEXT, PRIMARY KEY(asset_id,config_id)
+);
+CREATE TABLE IF NOT EXISTS semantic_frames (
+ asset_id TEXT NOT NULL, config_id TEXT NOT NULL, t_ms INTEGER NOT NULL,
+ payload TEXT NOT NULL, sha256 TEXT NOT NULL,
+ PRIMARY KEY(asset_id,config_id,t_ms),
+ FOREIGN KEY(asset_id,config_id) REFERENCES semantic_jobs(asset_id,config_id)
+);
+CREATE TABLE IF NOT EXISTS semantic_active (
+ asset_id TEXT NOT NULL, provider TEXT NOT NULL, config_id TEXT NOT NULL,
+ PRIMARY KEY(asset_id,provider),
+ FOREIGN KEY(asset_id,config_id) REFERENCES semantic_jobs(asset_id,config_id)
+);
 """
 
 
@@ -85,17 +111,37 @@ def as_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 def add_events(db: sqlite3.Connection, asset_id: str, events: list[dict], origin: str,
                version: str) -> int:
-    # Preserve hand-curated labels when a model is updated.
-    db.execute("DELETE FROM episodes WHERE asset_id=? AND origin='derived'", (asset_id,))
-    db.execute("DELETE FROM events WHERE asset_id=? AND origin=?", (asset_id, origin))
+    from .history import snapshot_event, record_review
+    incoming = {}
     for ev in events:
+        if ev['id'] in incoming:
+            raise ValueError('Duplicate event ID')
+        incoming[ev['id']] = dict(id=ev['id'],asset_id=asset_id,kind=ev['kind'],
+            start_ms=ev['start_ms'],end_ms=ev['end_ms'],confidence=ev['confidence'],
+            score=ev['score'],origin=origin,version=version,
+            evidence_json=json.dumps(ev.get('evidence',{}),sort_keys=True,allow_nan=False))
+        existing = db.execute('SELECT asset_id,origin FROM events WHERE id=?',(ev['id'],)).fetchone()
+        if existing and (existing['asset_id']!=asset_id or existing['origin']!=origin):
+            raise ValueError('Event ID collides with another asset or origin')
+    previous = list(db.execute('SELECT * FROM events WHERE asset_id=? AND origin=?',(asset_id,origin)))
+    for old in previous:
+        snapshot_event(db,old)
+        if incoming.get(old['id']) == dict(old):
+            continue
+        for binding in db.execute('SELECT * FROM bindings WHERE event_id=?',(old['id'],)).fetchall():
+            record_review(db,binding,old,'invalidated_by_event_revision')
+        db.execute('DELETE FROM bindings WHERE event_id=?',(old['id'],))
+        db.execute('DELETE FROM events WHERE id=?',(old['id'],))
+    db.execute("DELETE FROM episodes WHERE asset_id=? AND origin='derived'", (asset_id,))
+    for ev in incoming.values():
         db.execute(
             """INSERT INTO events (id,asset_id,kind,start_ms,end_ms,confidence,score,
-               origin,version,evidence_json) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               origin,version,evidence_json) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING""",
             (ev["id"], asset_id, ev["kind"], ev["start_ms"], ev["end_ms"],
              ev["confidence"], ev["score"], origin, version,
-             json.dumps(ev.get("evidence", {}), sort_keys=True)),
+             ev["evidence_json"]),
         )
+        snapshot_event(db,db.execute('SELECT * FROM events WHERE id=?',(ev['id'],)).fetchone())
     return len(events)
 
 
