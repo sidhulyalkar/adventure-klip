@@ -50,7 +50,8 @@ def detect_motion_events(asset_id: str, series: list[dict]) -> list[dict]:
 
 
 def analyze(workspace: Path, limit: int | None = None, force: bool = False,
-            detector_name: str = "baseline", asset_ids: set[str] | None = None) -> dict:
+            detector_name: str = "baseline", asset_ids: set[str] | None = None,
+            progress=None) -> dict:
     detector=detector_named(detector_name)
     from .vision import FLOW_VERSION
     series_version = FLOW_VERSION if detector.name == "flow" else MOTION_VERSION
@@ -62,7 +63,10 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
     result={"analyzed":0,"cached":0,"extracted":0,"features_cached":0,"failed":[]}
     with connect(workspace) as db:
         assets=list(db.execute("SELECT * FROM assets ORDER BY created_at,id"))
-        for row in assets:
+        assets=[r for r in assets if asset_ids is None or r["id"] in asset_ids]
+        if progress is not None:
+            progress.start("analysis", len(assets))
+        for file_number, row in enumerate(assets, 1):
             if asset_ids is not None and row["id"] not in asset_ids:
                 continue
             if limit is not None and result["analyzed"]>=limit:
@@ -71,6 +75,8 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
             version=db.execute("SELECT status,version FROM analyses WHERE asset_id=? AND stage=?",
                                (asset_id,stage)).fetchone()
             try:
+                if progress is not None:
+                    progress.note("analysis", f"[{file_number}/{len(assets)}] checking {asset_id[:12]}")
                 path=resolve_source(db, row)
                 if not row['duration'] or row['duration'] <= 0:
                     raise ValueError('A positive probed duration is required before analysis')
@@ -78,6 +84,8 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
                 if (document is not None and version and version["status"]=="completed"
                         and version["version"]==version_id):
                     result["cached"]+=1
+                    if progress is not None:
+                        progress.item("analysis", file_number, len(assets), f"{path.name} cached")
                     continue
                 db.execute("""INSERT INTO analyses(asset_id,stage,version,status,error)
                     VALUES (?,?,?,'running',NULL)
@@ -87,7 +95,13 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
                 db.commit()
                 if document is None:
                     extractor = getattr(detector, "extract", motion_series)
-                    series=extractor(path)
+                    if progress is not None and detector.name in {"flow", "baseline"}:
+                        stage_name=f"{detector.name}:{path.name}"
+                        progress.start(stage_name, round(float(row["duration"]) * (4 if detector.name=="flow" else 2)))
+                        series=extractor(path,total_seconds=float(row["duration"]),
+                                         progress=lambda done, total: progress.frames(stage_name, done, total, path.name))
+                    else:
+                        series=extractor(path)
                     if verified_digest(path) != asset_id:
                         raise OSError('Source changed during extraction')
                     write_artifact(db,workspace,asset_id,series_version,series)
@@ -125,6 +139,8 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
                     (asset_id,stage,version_id))
                 db.commit()
                 result["analyzed"]+=1
+                if progress is not None:
+                    progress.item("analysis", file_number, len(assets), f"{path.name} analyzed")
             except Exception as exc:
                 db.rollback()
                 db.execute("""INSERT INTO analyses(asset_id,stage,version,status,error)
@@ -134,4 +150,6 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
                     (asset_id,stage,version_id,str(exc)))
                 db.commit()
                 result["failed"].append({"assetId":asset_id,"error":str(exc)})
+                if progress is not None:
+                    progress.item("analysis", file_number, len(assets), f"{asset_id[:12]} failed: {exc}")
     return result
