@@ -12,7 +12,7 @@ import subprocess
 
 DEFAULT_QUERIES=['person','skier','skis','bicycle','mountain bike','tree','rock',
                  'snow','fish','shark','ray','sea turtle','coral','underwater reef']
-VERSION='scene-sampling-v2'
+VERSION='scene-sampling-pts-v3'
 
 
 class SceneProvider(Protocol):
@@ -95,14 +95,15 @@ class OwlProvider:
                 'notes':['Zero-shot detection; labels are unverified']}
 
 
-def frame_png(path:Path, t_ms:int, width:int=384)->bytes:
-    command=[require_tool('ffmpeg'),'-v','error','-nostdin','-ss',f'{t_ms/1000:.3f}',
-             '-i',str(path),'-frames:v','1','-vf',f'scale={width}:-2',
-             '-f','image2pipe','-vcodec','png','pipe:1']
-    raw=subprocess.run(command,capture_output=True,timeout=90,check=True).stdout
-    if not raw:
-        raise RuntimeError(f'No frame at {t_ms}ms')
-    return raw
+def frame_png(path:Path, t_ms:int, width:int=384, include_timing:bool=False):
+    """Decode one PNG; optionally return the decoded source-PTS evidence.
+
+    The historical bytes-only function remains compatible with callers and
+    test fixtures. Semantic jobs request timing in the same decode pass.
+    """
+    from .frame_timing import extract_frame_png
+    raw, timing = extract_frame_png(path, t_ms, width)
+    return (raw, timing) if include_timing else raw
 
 
 def describe_asset(path:Path,duration_ms:int,provider:SceneProvider,
