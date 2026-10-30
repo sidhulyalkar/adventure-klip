@@ -1,5 +1,15 @@
 # Adventure Klip 🏔️ 🐠 🚵
 
+Incrementally process a permanent DJI folder without moving footage:
+
+```sh
+klip --workspace ~/AdventureAI process ~/Movies/DJI --activity ski
+```
+
+See [folder processing](docs/PROCESSING.md) for restart behavior, source verification,
+cache migration and current limitations. This runs the lightweight baseline pipeline.
+
+
 **Local-first action-camera intelligence.** Index recordings from existing Mac folders without moving footage; import removable DJI media with verified copies; extract timestamped evidence, group confirmed maneuvers, draft reels, and publish approved Sid's iLand discovery bindings.
 
 [![CI](https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml/badge.svg)](https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml)
