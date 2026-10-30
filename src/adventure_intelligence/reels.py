@@ -7,6 +7,7 @@ import tempfile
 from .catalog import connect
 from .media import require_tool
 from .sources import resolve_source, verified_digest
+from .safety import protect_source_output
 
 RECIPES={
     "motion-review":{"activity":None,"kinds":{"camera_rhythm_candidate":1.0,"sustained_motion_candidate":0.7,"active_sequence":0.4}},
@@ -73,8 +74,8 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
         raise ValueError("fade_seconds must be between 0.1 and 1.0")
     ffmpeg=require_tool("ffmpeg")
     output=output.expanduser().resolve()
-    output.parent.mkdir(parents=True,exist_ok=True)
     with connect(workspace) as db:
+        protect_source_output(db, output)
         sources={row["id"]:dict(row) for row in db.execute("SELECT * FROM assets")}
         verified = {}
         for segment in plan['segments']:
@@ -89,6 +90,7 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
                (output.exists() and path.exists() and output.samefile(path))
                for path in protected):
             raise ValueError('Output cannot overwrite a source video')
+    output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="adventure-reel-") as tmp:
         folder=Path(tmp)
         clips=[]
