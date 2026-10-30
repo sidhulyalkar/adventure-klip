@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+- Preserve immutable event snapshots and review decisions when events change or disappear.
+- Identical event updates retain approvals; changed revisions require fresh approval.
+- Add `klip history ASSET_ID` for local audit inspection.
+- Add per-frame semantic checkpoints, checksum validation, and active configuration selection.
+- Add opt-in semantic processing to `klip process`; retain unreviewed prediction status.
+- Publication excludes unavailable or changed source assets.
+
 ## 0.3.1
 - Added folder-scoped `klip process` with restartable baseline analysis and timelines.
 - Verify source content before cache hits/rendering; recover matching duplicate paths.
