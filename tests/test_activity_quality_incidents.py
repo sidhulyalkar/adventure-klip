@@ -190,3 +190,23 @@ def test_mark_appends_and_preserves_review_history(tmp_path,monkeypatch):
     assert main(["--workspace",str(work),"mark",asset,"--kind","crash",
                  "--start","-1","--end","2"])==2
     assert src.read_bytes()==b"original bytes"
+
+
+
+def test_report_player_attaches_local_private_vtt_when_available(tmp_path,monkeypatch):
+    from adventure_intelligence.report import write_report
+    folder=tmp_path/"originals";folder.mkdir()
+    source=folder/"SKI_DEMO.MP4";source.write_bytes(b"original")
+    monkeypatch.setattr("adventure_intelligence.indexing.probe",
+                        lambda p:{"duration":12,"audio":False})
+    work=tmp_path/"workspace"
+    aid=index_folder(folder,work,activity="ski")["asset_ids"][0]
+    write_diagnostics(work,asset_id=aid)
+    path=work/"exports"/"review.html"
+    write_report(work,path)
+    html=path.read_text()
+    assert "<video controls playsinline preload='none'>" in html
+    assert "<track kind='subtitles'" in html
+    assert f"diagnostics/{aid}-review.vtt" in html
+    assert "SKI_DEMO.MP4" in html
+    assert source.read_bytes()==b"original"
