@@ -1,0 +1,13 @@
+{
+  "asset_id": "REPLACE_WITH_SHA256_FROM_adventure_status",
+  "activity": "ski",
+  "events": [
+    {"kind":"jump","start_ms":11000,"end_ms":13000,"score":0.9,"evidence":{"reviewer":"human"}},
+    {"kind":"jump","start_ms":15500,"end_ms":17200,"score":0.8,"evidence":{"reviewer":"human"}},
+    {"kind":"jump","start_ms":22000,"end_ms":23600,"score":0.95,"evidence":{"reviewer":"human"}},
+    {"kind":"turn","start_ms":30000,"end_ms":31000,"score":0.7},
+    {"kind":"turn","start_ms":33100,"end_ms":34300,"score":0.8},
+    {"kind":"turn","start_ms":36500,"end_ms":37400,"score":0.8},
+    {"kind":"turn","start_ms":39600,"end_ms":40800,"score":0.8}
+  ]
+}
