@@ -210,3 +210,19 @@ def test_report_player_attaches_local_private_vtt_when_available(tmp_path,monkey
     assert f"diagnostics/{aid}-review.vtt" in html
     assert "SKI_DEMO.MP4" in html
     assert source.read_bytes()==b"original"
+
+
+
+def test_acoustic_correspondence_supports_review_without_proving_crash():
+    asset={"id":"example","activity":"ski","duration":11}
+    signal=sample_series()
+    with_sound=diagnostic_summary(asset,[],signal,[],acoustic_transients=[
+        {"startMs":5000,"endMs":6000,"classification":"unknown_acoustic_cause"}])
+    without_sound=diagnostic_summary(asset,[],signal,[],acoustic_transients=[])
+    assert with_sound["cameraDisturbances"]
+    assert with_sound["cameraDisturbances"][0]["evidence"]["acousticTransientNearJolt"]
+    assert not without_sound["cameraDisturbances"][0]["evidence"]["acousticTransientNearJolt"]
+    assert "Camera jolt with acoustic change" in [
+        c["title"] for c in with_sound["reviewCues"]]
+    assert all("injury" not in c["title"].lower()
+               for c in with_sound["reviewCues"])
