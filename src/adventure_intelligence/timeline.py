@@ -122,6 +122,7 @@ def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=
                         basis=('decoded_frame_pts' if use_observed
                                else 'requested_seek_fallback')
                         timing={'tMs':t,'requestedMs':requested,
+                                'decodedPts':frame.get('decodedPts'),
                                 'decodedPtsMs':observed,
                                 'ptsTimeBase':frame.get('ptsTimeBase'),
                                 'timestampBasis':basis}
@@ -132,9 +133,11 @@ def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=
                         if semantic_file.name not in refs:
                             refs.append(semantic_file.name)
                         for obj in frame.get('objects',[]):
-                            bin_record['objects'].append({**timing,**obj})
+                            bin_record['objects'].append({**timing,**obj,
+                                'semanticFile':semantic_file.name})
                         for joint in frame.get('keypoints',[]):
-                            bin_record['keypoints'].append({**timing,**joint})
+                            bin_record['keypoints'].append({**timing,**joint,
+                                'semanticFile':semantic_file.name})
                         if frame.get('embedding') is not None:
                             bin_record.setdefault('embeddingFrames',[]).append({
                                 **timing,'semanticFile':semantic_file.name,
