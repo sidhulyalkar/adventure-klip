@@ -10,7 +10,8 @@ from .workspace import init
 
 
 def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
-                 dry_run: bool = False, allow_removable: bool = False) -> dict:
+                 dry_run: bool = False, allow_removable: bool = False,
+                 progress=None) -> dict:
     source = source.expanduser().resolve()
     workspace = workspace.expanduser().resolve()
     if not source.is_dir():
@@ -29,8 +30,10 @@ def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
     init(workspace)
     stats = {'mode':'zero-copy','discovered':len(files),'indexed':0,'skipped':0,
              'duplicates':0,'errors':[], 'asset_ids':[]}
+    if progress is not None:
+        progress.start('index', len(files))
     with connect(workspace) as db:
-        for p in files:
+        for file_number, p in enumerate(files, 1):
             try:
                 before=p.stat()
                 sig=quick_signature(p)
@@ -38,7 +41,11 @@ def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
                 known=db.execute('''SELECT i.asset_id,i.size_bytes,i.mtime_ns,i.quick_signature,
                     a.stored_path,a.duration FROM imports i JOIN assets a ON a.id=i.asset_id
                     WHERE i.source_key=? ORDER BY i.imported_at DESC''',(key,)).fetchall()
-                digest=verified_digest(p)
+                if progress is not None:
+                    progress.note('index', f'[{file_number}/{len(files)}] hashing {p.name}')
+                digest=verified_digest(p, progress=(
+                    lambda done, total: progress.bytes('index-hash', done, total, p.name)
+                    if progress is not None else None))
                 if any(k['asset_id']==digest and Path(k['stored_path'])==p
                        and k['duration'] and k['duration']>0 for k in known):
                     if activity!='unknown':
@@ -47,6 +54,8 @@ def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
                     db.commit()
                     stats['asset_ids'].append(digest)
                     stats['skipped']+=1
+                    if progress is not None:
+                        progress.item('index', file_number, len(files), f'{p.name} unchanged')
                     continue
                 found=db.execute('SELECT id,stored_path,duration FROM assets WHERE id=?',(digest,)).fetchone()
                 if found:
@@ -83,7 +92,11 @@ def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
                 db.commit()
                 stats['asset_ids'].append(digest)
                 stats['indexed']+=1
+                if progress is not None:
+                    progress.item('index', file_number, len(files), f'{p.name} indexed')
             except Exception as exc:
                 db.rollback()
                 stats['errors'].append({'path':str(p),'error':str(exc)})
+                if progress is not None:
+                    progress.item('index', file_number, len(files), f'{p.name} failed: {exc}')
     return stats
