@@ -19,6 +19,7 @@ from .indexing import index_folder
 from .timeline import generate_timelines
 from .semantic import generate_semantics
 from .storyboard import plan_storyboard
+from .process import process_folder
 
 
 def _print(data):
@@ -44,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace",default=None,help="Default: ~/AdventureAI or ADVENTURE_HOME")
     sub=parser.add_subparsers(dest="command",required=True)
     sub.add_parser("init",help="Create a local workspace and SQLite catalog")
+    process=sub.add_parser('process',help='Index a stable folder, resume analysis, and build timelines')
+    process.add_argument('source',type=Path)
+    process.add_argument('--activity',choices=['unknown','ski','bike','snorkeling'],default='unknown')
+    process.add_argument('--detector',choices=['baseline','flow'],default='baseline')
+    process.add_argument('--allow-removable',action='store_true')
     imp=sub.add_parser("ingest",help="Copy and verify camera files without modifying the card")
     imp.add_argument("source",type=Path)
     imp.add_argument("--activity",choices=["unknown","ski","bike","snorkeling"],default="unknown")
@@ -104,6 +110,11 @@ def main(argv: list[str] | None = None) -> int:
             with connect(root):
                 pass
             _print({"workspace":str(root),"state":"initialized"})
+        elif args.command=='process':
+            result=process_folder(args.source,root,activity=args.activity,
+                                  detector=args.detector,allow_removable=args.allow_removable)
+            _print(result)
+            return 0 if result['status']=='completed' else 1
         elif args.command=="ingest":
             if args.dry_run:
                 _print(ingest(args.source,root,activity=args.activity,dry_run=True))

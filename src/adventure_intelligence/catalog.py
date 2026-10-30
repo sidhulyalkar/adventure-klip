@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS analyses (
  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
  PRIMARY KEY (asset_id, stage)
 );
+CREATE TABLE IF NOT EXISTS artifacts (
+ asset_id TEXT NOT NULL REFERENCES assets(id), version TEXT NOT NULL,
+ filename TEXT NOT NULL, sha256 TEXT NOT NULL,
+ PRIMARY KEY (asset_id, version)
+);
 CREATE TABLE IF NOT EXISTS bindings (
  id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
  world_entity_id TEXT NOT NULL, match_type TEXT NOT NULL,

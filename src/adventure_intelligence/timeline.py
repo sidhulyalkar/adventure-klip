@@ -3,12 +3,13 @@
 All signals are observational. Image motion is not a confirmed jump, turn, or speed.
 """
 from __future__ import annotations
-from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
 from statistics import median
 from .catalog import connect
+from .artifacts import read_artifact
+from .sources import resolve_source
 
 VERSION='timeline-v1'
 
@@ -39,12 +40,13 @@ def timeline_from_series(asset_id:str, duration_ms:int, series:list[dict], *,
         raw=float(x[key])
         if not isinstance(t,(int,float)) or not math.isfinite(t) or t < 0 or not math.isfinite(raw):
             continue
-        if duration_ms and t > duration_ms+1000:
+        if duration_ms and t >= duration_ms:
             continue
         observations.append((int(t),raw))
     observations.sort()
     center,scale=robust_scale([v for _,v in observations])
-    duration_ms=max(duration_ms,observations[-1][0]+1 if observations else 0)
+    if not duration_ms:
+        duration_ms=observations[-1][0]+1 if observations else 0
     bins=[]
     for start in range(0,duration_ms,bin_ms):
         end=min(duration_ms,start+bin_ms)
@@ -64,20 +66,28 @@ def timeline_from_series(asset_id:str, duration_ms:int, series:list[dict], *,
                 'scope':'per-video','comparableAcrossVideos':False},'bins':bins}
 
 
-def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=2000, attach_semantics:bool=True) ->dict:
+def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=2000, attach_semantics:bool=True, asset_ids:set[str] | None=None) ->dict:
     # Analysis run must be completed first; we don't re-decode the video for the timeline.
-    result={'generated':0,'missing':0,'paths':[]}
+    result={'generated':0,'missing':0,'paths':[], 'failed':[]}
     with connect(workspace) as db:
-        rows=list(db.execute('SELECT id,duration FROM assets'))
+        rows=list(db.execute('SELECT * FROM assets'))
         for a in rows:
             aid=a['id']
-            candidates=sorted((workspace/'features').glob(f'{aid}-*.json'))
-            target=next((p for p in candidates if ('pixel-change' if source=='pixel-change'
-                                                   else 'optical-flow') in p.name),None)
-            if target is None:
+            if asset_ids is not None and aid not in asset_ids:
+                continue
+            stage = 'motion' if source=='pixel-change' else 'flow'
+            analysis = db.execute('SELECT version,status FROM analyses WHERE asset_id=? AND stage=?',
+                                  (aid,stage)).fetchone()
+            data = (read_artifact(db,workspace,aid,analysis['version'].split('|')[0])
+                    if analysis and analysis['status']=='completed' else None)
+            if data is None:
                 result['missing']+=1
                 continue
-            data=json.loads(target.read_text())
+            try:
+                resolve_source(db,a)
+            except OSError as exc:
+                result['failed'].append({'assetId':aid,'error':str(exc)})
+                continue
             document=timeline_from_series(aid,int((a['duration'] or 0)*1000),
                                           data['series'],source=source,bin_ms=bin_ms)
             events=list(db.execute('SELECT id,kind,start_ms,end_ms,score,confidence,origin '
@@ -93,7 +103,7 @@ def generate_timelines(workspace:Path, *, source:str='pixel-change', bin_ms:int=
                     for frame in description.get('frames',[]):
                         # Assign sparse descriptions to the one timeline bin containing the frame.
                         t=frame.get('tMs',-1)
-                        if t<0 or t>=duration_ms:
+                        if t<0 or t>=document['durationMs']:
                             continue
                         bin_index=int(t//bin_ms)
                         bin_record=document['bins'][bin_index]
