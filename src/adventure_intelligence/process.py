@@ -7,7 +7,7 @@ from .timeline import generate_timelines
 
 def process_folder(source, workspace, *, activity='unknown', detector='baseline',
                    allow_removable=False, semantic_backend=None, sample_seconds=4.0,
-                   progress=None):
+                   progress=None, audio_evidence=False):
     # Validate before taking the lock: never create a workspace inside the source.
     index_folder(source, workspace, activity=activity, dry_run=True,
                  allow_removable=allow_removable)
@@ -26,11 +26,17 @@ def process_folder(source, workspace, *, activity='unknown', detector='baseline'
                 sample_seconds=sample_seconds,asset_ids=asset_ids,progress=progress)
         if progress is not None:
             progress.note('timeline', 'generating aligned timelines')
+        acoustics = None
+        if audio_evidence:
+            from .acoustics import analyze_audio
+            acoustics=analyze_audio(workspace,asset_ids=asset_ids,progress=progress)
         timelines = generate_timelines(workspace, asset_ids=asset_ids,
             source='optical-flow' if detector=='flow' else 'pixel-change')
     ok = not (indexed['errors'] or analysis['failed'] or timelines['failed'] or timelines['missing']
-              or (semantics is not None and semantics['errors']))
+              or (semantics is not None and semantics['errors'])
+              or (acoustics is not None and acoustics['failed']))
     if progress is not None:
         progress.note('pipeline', 'completed' if ok else 'partial failure; inspect JSON errors')
     return {'status': 'completed' if ok else 'partial_failure', 'index': indexed,
-            'analysis': analysis, 'semantics':semantics, 'timelines': timelines}
+            'analysis': analysis, 'semantics':semantics, 'acoustics':acoustics,
+            'timelines': timelines}
