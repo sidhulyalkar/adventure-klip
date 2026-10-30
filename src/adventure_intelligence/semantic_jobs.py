@@ -49,11 +49,21 @@ def frame_descriptor(provider, raw, t, timing=None):
     keypoints=description.get('keypoints',[])
     if not isinstance(objects,list) or not isinstance(keypoints,list):
         raise ValueError('Objects and keypoints must be lists')
+    scene_scores=description.get('sceneScores')
+    if scene_scores is not None:
+        if (not isinstance(scene_scores,dict)
+            or scene_scores.get('method')!='siglip2_image_text_cosine'
+            or not isinstance(scene_scores.get('similarities'),dict)
+            or not all(isinstance(v,(int,float)) and not isinstance(v,bool)
+                       and math.isfinite(v) and -1.01<=v<=1.01
+                       for v in scene_scores['similarities'].values())):
+            raise ValueError('Invalid scene similarities')
     result={'tMs':t,'requestedMs':t,
             'timestampBasis':(timing or {}).get('timestampBasis','requested_seek_pts_unavailable'),
             'decodedPts':(timing or {}).get('decodedPts'),
             'ptsTimeBase':(timing or {}).get('ptsTimeBase'),
             'decodedPtsMs':(timing or {}).get('decodedPtsMs'),
+            'sceneScores':scene_scores,
             'embedding':vector,'embeddingInfo':vector_info,
             'objects':[{**obj,'reviewed':False} for obj in objects],
             'keypoints':[{**point,'reviewed':False} for point in keypoints],
