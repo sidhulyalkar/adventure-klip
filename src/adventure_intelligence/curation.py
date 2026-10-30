@@ -78,3 +78,60 @@ def bind_event(workspace: Path, event_id: str, world_entity_id: str,
         binding=db.execute('SELECT * FROM bindings WHERE id=?',(bid,)).fetchone()
         record_review(db,binding,event,'explicit_review')
     return {"id":bid,"state":state,"world_entity_id":world_entity_id}
+
+
+
+def append_review_label(workspace: Path, asset_id: str, kind: str,
+                        start_seconds: float, end_seconds: float,
+                        *, note: str = "") -> dict:
+    """Append one human-authored label without replacing previous manual work.
+
+    Labels are declarations by the reviewer, never zero-shot predictions.
+    Existing manual events, reviews and unrelated videos are preserved.
+    """
+    from .review_signals import MANUAL_INCIDENTS, MANUAL_NEGATIVES
+    from .editorial_quality import POSITIVE_LABELS
+    kinds = MANUAL_INCIDENTS | MANUAL_NEGATIVES | set().union(*POSITIVE_LABELS.values()) | {
+        "tree_weave", "carve", "turn", "jump", "drop", "berm", "animal_presence",
+        "technical_feature", "rock_garden", "good_run", "smooth_flow",
+    }
+    if kind not in kinds:
+        raise ValueError("Unknown review label; use a documented activity/incident kind")
+    if not all(math.isfinite(v) for v in (start_seconds, end_seconds)) \
+            or start_seconds < 0 or end_seconds <= start_seconds:
+        raise ValueError("Invalid review time interval")
+    if len(note) > 240 or "\x00" in note:
+        raise ValueError("Note must be 240 characters or fewer")
+    start = round(start_seconds * 1000)
+    end = round(end_seconds * 1000)
+    eid = "cur-" + sha256(f"{asset_id}|{kind}|{start}|{end}".encode()).hexdigest()[:20]
+    with connect(workspace) as db:
+        asset = db.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
+        if asset is None:
+            raise ValueError("Unknown asset SHA-256 ID")
+        if end > int((asset["duration"] or 0)*1000):
+            raise ValueError("Review label ends beyond the recording")
+        earlier = [dict(r) for r in db.execute(
+            "SELECT * FROM events WHERE asset_id=? AND origin='manual'",
+            (asset_id,))]
+        if any(r["id"] == eid or (r["kind"]==kind and
+                                 r["start_ms"]==start and r["end_ms"]==end)
+               for r in earlier):
+            raise ValueError("This exact review interval is already labeled")
+        preserved = [{
+            "id": r["id"], "kind": r["kind"],
+            "start_ms": r["start_ms"], "end_ms": r["end_ms"],
+            "score": r["score"], "confidence": r["confidence"],
+            "evidence": json.loads(r["evidence_json"] or "{}"),
+        } for r in earlier]
+        fresh = {"id": eid, "kind": kind, "start_ms": start, "end_ms": end,
+                 "score": .8, "confidence": 1.0,
+                 "evidence": {"reviewerNote": note, "reviewed": True,
+                              "origin": "explicit_human_label"}}
+        add_events(db, asset_id, preserved + [fresh], "manual", "manual-v1")
+        put_episodes(db,asset_id,build_episodes(
+            asset_id,all_events(db,asset_id),int((asset["duration"] or 0)*1000)))
+    return {"assetId": asset_id, "eventId": eid, "kind": kind,
+            "startMs": start, "endMs": end,
+            "manualEventsPreserved": len(earlier),
+            "status": "human_labeled"}
