@@ -8,6 +8,8 @@ from .catalog import connect
 from .safety import protect_source_output
 from .editorial_quality import editorial_candidates,select_diverse
 from .review_signals import diagnostic_summary
+from .artifacts import read_artifact
+from .acoustics import AUDIO_VERSION, acoustic_changes
 
 CSS="""
 :root{color-scheme:dark}body{font-family:system-ui,-apple-system,sans-serif;background:#0a111c;color:#ecf4ff;max-width:1050px;margin:40px auto;padding:0 20px}
@@ -33,8 +35,11 @@ def write_report(workspace: Path, output: Path) -> dict:
             events=[dict(e) for e in db.execute(
                 "SELECT id,origin,kind,start_ms,end_ms,score FROM events WHERE asset_id=?",
                 (aid,))]
+            wave=read_artifact(db,workspace,aid,AUDIO_VERSION)
+            acoustic=acoustic_changes(wave["series"]) if wave else []
             diagnostics[aid]=diagnostic_summary(asset,_scene_frames(db,workspace,aid),
-                raw_motion_for_asset(db,workspace,aid),events)
+                raw_motion_for_asset(db,workspace,aid),events,
+                acoustic_transients=acoustic)
     suggested={}
     for asset in assets:
         choices=[x for x in proposals if x['sourceAssetId']==asset['id']]
