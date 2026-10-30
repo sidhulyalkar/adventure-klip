@@ -25,6 +25,7 @@ from .safety import protect_source_output
 from .progress import Progress
 from .acoustics import analyze_audio
 from .submersion import continuity_report
+from .diagnostics import write_diagnostics
 
 
 def _print(data):
@@ -82,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     audio=sub.add_parser('acoustics',help='Extract acoustic-change evidence from indexed videos')
     audio.add_argument('--limit',type=int)
     sub.add_parser('continuity',help='Review proposed continuous underwater filming intervals')
+    diagnosis=sub.add_parser('diagnose',help='Create local activity/incident review JSON and timed VTT overlays')
+    diagnosis.add_argument('--asset',help='Exact catalog SHA-256 asset ID; omit for all videos')
     proc=sub.add_parser("analyze",help="Compute low-resolution motion proposals (baseline or optical flow)")
     proc.add_argument("--limit",type=int)
     proc.add_argument("--force",action="store_true")
@@ -174,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
                     return 1
         elif args.command=='continuity':
             _print(continuity_report(root))
+        elif args.command=='diagnose':
+            with lock_workspace(root):
+                _print(write_diagnostics(root,asset_id=args.asset))
         elif args.command=="analyze":
             with lock_workspace(root):
                 result=analyze(root,args.limit,args.force,args.detector)
