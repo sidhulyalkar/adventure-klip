@@ -123,7 +123,8 @@ def describe_asset(path:Path,duration_ms:int,provider:SceneProvider,
 
 def generate_semantics(workspace:Path,*,backend:str='histogram',
                        sample_seconds:float=4.0,limit:int|None=None,pose_model:Path|None=None,
-                       max_frames:int=300,asset_ids:set[str]|None=None)->dict:
+                       max_frames:int=300,asset_ids:set[str]|None=None,
+                       progress=None)->dict:
     if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
         raise ValueError('Sample interval and frame bound must be positive and finite')
     if backend=='histogram':
@@ -141,7 +142,7 @@ def generate_semantics(workspace:Path,*,backend:str='histogram',
         raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, stack')
     from .semantic_jobs import run_semantics
     return run_semantics(workspace,provider,sample_seconds=sample_seconds,limit=limit,
-                         max_frames=max_frames,asset_ids=asset_ids)
+                         max_frames=max_frames,asset_ids=asset_ids,progress=progress)
 
 class PoseProvider:
     """Optional MediaPipe human pose. Useful only when a person's body is visible."""
