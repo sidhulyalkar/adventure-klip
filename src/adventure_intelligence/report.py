@@ -7,6 +7,7 @@ import os
 from .catalog import connect
 from .safety import protect_source_output
 from .editorial_quality import editorial_candidates,select_diverse
+from .review_signals import diagnostic_summary
 
 CSS="""
 :root{color-scheme:dark}body{font-family:system-ui,-apple-system,sans-serif;background:#0a111c;color:#ecf4ff;max-width:1050px;margin:40px auto;padding:0 20px}
@@ -25,6 +26,15 @@ def write_report(workspace: Path, output: Path) -> dict:
         ev_counts=dict(db.execute("SELECT asset_id,COUNT(*) FROM events GROUP BY asset_id").fetchall())
         proposals,_=editorial_candidates(db,workspace,
             [e for e in eps if e['kind']!='recording_summary'])
+        from .editorial_quality import _scene_frames,raw_motion_for_asset
+        diagnostics={}
+        for asset in assets:
+            aid=asset['id']
+            events=[dict(e) for e in db.execute(
+                "SELECT id,origin,kind,start_ms,end_ms,score FROM events WHERE asset_id=?",
+                (aid,))]
+            diagnostics[aid]=diagnostic_summary(asset,_scene_frames(db,workspace,aid),
+                raw_motion_for_asset(db,workspace,aid),events)
     suggested={}
     for asset in assets:
         choices=[x for x in proposals if x['sourceAssetId']==asset['id']]
@@ -47,6 +57,18 @@ def write_report(workspace: Path, output: Path) -> dict:
                       f"<strong>{activity.title()} · {escape(path.name)} · {escape(asset_id[:12])}</strong>",
                       f"<span class='tag'>{float(asset['duration'] or 0):.1f}s · {ev_counts.get(asset_id,0)} events</span>",
                       "</div><p><a href='"+link+"'>Open original video</a></p>"])
+        state=diagnostics[asset_id]
+        flags=state['contextStates']
+        jolts=state['cameraDisturbances']
+        reviewed=state['reviewedIncidents']
+        if flags or jolts or reviewed:
+            lines.append("<h3>Activity and incident review <small>· private, unverified unless manually labelled</small></h3>")
+        for finding in (flags+jolts+reviewed):
+            start=finding['startMs']/1000;end=finding['endMs']/1000
+            label=escape(finding['label'].replace('_',' ').title())
+            status=escape(finding['status'].replace('_',' '))
+            lines.append(f"<p><a href='{link}#t={start:.2f},{end:.2f}'>{label}</a> "
+                         f"<small>{start:.1f}–{end:.1f}s · {status}</small></p>")
         picks=suggested.get(asset_id,[])
         if picks:
             lines.append("<h3>Suggested short highlights <small>· review required · heuristic scores</small></h3>")
@@ -60,12 +82,17 @@ def write_report(workspace: Path, output: Path) -> dict:
             sound=pick.get('acousticEvidence',{})
             acoustic=(f" · {sound.get('transientCount',0)} audio transients"
                       if sound.get('available') else "")
+            low_value=pick.get('lowValueContext',{})
+            low_note=(f" · low-value scene overlap {100*low_value['supportedFraction']:.0f}% (unverified)"
+                      if low_value.get('supportedFraction') else "")
+            incident_note=(" · camera disturbance: review"
+                           if pick.get('incidentReviewFlags') else "")
             lines.extend([
                 "<div class='header'>",
                 f"<span>{escape(pick['kind'].replace('_',' ').title())}</span>",
                 f"<span class='pill'>{start:.1f}–{end:.1f}s · editorial {pick['score']:.2f}</span>",
                 "</div>",
-                f"<p class='muted'>{escape(reasons)}{escape(underwater)}{escape(acoustic)}</p>",
+                f"<p class='muted'>{escape(reasons)}{escape(underwater)}{escape(acoustic)}{escape(low_note)}{escape(incident_note)}</p>",
                 f"<p><a href='{link}#t={start:.2f},{end:.2f}'>Review suggested clip</a></p>"
             ])
         lines.append("<details><summary>All raw motion and event proposals</summary>")
