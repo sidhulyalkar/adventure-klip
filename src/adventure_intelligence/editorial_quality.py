@@ -12,6 +12,8 @@ import math
 
 from .artifacts import read_artifact
 from .semantic_jobs import completed_document
+from .acoustics import AUDIO_VERSION, acoustic_changes
+from .submersion import submersion_samples, continuous_underwater_intervals
 
 VERSION = "editorial-context-v1"
 NEGATIVE_LABELS = {
@@ -112,8 +114,8 @@ def scene_evidence(frames: list[dict], start: int, end: int, activity: str) -> d
             continue
         samples.append({"tMs": t, "negative": float(n), "positive": float(p),
                         "margin": round(float(n - p), 5)})
-    negative_votes = sum(x["margin"] >= .08 for x in samples)
-    positive_votes = sum(x["margin"] <= -.08 for x in samples)
+    negative_votes = sum(x["margin"] >= .02 for x in samples)
+    positive_votes = sum(x["margin"] <= -.02 for x in samples)
     # Require multiple independent temporal samples. Highly correlated frames
     # are not multiplied into a falsely precise posterior probability.
     flagged = len(samples) >= 3 and negative_votes / len(samples) >= .70
@@ -166,11 +168,20 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
     events_by_asset = {}
     series_by_asset = {}
     scenes_by_asset = {}
+    acoustic_by_asset = {}
+    submerged_by_asset = {}
     for aid in {ep["asset_id"] for ep in episode_rows}:
         events_by_asset[aid] = [dict(x) for x in db.execute(
             "SELECT * FROM events WHERE asset_id=?", (aid,))]
         series_by_asset[aid] = raw_motion_for_asset(db, workspace, aid)
         scenes_by_asset[aid] = _scene_frames(db, workspace, aid)
+        wave = read_artifact(db, workspace, aid, AUDIO_VERSION)
+        acoustic_by_asset[aid] = acoustic_changes(wave["series"]) if wave else []
+        asset = assets.get(aid)
+        if asset is not None and asset["activity"] == "snorkeling":
+            submerged_by_asset[aid] = continuous_underwater_intervals(
+                submersion_samples(scenes_by_asset[aid]),
+                duration_ms=int((asset["duration"] or 0) * 1000))
     candidates = []
     exclusions = []
     for ep in episode_rows:
@@ -182,6 +193,14 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
         excluded = manual_exclusions(events_by_asset[aid], activity)
         start, end = int(ep["start_ms"]), int(ep["end_ms"])
         allowed = subtract_exclusions(start, end, excluded)
+        continuous = submerged_by_asset.get(aid, [])
+        # The explicit automatic policy can constrain to unverified but
+        # visually sustained submerged intervals. Missing evidence is not
+        # interpreted as a confirmed surface interruption.
+        if activity == "snorkeling" and policy == "automatic" and continuous:
+            allowed = [(max(a, interval["startMs"]), min(b, interval["endMs"]))
+                       for a, b in allowed for interval in continuous
+                       if min(b, interval["endMs"]) - max(a, interval["startMs"]) >= 3500]
         if not allowed:
             exclusions.append({"episodeId": ep["id"], "reason": "manual_negative_label"})
             continue
@@ -194,6 +213,21 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                                                 stride_ms=max(2000, int(window * 2 / 3))):
                 motion = motion_evidence(series_by_asset[aid], wstart, wend)
                 scene = scene_evidence(scenes_by_asset[aid], wstart, wend, activity)
+                overlap_ms = sum(_overlap(wstart, wend, part["startMs"], part["endMs"])
+                                 for part in continuous)
+                continuity_fraction = min(1, overlap_ms / max(1, wend - wstart))
+                audio_events = [e for e in acoustic_by_asset.get(aid, [])
+                                if _overlap(wstart, wend, e["startMs"], e["endMs"]) > 0]
+                surface_samples = [x["tMs"] for x in submersion_samples(scenes_by_asset[aid])
+                                   if x["state"] == "surface"] if activity == "snorkeling" else []
+                coincident = sum(any(abs(e["startMs"] - t) < 2000
+                                     for t in surface_samples) for e in audio_events)
+                sound = {"method": "rms_outlier", "status": "unverified",
+                         "available": aid in acoustic_by_asset and
+                                      bool(read_artifact(db, workspace, aid, AUDIO_VERSION)),
+                         "transientCount": len(audio_events),
+                         "surfaceCoincidentTransients": coincident,
+                         "interpretation": "Potential camera/water disturbance, not breathing state"}
                 overlapping_negatives = [x[2] for x in excluded
                                          if _overlap(start, end, x[0], x[1])]
                 if policy == "automatic" and scene["likelyNegativeContext"]:
@@ -218,15 +252,33 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                     score *= .30
                 if scene["likelyPositiveContext"]:
                     score = min(1.0, score + .08)
+                if activity == "snorkeling" and continuous:
+                    score = min(1.0, score + .14 * continuity_fraction)
+                    if continuity_fraction < .25:
+                        score *= .65
+                # Audio supports visible surface transitions but does not alone
+                # trigger a breathing or interruption classification.
+                if activity == "snorkeling" and coincident:
+                    score *= .80
                 candidate = {
                     "episodeId": ep["id"], "sourceAssetId": aid, "kind": ep["kind"],
                     "startMs": wstart, "endMs": wend,
                     "duration": round((wend - wstart) / 1000, 3),
                     "score": round(score, 4), "originalEpisodeScore": base,
                     "motionEvidence": motion, "sceneEvidence": scene,
+                    "acousticEvidence": sound,
+                    "underwaterContinuity": {"status": "unverified",
+                        "supportedFraction": round(continuity_fraction, 3),
+                        "intervalCount": len(continuous),
+                        "interpretation": "camera continuously submerged (candidate)"} if
+                        activity == "snorkeling" else None,
                     "reasonCodes": (["manual_exclusion_trimmed"] if overlapping_negatives else [])
                                    + (["suspected_non_action_scene"] if scene["likelyNegativeContext"] else [])
                                    + (["likely_active_scene"] if scene["likelyPositiveContext"] else [])
+                                   + (["continuous_submersion_candidate"]
+                                      if activity == "snorkeling" and continuity_fraction >= .75 else [])
+                                   + (["visual_surface_and_acoustic_disturbance"]
+                                      if coincident else [])
                                    + (["unverified_camera_motion"] if not is_action else []),
                     "requiresReview": True,
                     "rankingVersion": VERSION,
