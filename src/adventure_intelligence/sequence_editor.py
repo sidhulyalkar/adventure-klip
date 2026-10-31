@@ -36,42 +36,29 @@ def _approved(db):
 
 
 def _join_hints(db,workspace,entries):
-    """Explain a cut using source chronology and compatible cached visuals."""
-    from .scene_atlas import frames_for_asset,clip_feature,similarity
-    if len(entries)<2:
-        return []
-    source={r["id"]:dict(r) for r in db.execute(
-        "SELECT id,activity FROM assets")}
-    cache={}
-    def vector(item):
-        aid=item["sourceAssetId"]
-        if aid not in cache:
-            cache[aid]=frames_for_asset(db,workspace,aid,provider="siglip2")
-        return clip_feature(*cache[aid],item["startMs"],item["endMs"])
+    """Prefer edge-to-edge evidence over whole-clip similarity."""
+    from .transition_evidence import EdgeEvidence,compare_edges
+    source={r["id"]:dict(r) for r in db.execute("""
+        SELECT a.id,COALESCE(NULLIF(o.activity_override,''),a.activity) AS activity
+        FROM assets a LEFT JOIN asset_organization o ON a.id=o.asset_id""")}
+    cache=EdgeEvidence(db,workspace)
     out=[]
     for a,b in zip(entries,entries[1:]):
-        flags=[]
-        x,y=a["sourceAssetId"],b["sourceAssetId"]
-        if source.get(x,{}).get("activity")!=source.get(y,{}).get("activity"):
-            flags.append("Activity changes between scenes; check narrative transition")
-        if x==y and 0<=b["startMs"]-a["endMs"]<=6000:
-            flags.append("Nearby source footage may give a smoother natural continuation")
-        duration_a=a["endMs"]-a["startMs"]
-        duration_b=b["endMs"]-b["startMs"]
-        if min(duration_a,duration_b)>0 and max(duration_a,duration_b)/min(duration_a,duration_b)>3:
-            flags.append("Large change in clip duration; check pacing")
-        left,right=vector(a),vector(b)
-        visual=None
-        if left.get("available") and right.get("available") and left["modelKey"]==right["modelKey"]:
-            visual=similarity(left["vector"],right["vector"])
-            if visual is not None and visual>=.94:
-                flags.append("Shots look visually similar; decide whether repetition helps")
+        first=source.get(a["sourceAssetId"],{}).get("activity","unknown")
+        second=source.get(b["sourceAssetId"],{}).get("activity","unknown")
+        evidence=compare_edges(cache,a,b,first,second)
+        hints=list(evidence["reasons"])
+        dur_a=a["endMs"]-a["startMs"]
+        dur_b=b["endMs"]-b["startMs"]
+        if min(dur_a,dur_b)>0 and max(dur_a,dur_b)/min(dur_a,dur_b)>3:
+            hints.append("Large clip-length difference; check pacing")
         out.append({"leftExampleId":a["exampleId"],"rightExampleId":b["exampleId"],
-                    "hints":flags or ["No obvious sequence warning from available metadata"],
-                    "visualSimilarity":round(visual,4) if visual is not None else None,
+                    "hints":hints,"visualSimilarity":evidence["edgeVisualSimilarity"],
+                    "suggestedTransition":evidence["suggestedTransition"],
+                    "objectQueries":evidence["sharedObjectQueries"],
+                    "edgeEvidence":evidence,
                     "status":"unverified_editorial_evidence"})
     return out
-
 
 def sequence_state(workspace: Path) -> dict:
     with connect(workspace) as db:
@@ -193,6 +180,7 @@ def export_sequence(workspace: Path, *, expected_revision: str) -> dict:
         checked=_validate_entries(
             [{"exampleId":e["exampleId"]} for e in entries],_approved(db),
             {r["id"]:dict(r) for r in db.execute("SELECT id,duration FROM assets")})
+        joins=_join_hints(db,workspace,checked)
         plan={"schemaVersion":1,"recipe":"manual-sequence","status":"draft",
               "name":current["name"],"sequenceRevision":expected_revision,
               "maxSeconds":MAX_DURATION_MS/1000,
@@ -203,7 +191,15 @@ def export_sequence(workspace: Path, *, expected_revision: str) -> dict:
                   "duration":round((e["endMs"]-e["startMs"])/1000,3),
                   "score":1.0,"reviewed":True
               } for e in checked],
-              "disclaimer":"Manual source-time sequence; no confirmation of continuity across scenes"}
+              "transitions":[{
+                  "leftExampleId":j["leftExampleId"],
+                  "rightExampleId":j["rightExampleId"],
+                  "style":j["suggestedTransition"],
+                  "evidenceVersion":j["edgeEvidence"]["version"],
+                  "reason":j["hints"][0]
+              } for j in joins],
+              "transitionPolicy":"edge-evidence-suggested; manual review required",
+              "disclaimer":"Manual source-time sequence; zero-shot object queries and transition hints remain unverified"}
         target=workspace/"exports"/"sequences"/(expected_revision+".json")
         protect_source_output(db,target)
         target.parent.mkdir(parents=True,exist_ok=True)

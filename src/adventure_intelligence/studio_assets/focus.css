@@ -206,3 +206,19 @@ body.cinema-active .film-nav .cinema-toggle{color:var(--salmon)}
     letter-spacing:-1.1px;
   }
 }
+
+
+/* Cached scientific evidence appears on demand, never over the movie. */
+.clip-object-evidence{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;
+ color:var(--fog);font-size:11px;margin-top:14px}
+.clip-object-evidence>span{grid-column:1/-1;color:var(--fog)}
+.clip-edge-metadata{padding:13px;border:1px solid #3b4f66;background:#14243a;border-radius:9px;
+ display:flex;flex-direction:column;gap:8px;min-width:0}
+.clip-edge-metadata strong{color:var(--offwhite);font-size:11px;font-weight:640}
+.clip-edge-metadata span{line-height:1.4;overflow-wrap:anywhere}
+.clip-edge-metadata small{font-size:10px;color:var(--dim)}
+.edit-join .join-method{display:inline-block;padding-left:9px;font-size:10px;color:var(--salmon)}
+@media(max-width:720px){
+ .clip-object-evidence{grid-template-columns:1fr}
+ .clip-object-evidence>span{grid-column:1}
+}

@@ -101,6 +101,7 @@
     $('clipOut').value=(c.endMs/1000).toFixed(1);
     $('clipLabel').value='highlight_moment';
     $('evidenceSummary').textContent=(c.reasons||[]).join(' · ')||'Camera motion is not verified action';
+    $('clipObjectEvidence').textContent='Open Details to inspect cached object and scene evidence.';
     $('feedbackForm').classList.add('hidden');$('detailsPanel').classList.add('hidden');
     $('detailsToggle').setAttribute('aria-expanded','false');
     for(const id of ['keepClip','skipClip','wrongClip','replayClip'])$(id).disabled=false;
@@ -129,6 +130,37 @@
   function previous(){
     if(state.position>0)show(state.position-1);
     else if(state.page>0){state.page--;loadQueue(true).catch(fail);}
+  }
+  async function loadClipMetadata(){
+    if(!state.current)return;
+    const snapshot=state.current;
+    const node=$('clipObjectEvidence');
+    node.textContent='Checking cached observations…';
+    try{
+      const start=Math.round(Number($('clipIn').value)*1000);
+      const end=Math.round(Number($('clipOut').value)*1000);
+      const query='/api/clip-metadata?asset='+encodeURIComponent(snapshot.assetId)+
+        '&startMs='+start+'&endMs='+end;
+      const result=await api(query);
+      if(state.current!==snapshot || $('detailsPanel').classList.contains('hidden'))return;
+      const regions=[['Entrance',result.head],['Exit',result.tail]];
+      node.replaceChildren();
+      for(const [name,entry] of regions){
+        const section=elem('div','clip-edge-metadata');
+        section.append(elem('strong','',name+' · '+mm(entry.startMs)+'–'+mm(entry.endMs)));
+        const labels=entry.objectObservations.map(o=>o.label).slice(0,5);
+        const contexts=entry.sceneContext.map(o=>o.label).slice(0,2);
+        section.append(elem('span','',labels.length?
+          'Object queries: '+labels.join(', ')+' (unverified)':'Object detection: unknown'));
+        section.append(elem('span','',contexts.length?
+          'Scene hints: '+contexts.join(', ')+' (relative similarity)':'Scene context: unknown'));
+        section.append(elem('small','',
+          entry.objectSampleCount+' object frames · '+
+          entry.contextSampleCount+' context frames · '+
+          entry.embeddingSamples+' embedding frames'));
+        node.append(section);
+      }
+    }catch(e){node.textContent='No cached object evidence available: '+(e.message||String(e));}
   }
   function selectedRange(){
     const c=state.current;
@@ -316,6 +348,7 @@
     $('detailsToggle').onclick=()=>{
       const show=$('detailsPanel').classList.toggle('hidden')===false;
       $('detailsToggle').setAttribute('aria-expanded',String(show));
+      if(show)loadClipMetadata();
     };
     $('reviewPlayer').ontimeupdate=()=>{
       if(!state.current)return;

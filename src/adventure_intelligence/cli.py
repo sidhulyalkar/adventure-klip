@@ -149,7 +149,8 @@ def main(argv: list[str] | None = None) -> int:
     render.add_argument("plan",type=Path)
     render.add_argument("--output",type=Path,required=True)
     render.add_argument("--height",type=int,default=720,choices=[480,720,1080])
-    render.add_argument("--transition",choices=["cut","fade"],default="cut")
+    render.add_argument("--transition",choices=["cut","fade","smart"],default="cut",
+                        help="smart uses reviewed per-join plan suggestions; fades are through black")
     render.add_argument("--fade-seconds",type=float,default=0.35)
     exp=sub.add_parser("export",help="Export approved, URL-resolved WorldLink bindings")
     exp.add_argument("--output",type=Path,required=True)
