@@ -20,6 +20,7 @@ from .timeline import generate_timelines
 from .semantic import generate_semantics
 from .storyboard import plan_storyboard
 from .process import process_folder
+from .run_audit import audit_log
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
@@ -96,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     proc.add_argument("--force",action="store_true")
     proc.add_argument("--detector",default="baseline",help="Detector name: baseline, flow (requires [vision]), or installed plugin")
     sub.add_parser("status",help="Summarize catalog, episodes and pipeline status")
+    audit=sub.add_parser("audit-log",help="Summarize a completed or ongoing run log without reading media")
+    audit.add_argument("log",type=Path,help="Log file produced by --log-file")
     sessions=sub.add_parser("sessions",help="Suggest cross-file sessions for review (never auto-stitch)")
     sessions.add_argument("--gap-minutes",type=float,default=15.0)
     studio=sub.add_parser('studio',help='Open local, private video review studio')
@@ -162,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
     args=parser.parse_args(argv)
     root=root_at(args.workspace)
     try:
+        if args.command=="audit-log":
+            _print(audit_log(args.log))
+            return 0
         if args.command=="init":
             init(root)
             with connect(root):
