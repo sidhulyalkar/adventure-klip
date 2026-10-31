@@ -80,7 +80,7 @@ def test_studio_package_assets_include_useful_static_ui(server):
         status,body,headers=request(server,"GET",path)
         assert status==200 and needle in body
     assert b"cdn." not in raw
-    assert b"<script src=" in raw
+    assert b'focus.js' in raw and b'focus_sequence.js' in raw
 
 
 def test_no_unauthorized_asset_info_or_media(server,fixture):
