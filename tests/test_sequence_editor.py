@@ -191,3 +191,35 @@ def test_studio_queue_sequence_static_assets_and_authenticated_api(sample):
     finally:
         server.shutdown();server.server_close();thread.join(timeout=5)
     assert_unchanged(original,before)
+
+
+
+def test_queue_visual_stacks_are_hints_not_dropped_clips(sample):
+    from adventure_intelligence.semantic_jobs import encoded,digest
+    work,ids,original,before=sample
+    semantic_dir=work/"semantics"
+    semantic_dir.mkdir(exist_ok=True)
+    with connect(work) as db:
+        for idx,aid in enumerate(ids[:2]):
+            config="clip-test-"+str(idx)
+            doc={"assetId":aid,"configId":config,"provider":"siglip2",
+                 "modelVersion":"test-v1",
+                 "config":{"providerConfig":{
+                    "resolvedRevision":"frozen-1","imageProcessor":{"size":224}}},
+                 "frames":[{"tMs":t,"embedding":[1.0,0.0]}
+                           for t in (1000,3000,6000,22000,26000,32000)]}
+            raw=encoded(doc)
+            filename=config+".json"
+            (semantic_dir/filename).write_text(raw)
+            db.execute("""INSERT INTO semantic_jobs
+            (asset_id,config_id,config_json,status,filename,sha256)
+            VALUES (?,?,?,'completed',?,?)""",(aid,config,"{}",filename,digest(raw)))
+            db.execute("INSERT INTO semantic_active VALUES (?,?,?)",(aid,"siglip2",config))
+    moments=review_queue(work)["moments"]
+    assert len(moments)>=2
+    same=[m for m in moments if m["assetId"] in ids[:2]]
+    assert len(same)>=2
+    assert any(m["similarSceneCount"]>0 for m in same)
+    assert all(m["visualComparisonAvailable"] for m in same)
+    assert all(m["reviewState"]=="unreviewed" for m in same)
+    assert_unchanged(original,before)
