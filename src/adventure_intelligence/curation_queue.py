@@ -126,11 +126,13 @@ def review_queue(workspace:Path,*,activity="all",page=0) -> dict:
     if not isinstance(page,int) or isinstance(page,bool) or page<0 or page>100000:
         raise ValueError("Queue page must be a nonnegative integer")
     with connect(workspace) as db:
-        cond="WHERE activity=?" if activity!="all" else ""
+        cond="WHERE COALESCE(NULLIF(o.activity_override,''),a.activity)=?" if activity!="all" else ""
         args=(activity,) if activity!="all" else ()
         assets=[dict(x) for x in db.execute(
-            "SELECT id,activity,duration,stored_path FROM assets "+cond+
-            " ORDER BY created_at,id",args)]
+            "SELECT a.id,COALESCE(NULLIF(o.activity_override,''),a.activity) AS activity,"
+            "a.duration,a.stored_path FROM assets a LEFT JOIN asset_organization o"
+            " ON o.asset_id=a.id "+cond+
+            " ORDER BY a.created_at,a.id",args)]
         reviewed=latest_examples(db)
         total_assets=len(assets)
         batch=assets[page*PAGE_ASSETS:(page+1)*PAGE_ASSETS]
