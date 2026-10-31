@@ -202,19 +202,25 @@ def main(argv: list[str] | None = None) -> int:
                   decode_frames=args.decode_frames))
             return 0
         if args.command=="judge-nim":
-            manifest=json.loads(args.manifest.expanduser().read_text(encoding="utf-8"))
+            manifest_path=args.manifest.expanduser().resolve()
+            manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
+            destination=args.output.expanduser().resolve() if args.output else None
+            approved_dir=manifest_path.parent
+            if destination is not None and (
+                    destination.exists() or not destination.is_relative_to(approved_dir)
+                    or destination==manifest_path):
+                raise ValueError("Judge report must be a new file inside the manifest directory")
+            checkpoint=approved_dir/"jury-checkpoint.jsonl" if args.allow_external_upload else None
+            if destination==checkpoint:
+                raise ValueError("Report output cannot overwrite the judge checkpoint")
             report=evaluate_manifest(
                 manifest,frames_dir=args.frames_dir,models=args.model,
                 allow_external_upload=args.allow_external_upload,
                 endpoint=args.endpoint, max_calls=args.max_calls,
+                checkpoint_file=checkpoint,
                 api_key=(os.environ.get("NVIDIA_API_KEY","")
                          if args.allow_external_upload else ""))
-            if args.output:
-                destination=args.output.expanduser().resolve()
-                approved_dir=args.manifest.expanduser().resolve().parent
-                if (destination.exists() or not destination.is_relative_to(approved_dir)
-                        or destination==args.manifest.expanduser().resolve()):
-                    raise ValueError("Judge report must be a new file inside the manifest directory")
+            if destination is not None:
                 destination.parent.mkdir(parents=True,exist_ok=True)
                 with destination.open("x",encoding="utf-8") as f:
                     f.write(json.dumps(report,indent=2,allow_nan=False)+"\n")
