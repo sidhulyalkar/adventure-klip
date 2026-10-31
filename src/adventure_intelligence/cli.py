@@ -23,6 +23,7 @@ from .storyboard import plan_storyboard
 from .process import process_folder
 from .run_audit import audit_log
 from .nim_judges import evaluate_manifest, DEFAULT_ENDPOINT
+from .nim_benchmark import prepare_benchmark
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
@@ -99,6 +100,15 @@ def main(argv: list[str] | None = None) -> int:
     proc.add_argument("--force",action="store_true")
     proc.add_argument("--detector",default="baseline",help="Detector name: baseline, flow (requires [vision]), or installed plugin")
     sub.add_parser("status",help="Summarize catalog, episodes and pipeline status")
+    prep=sub.add_parser("prepare-nim-benchmark",
+                        help="Plan seeded candidate+random intervals; optional LOCAL frame extraction")
+    prep.add_argument("--output-dir",type=Path,required=True,
+                      help="New directory within the Klip workspace")
+    prep.add_argument("--samples",type=int,default=12)
+    prep.add_argument("--seed",type=int,default=20261031)
+    prep.add_argument("--window-seconds",type=int,default=14)
+    prep.add_argument("--decode-frames",action="store_true",
+                      help="Explicitly seek and extract 6 still frames per clip locally")
     jury=sub.add_parser("judge-nim",help="Opt-in external VLM jury over PRE-EXTRACTED frames")
     jury.add_argument("manifest",type=Path,help="Explicit JSON list of candidate and random clips")
     jury.add_argument("--frames-dir",type=Path,required=True,help="Root of approved JPEG/PNG frames")
@@ -176,6 +186,12 @@ def main(argv: list[str] | None = None) -> int:
     args=parser.parse_args(argv)
     root=root_at(args.workspace)
     try:
+        if args.command=="prepare-nim-benchmark":
+            _print(prepare_benchmark(root, output_dir=args.output_dir,
+                  sample_count=args.samples,seed=args.seed,
+                  window_ms=args.window_seconds*1000,
+                  decode_frames=args.decode_frames))
+            return 0
         if args.command=="judge-nim":
             manifest=json.loads(args.manifest.expanduser().read_text(encoding="utf-8"))
             report=evaluate_manifest(
