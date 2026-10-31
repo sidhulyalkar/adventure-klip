@@ -1,4 +1,12 @@
-# Klip 0.8 · Cached boundary inspector (opt-in)
+# Klip 0.9 · Preserve the original proposal when saving reviews
+
+Each new user review can record the shown candidate and suggested in/out
+alongside the final chosen interval, using an append-only linked SQLite record.
+This makes future boundary-quality evaluation possible without asserting
+that the candidate's scene label is correct or altering source media.
+See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md).
+
+## Previous: Cached boundary inspector (opt-in)
 
 Inspect local, cached motion evidence around an in/out range without
 reprocessing source files. A **Preview 5 local frames** button decodes at
