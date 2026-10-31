@@ -1,3 +1,16 @@
+# Klip experimental: NVIDIA NIM clip-judge benchmark
+
+Optional and **off by default**: sample candidate plus independently
+random video intervals, extract small local preview frames only on request,
+then obtain independent NVIDIA NIM vision-language assessments after explicit
+approval to upload. Compare model assessments to held-out human Keep/Skip
+reviews; AI consensus is not ground truth.
+
+See [NVIDIA NIM Clip Benchmark](docs/NIM_CLIP_BENCHMARK.md) for safety,
+CLI commands, model constraints and evaluation design.
+
+## Prior release history
+
 # Klip 1.0 candidate · Auditable run performance
 
 `klip audit-log <log-file>` summarizes stage progress, sparse FFmpeg output
