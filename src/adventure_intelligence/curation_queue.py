@@ -31,7 +31,7 @@ def _group_candidates(candidates,reviewed,aid,activity):
         review_overlap=max(
             (_overlap(a,b,e["start_ms"],e["end_ms"])/max(1,b-a)
              for e in reviewed if e["asset_id"]==aid
-             and e["decision"]!="uncertain"),default=0)
+             and e["decision"]=="confirmed"),default=0)
         if review_overlap>=.70:
             continue
         # Suppress neighboring redundant optical-flow episodes with substantial
@@ -59,6 +59,12 @@ def _group_candidates(candidates,reviewed,aid,activity):
             lane="needs_review"
             reason.append("Camera motion alone cannot determine highlight value")
         if flags and lane!="likely_filler":lane="needs_review"
+        rejected_labels=[e["label"] for e in reviewed
+                         if e["asset_id"]==aid and e["decision"]=="rejected"
+                         and _overlap(a,b,e["start_ms"],e["end_ms"])/max(1,b-a)>=.70]
+        if rejected_labels:
+            lane="needs_review"
+            reason.append("Earlier scene label rejected; choose the correct action or scene")
         if activity=="snorkeling" and c.get("acousticEvidence",{}).get("surfaceCoincidentTransients"):
             reason.append("Audio coincides with possible surfacing")
         groups.append({"assetId":aid,"startMs":a,"endMs":b,
