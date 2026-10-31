@@ -69,7 +69,10 @@ def compare_with_humans(manifest: dict, jury_report: dict,
     report={}
     for pool,c in stats.items():
         tp,fp,fn=c["tp"],c["fp"],c["fn"]
-        report[pool]={**dict(c),
+        report[pool]={**{name:c[name] for name in (
+            "sampled","unreviewed","conflicted","humanReviewed","humanKeeps",
+            "humanSkips","modelMissing","modelAbstained","modelEvaluated",
+            "tp","fp","fn","tn")},
             "precisionAmongReviewed":round(tp/(tp+fp),3) if tp+fp else None,
             "recallAmongReviewed":round(tp/(tp+fn),3) if tp+fn else None,
             "modelCoverageAmongReviewed":
