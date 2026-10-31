@@ -150,3 +150,39 @@ do not switch the running process's checkout, reinstall its environment or
 change its processing arguments. The new API and UI code can be tested against
 an isolated synthetic workspace. Merge the stacked PRs only after tests pass
 and the active processing job is safely finished.
+
+
+## Optional cached boundary inspector (v0.8, development branch)
+
+The focused editor offers **Inspect cut boundaries** inside the annotation panel.
+This makes one token-protected GET request to `/api/boundary/<asset-sha>?startMs=&endMs=`
+for the currently entered source-relative in/out range. The backend uses only
+completed, checksum-verified **motion/flow artifacts** already in the workspace.
+It creates 48 lightweight bins showing relative *camera/image* motion, with
+explicit empty bins for missing data. A low-motion trough near the cut is only
+a click-to-seek marker and does **not** automatically adjust or save the cut.
+
+The display abstains from offering trough hints if fewer than 16 observations
+or under 65% bin coverage are available. Source-relative timestamps are
+*not* guaranteed frame-accurate. The API rejects windows over 180 seconds,
+invalid source IDs, or ranges outside the indexed duration. It reads only.
+
+**Preview 5 local frames** is a second, explicit action. It initializes one
+muted browser decoder for one source, performs at most five seeks at the
+currently entered in/out range, and renders 220×124 JPEG previews locally.
+It never uploads, saves or shares the images. Leaving the clip releases the
+decoder and clears frame previews. This may cause temporary extra I/O on the
+same Mac as an active DJI indexing run, so leave it unused during heavy
+processing if the machine is I/O constrained.
+
+Browser seeks are approximate; a five-frame strip is not a guarantee of
+decoded frame PTS or continuous action coverage. HEVC and unusual recording
+timelines may fail to display in some browsers. Use the original player and
+the existing frame-timing evidence to validate any precision-critical cut.
+The display does not run inference, download models, transcode source video,
+or write to the indexed DJI folder.
+
+Future work: compare reviewer-chosen boundary corrections with cached
+motion troughs, shot changes, semantic context, original PTS and measured
+rendered-frame PTS across distinct trips, before allowing any automatic
+boundary-shift recommendation.
