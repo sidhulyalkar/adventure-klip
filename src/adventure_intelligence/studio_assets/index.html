@@ -59,6 +59,7 @@
           <div class="mode" role="tablist" aria-label="Studio mode">
             <button id="reviewMode" type="button" role="tab" aria-selected="true" class="mode-btn active">Review</button>
             <button id="compareMode" type="button" role="tab" aria-selected="false" class="mode-btn">Compare A/B</button>
+            <button id="sequenceMode" type="button" role="tab" aria-selected="false" class="mode-btn">Sequence <span aria-hidden="true">↗</span></button>
           </div>
         </div>
         <section id="reviewWorkspace" class="review-workspace">
@@ -102,6 +103,39 @@
             </div>
             <div id="moments" class="moments"></div>
           </section>
+        </section>
+        <section id="sequenceWorkspace" class="sequence-workspace hidden" aria-label="Visual reel sequence editor">
+          <div class="sequence-head">
+            <div><p class="eyebrow">THE CUTTING ROOM</p><h2>Shape the story.</h2>
+              <p class="subtitle">Approve a moment, drag it into your sequence, then find the best order.</p></div>
+            <div class="sequence-actions"><span id="sequenceSaveState" class="draft-status">Draft · not published</span>
+              <button type="button" id="saveSequence" class="secondary-btn" disabled>Save draft</button>
+              <button type="button" id="exportSequence" class="primary-btn" disabled>Export edit plan ↗</button></div>
+          </div>
+          <div class="sequence-preview">
+            <div class="sequence-preview-title"><span class="eyebrow">SEQUENCE PREVIEW · READ ONLY</span>
+              <span id="sequencePreviewName">Choose a moment to preview</span></div>
+            <video id="sequencePlayer" controls playsinline preload="metadata" aria-label="Sequence clip preview"></video>
+            <div class="sequence-preview-foot"><button type="button" id="playSequence" class="secondary-btn" disabled>▶ Play sequence</button>
+              <span id="sequenceNowPlaying" class="time-mono">Use arrows or drag to arrange clips</span></div>
+          </div>
+          <div class="sequence-panels">
+            <section class="sequence-bank" aria-label="Approved clips available for editing">
+              <div class="section-heading"><div><p class="eyebrow">APPROVED MOMENTS</p><h2>Clip shelf <span id="bankCount" class="count-bubble">0</span></h2></div></div>
+              <p class="muted-paragraph">Only moments you marked <strong>Keep</strong> appear here. Drag onto the timeline or use Add.</p>
+              <div id="sequenceBank" class="sequence-bank-list" aria-live="polite"></div>
+            </section>
+            <section class="sequence-board" aria-label="Ordered reel clips">
+              <div class="section-heading"><div><p class="eyebrow">YOUR CUT</p><h2>Sequence timeline <span id="boardCount" class="count-bubble">0</span></h2></div>
+                <span id="sequenceDuration" class="time-mono">00:00 / 10:00</span></div>
+              <label class="sr-only" for="sequenceName">Reel title</label>
+              <input id="sequenceName" maxlength="72" value="My highlights" aria-label="Reel title" placeholder="Give your reel a name">
+              <div id="sequenceBoard" class="sequence-board-list" aria-label="Drag approved moments to reorder" aria-live="polite">
+                <div class="sequence-empty">Drag approved moments here to build your reel.<span>Or use the Add buttons in the clip shelf.</span></div>
+              </div>
+              <p class="sequence-hint">Drag cards to reorder. Each join between clips has its own transition review. You can also use the arrow buttons.</p>
+            </section>
+          </div>
         </section>
         <section id="compareWorkspace" class="compare-workspace hidden" aria-label="Compare two clips">
           <div class="section-heading"><div><p class="eyebrow">THE EDITOR'S EYE</p><h2>Which moment tells it better?</h2><p class="subtitle small">Choose two clips. Compare action, clarity, flow, or story. Your judgment stays versioned.</p></div></div>
@@ -195,6 +229,46 @@
     <div class="shortcut"><kbd>J / K</kbd><span>Previous / next suggestion</span></div>
     <div class="shortcut"><kbd>Esc</kbd><span>Close this window</span></div>
     <button type="button" id="closeHelp" class="primary-btn">Back to the footage</button>
+  </dialog>
+
+  <dialog id="rejectSceneDialog" class="help-dialog scene-dialog" aria-labelledby="rejectTitle">
+    <form id="rejectSceneForm">
+      <p class="eyebrow">TEACH KLIP</p><h2 id="rejectTitle">What didn't work?</h2>
+      <p>Tell Klip what was incorrect, or why a correctly labeled scene doesn't belong in the reel.</p>
+      <label for="rejectReason">Reason</label>
+      <select id="rejectReason" required>
+        <option value="wrong_label">The detected scene/action is wrong</option>
+        <option value="boring">Correct scene, but not interesting</option>
+        <option value="lift">Lift or transport footage</option>
+        <option value="flat">Slow or flat skiing</option>
+        <option value="surface">Surfacing / interrupted filming</option>
+        <option value="duplicate">Too similar to another moment</option>
+        <option value="camera">Camera handling or poor composition</option>
+        <option value="other">Other</option>
+      </select>
+      <label for="rejectComment">What exactly was incorrect?</label>
+      <textarea id="rejectComment" rows="4" required minlength="5" maxlength="350" placeholder="E.g. this is a chairlift, not an active downhill run."></textarea>
+      <div class="dialog-actions"><button type="button" id="cancelReject" class="secondary-btn">Cancel</button>
+        <button type="submit" class="primary-btn">Reject and save feedback</button></div>
+    </form>
+  </dialog>
+  <dialog id="transitionDialog" class="help-dialog scene-dialog" aria-labelledby="transitionTitle">
+    <form id="transitionForm">
+      <p class="eyebrow">SCENE COMBINATION</p><h2 id="transitionTitle">Do these clips belong together?</h2>
+      <p id="transitionDescription">Review the flow, pacing, and visual continuity between these two moments.</p>
+      <label for="transitionReason">What matters?</label>
+      <select id="transitionReason">
+        <option value="continuity">Continuity</option><option value="pacing">Pacing</option>
+        <option value="duplicate">Too repetitive</option><option value="activity_mismatch">Different activities</option>
+        <option value="visual_mismatch">Visual mismatch</option><option value="weak_transition">Awkward cut</option>
+        <option value="narrative">Story progression</option><option value="other">Other</option>
+      </select>
+      <label for="transitionComment">Why? (required for rejection)</label>
+      <textarea id="transitionComment" rows="3" maxlength="500" placeholder="The rhythm changes too abruptly between these scenes."></textarea>
+      <div class="dialog-actions"><button type="button" id="cancelTransition" class="secondary-btn">Cancel</button>
+        <button type="button" id="rejectTransition" class="secondary-btn">Doesn't work</button>
+        <button type="button" id="approveTransition" class="primary-btn">Good transition ✓</button></div>
+    </form>
   </dialog>
 </body>
 </html>
