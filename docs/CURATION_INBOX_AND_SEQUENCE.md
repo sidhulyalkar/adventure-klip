@@ -25,7 +25,7 @@ Your last semantic batch (`processed: 1`, `frames_computed: 143`) is already cac
 
 ## 2. Sequence: combine only approved moments
 
-- The Clip Shelf contains your latest `confirmed + keep` examples, with no model-made inclusions.
+- The Clip Shelf contains explicitly human-kept intervals, even when the proposed action label remains uncertain. Non-confirmed labels are exported as `unverified_moment` rather than an asserted maneuver.
 - Drag a shelf card into the Sequence Timeline or use `Add`. Move clips using drag-and-drop or accessible ↑/↓ buttons. Remove cards from the draft without modifying either the review bank or the source MP4.
 - A preview player uses original read-only streams with per-segment time bounds. The `Play sequence` control is a browser preview, not a rendered video and not frame-perfect.
 - Save a named draft. Each change creates an append-only `sequence_draft_revisions` entry and protects against lost updates from another tab.
@@ -43,7 +43,7 @@ The rejection note is crucial evidence for the next training cycle. We keep exac
 - Queue pages are intentionally small. Priorities are uncalibrated and not a proven best-of-all-videos global rank. Review across multiple trips is needed to calibrate them.
 - Different semantic providers and clips without real scene-context evidence are never assumed comparable.
 - Drag-and-drop is native HTML5, supplemented by click and ↑/↓ reordering. No cloud libraries or dependencies.
-- Only confirmed Keep clips appear in the edit bank. If you overturn a Keep decision, export will fail until you remove the revoked clip from the draft.
+- Only explicitly human-kept clips appear in the edit bank, regardless of label-certainty. If you overturn a Keep decision, export will fail until you remove the revoked clip from the draft.
 - Drafts are global to this local workspace for now; future work can add multiple named sequences, custom playlists, and saved search views.
 - The original DJI video bytes stay in place, unchanged. All edits and user feedback are in `catalog.sqlite3`, while plans are saved to workspace exports.
 - Browser playback is limited by DJI codec compatibility; try Safari on macOS. No proxies or thumbnails are generated automatically.

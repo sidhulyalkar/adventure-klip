@@ -32,7 +32,7 @@ def _group_candidates(candidates,reviewed,aid,activity):
         review_overlap=max(
             (_overlap(a,b,e["start_ms"],e["end_ms"])/max(1,b-a)
              for e in reviewed if e["asset_id"]==aid
-             and e["decision"]=="confirmed"),default=0)
+             and e["highlight"] in {"keep","skip"}),default=0)
         if review_overlap>=.70:
             continue
         # Suppress neighboring redundant optical-flow episodes with substantial

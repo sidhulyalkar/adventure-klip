@@ -35,6 +35,8 @@ _RESOURCE={
     "/studio.js":("studio.js","text/javascript; charset=utf-8"),
     "/studio_editor.js":("studio_editor.js","text/javascript; charset=utf-8"),
     "/editor.css":("editor.css","text/css; charset=utf-8"),
+    "/focus.css":("focus.css","text/css; charset=utf-8"),
+    "/focus.js":("focus.js","text/javascript; charset=utf-8"),
 }
 
 
@@ -43,6 +45,7 @@ def studio_overview(workspace: Path) -> dict:
         assets=[]
         for r in db.execute("""SELECT a.id,a.duration,a.activity,a.capture_time,
             a.size_bytes,a.stored_path,
+            (SELECT region FROM asset_regions WHERE asset_id=a.id) AS region,
             (SELECT i.original_name FROM imports i WHERE i.asset_id=a.id
              ORDER BY i.imported_at DESC LIMIT 1) AS original_name
             FROM assets a ORDER BY a.created_at,a.id"""):
@@ -53,6 +56,8 @@ def studio_overview(workspace: Path) -> dict:
                 "duration":float(asset["duration"] or 0),
                 "activity":asset["activity"],"captureTime":asset["capture_time"],
                 "sizeBytes":asset["size_bytes"],
+                "folder":Path(asset["stored_path"]).parent.name or "Unknown source",
+                "region":asset["region"] or "",
             })
         counts={r["asset_id"]:r["n"] for r in db.execute(
             "SELECT asset_id,COUNT(*) n FROM episodes GROUP BY asset_id")}
@@ -104,6 +109,23 @@ def studio_asset(workspace: Path, asset_id: str) -> dict:
             "exclusions":exclusions,
             "warnings":["Camera motion is not athlete quality",
                         "Automatic context and incident cues remain hypotheses"]}
+
+
+def set_asset_region(workspace: Path, asset_id: str, region: str) -> dict:
+    """Assign a virtual grouping, never a filesystem operation."""
+    if not isinstance(asset_id,str) or not SHA_RE.fullmatch(asset_id):
+        raise ValueError("Invalid asset id")
+    if (not isinstance(region,str) or len(region)>80 or
+        any(ord(c)<32 or ord(c)==127 for c in region)):
+        raise ValueError("Region must be at most 80 printable characters")
+    region=region.strip()
+    with connect(workspace) as db:
+        if db.execute("SELECT 1 FROM assets WHERE id=?",(asset_id,)).fetchone() is None:
+            raise ValueError("Unknown asset")
+        db.execute("""INSERT INTO asset_regions (asset_id,region) VALUES (?,?)
+          ON CONFLICT(asset_id) DO UPDATE SET region=excluded.region,
+          updated_at=CURRENT_TIMESTAMP""",(asset_id,region))
+    return {"assetId":asset_id,"region":region}
 
 
 class SourceStream:
@@ -256,8 +278,9 @@ def make_handler(workspace:Path,token:str):
             if not self._origin_safe():
                 self._json(403,{"error":"Local host required"})
                 return
-            if path=="/":
-                html=paths.joinpath("index.html").read_text(encoding="utf-8")
+            if path in {"/","/classic"}:
+                name="focus.html" if path=="/" else "index.html"
+                html=paths.joinpath(name).read_text(encoding="utf-8")
                 html=html.replace("KLIP_SESSION_TOKEN",token)
                 self._send(200,html.encode(),"text/html; charset=utf-8")
                 return
@@ -319,6 +342,10 @@ def make_handler(workspace:Path,token:str):
                             end_seconds=body["endSeconds"],label=body["label"],
                             decision=body["decision"],highlight=body.get("highlight","neutral"),
                             note=body.get("note",""))
+                elif parsed.path=="/api/region":
+                    with lock_workspace(workspace):
+                        result=set_asset_region(workspace,
+                            asset_id=body["assetId"],region=body["region"])
                 elif parsed.path=="/api/sequence":
                     with lock_workspace(workspace):
                         result=save_sequence(workspace,entries=body["entries"],

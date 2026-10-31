@@ -32,7 +32,7 @@ def _current(db):
 
 def _approved(db):
     return {x["example_id"]:dict(x) for x in latest_examples(db)
-            if x["decision"]=="confirmed" and x["highlight"]=="keep"}
+            if x["highlight"]=="keep"}
 
 
 def _join_hints(db,workspace,entries):
@@ -89,14 +89,15 @@ def sequence_state(workspace: Path) -> dict:
         hints=_join_hints(db,workspace,entries)
         bank=[{"exampleId":x["example_id"],"assetId":x["asset_id"],
                "startMs":x["start_ms"],"endMs":x["end_ms"],"label":x["label"],
-               "note":x["reviewer_note"],"source":names.get(x["asset_id"],"Indexed video")}
+               "note":x["reviewer_note"],"labelDecision":x["decision"],
+               "source":names.get(x["asset_id"],"Indexed video")}
               for x in sorted(approved.values(),key=lambda r:(r["asset_id"],r["start_ms"]))]
         return {"schemaVersion":1,"name":current["name"] if current else "My highlights",
                 "revisionId":current["revision_id"] if current else None,
                 "entries":entries,"bank":bank,"feedback":feedback,"joinHints":hints,
                 "totalSeconds":round(sum((e["endMs"]-e["startMs"]) for e in entries)/1000,3),
                 "limits":{"maxClips":MAX_CLIPS,"maxSeconds":MAX_DURATION_MS/1000},
-                "note":"Only explicitly confirmed Keep examples can be sequenced"}
+                "note":"Only explicitly human-kept moments can be sequenced; proposed labels may remain unverified"}
 
 
 def _validate_entries(entries,approved,assets):
@@ -113,7 +114,7 @@ def _validate_entries(entries,approved,assets):
             raise ValueError("Duplicate or malformed example in sequence")
         ex=approved.get(eid)
         if ex is None:
-            raise ValueError("Only human-confirmed Keep examples can enter the sequence")
+            raise ValueError("Only human-kept examples can enter the sequence")
         aid=ex["asset_id"]
         source=assets.get(aid)
         if source is None or not source["duration"] or ex["end_ms"]>round(source["duration"]*1000):
@@ -123,7 +124,8 @@ def _validate_entries(entries,approved,assets):
             raise ValueError("Sequence exceeds the 600-second review budget")
         normalized.append({"exampleId":eid,"sourceAssetId":aid,
                            "startMs":ex["start_ms"],"endMs":ex["end_ms"],
-                           "kind":ex["label"]})
+                           "kind":ex["label"] if ex["decision"]=="confirmed" else "unverified_moment",
+                           "labelDecision":ex["decision"]})
         seen.add(eid)
     return normalized
 
@@ -201,7 +203,8 @@ def export_sequence(workspace: Path, *, expected_revision: str) -> dict:
                   "episodeId":"review-"+e["exampleId"],"sourceAssetId":e["sourceAssetId"],
                   "kind":e["kind"],"startMs":e["startMs"],"endMs":e["endMs"],
                   "duration":round((e["endMs"]-e["startMs"])/1000,3),
-                  "score":1.0,"reviewed":True
+                  "score":1.0,"reviewed":True,
+                  "labelDecision":e["labelDecision"]
               } for e in checked],
               "disclaimer":"Manual source-time sequence; no confirmation of continuity across scenes"}
         target=workspace/"exports"/"sequences"/(expected_revision+".json")

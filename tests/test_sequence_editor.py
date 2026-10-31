@@ -124,14 +124,14 @@ def test_reel_assembly_revision_checks_review_reversal_and_export(sample):
     # Revoking a formerly Keep review must prevent exporting it.
     review_example(work,asset_id=ids[0],start_seconds=1,end_seconds=11,
         label="highlight_moment",decision="confirmed",highlight="skip",note="Too similar")
-    with pytest.raises(ValueError,match="confirmed Keep"):
+    with pytest.raises(ValueError,match="human-kept"):
         export_sequence(work,expected_revision=new["revisionId"])
     assert_unchanged(original,before)
 
 
 def test_unsafe_or_unapproved_sequence_references_rejected(sample):
     work,ids,original,before=sample
-    with pytest.raises(ValueError,match="Only human-confirmed"):
+    with pytest.raises(ValueError,match="Only human-kept"):
         save_sequence(work,entries=[{"exampleId":"ex-"+"0"*24}],expected_revision=None)
     valid=review_example(work,asset_id=ids[0],start_seconds=2,end_seconds=8,
         label="highlight_moment",decision="confirmed",highlight="keep")["exampleId"]

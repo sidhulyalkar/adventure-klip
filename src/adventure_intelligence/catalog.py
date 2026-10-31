@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS assets (
  capture_time TEXT, activity TEXT NOT NULL DEFAULT 'unknown',
  metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS asset_regions (
+ asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+ region TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS imports (
  source_key TEXT NOT NULL, asset_id TEXT NOT NULL REFERENCES assets(id),
  original_name TEXT NOT NULL, original_path TEXT NOT NULL, size_bytes INTEGER NOT NULL,
