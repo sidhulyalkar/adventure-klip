@@ -26,6 +26,7 @@ from .diagnostics import diagnostics_for_workspace
 from .locking import lock_workspace
 from .sources import resolve_source
 from .sequence_editor import sequence_state, save_sequence, review_combination, export_sequence
+from .curation_queue import review_queue
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -270,6 +271,13 @@ def make_handler(workspace:Path,token:str):
                     self._json(200,studio_overview(workspace))
                 elif path=="/api/sequence":
                     self._json(200,sequence_state(workspace))
+                elif path=="/api/queue":
+                    from urllib.parse import parse_qs
+                    raw_page=q.get("page",["0"])[0]
+                    if not raw_page.isdigit() or len(raw_page)>6:
+                        raise ValueError("Invalid queue page")
+                    self._json(200,review_queue(workspace,
+                        activity=q.get("activity",["all"])[0],page=int(raw_page)))
                 elif path.startswith("/api/asset/"):
                     self._json(200,studio_asset(workspace,path.removeprefix("/api/asset/")))
                 elif path=="/api/comparisons":
