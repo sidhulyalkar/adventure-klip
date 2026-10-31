@@ -14,6 +14,7 @@ from .artifacts import read_artifact
 from .semantic_jobs import completed_document
 from .acoustics import AUDIO_VERSION, acoustic_changes
 from .submersion import submersion_samples, continuous_underwater_intervals
+from .examples import latest_examples, curated_intervals
 from .review_signals import context_intervals, disturbance_proposals
 
 VERSION = "editorial-context-v1"
@@ -168,6 +169,7 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
     if policy not in {"suggest", "automatic"}:
         raise ValueError("Context policy must be suggest or automatic")
     assets = {row["id"]: dict(row) for row in db.execute("SELECT * FROM assets")}
+    reviewed_examples = latest_examples(db)
     events_by_asset = {}
     series_by_asset = {}
     scenes_by_asset = {}
@@ -202,6 +204,9 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
         activity = asset["activity"]
         aid = asset["id"]
         excluded = manual_exclusions(events_by_asset[aid], activity)
+        approved_keeps, approved_skips = curated_intervals(reviewed_examples, aid)
+        excluded += [(max(0,int(e["start_ms"])-300),int(e["end_ms"])+300,
+                      "reviewed_skip_example") for e in approved_skips]
         start, end = int(ep["start_ms"]), int(ep["end_ms"])
         allowed = subtract_exclusions(start, end, excluded)
         continuous = submerged_by_asset.get(aid, [])
@@ -289,6 +294,11 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                     score *= .80
                 if activity in {"ski", "bike"} and low_value_fraction:
                     score *= max(.2, 1 - .7 * low_value_fraction)
+                verified_keep_fraction = min(1,sum(
+                    _overlap(wstart,wend,int(e["start_ms"]),int(e["end_ms"]))
+                    for e in approved_keeps)/max(1,wend-wstart))
+                if verified_keep_fraction:
+                    score = min(1,score+.12*verified_keep_fraction)
                 # A possible crash is a dedicated private review finding.
                 # Never score it as athletic quality, skill or injury.
                 candidate = {
@@ -298,6 +308,7 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                     "score": round(score, 4), "originalEpisodeScore": base,
                     "motionEvidence": motion, "sceneEvidence": scene,
                     "acousticEvidence": sound,
+                    "reviewedKeepFraction": round(verified_keep_fraction,3),
                     "lowValueContext": {"status": "unverified",
                         "supportedFraction": round(low_value_fraction, 3),
                         "intervals": context_overlap},
@@ -314,6 +325,8 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                                       if activity == "snorkeling" and continuity_fraction >= .75 else [])
                                    + (["visual_surface_and_acoustic_disturbance"]
                                       if coincident else [])
+                                   + (["reviewed_positive_example"]
+                                      if verified_keep_fraction > .10 else [])
                                    + (["low_value_scene_hypothesis"]
                                       if low_value_fraction > .25 else [])
                                    + (["camera_disturbance_requires_review"]
