@@ -99,11 +99,21 @@ def test_focused_ui_assets_and_library_api_are_local_authenticated(library):
     try:
         for url,fragment in (
           ("/",b"One moment at a time"),
-          ("/focus.css",b".screen"),
+          ("/focus.css",b"#f4aa9b"),
           ("/focus.js",b"/api/queue"),
           ("/focus_sequence.js",b"/api/sequence")):
             status,data=req("GET",url)
             assert status==200 and fragment in data
+        classic_code,classic_html=req("GET","/classic")
+        assert classic_code==200
+        assert b"compareMode" in classic_html and b"studio.js" in classic_html
+        # The calmer one-player UI remains the default; the advanced suite
+        # is an explicitly requested destination, not an extra panel.
+        focus_code,focus_html=req("GET","/")
+        assert focus_code==200
+        assert b"reviewPlayer" in focus_html and b"libraryTree" in focus_html
+        assert b"sequenceView" in focus_html
+        assert b'theme-color" content="#0d1728"' in focus_html
         assert req("GET","/api/library",authorized=False)[0]==403
         code,raw=req("GET","/api/library")
         assert code==200 and json.loads(raw)["total"]==2
@@ -119,3 +129,15 @@ def test_focused_ui_assets_and_library_api_are_local_authenticated(library):
     finally:
         server.shutdown();server.server_close();thread.join(timeout=5)
     assert {p.name:p.read_bytes() for p in videos}==before
+
+
+def test_focus_palette_uses_only_navy_grey_salmon_white():
+    from importlib.resources import files
+    css=files("adventure_intelligence").joinpath("studio_assets","focus.css").read_text()
+    assert "--navy:#0d1728" in css
+    assert "--salmon:#f4aa9b" in css
+    assert "--offwhite:#f6f8fb" in css
+    assert "--fog:#b5c1d0" in css
+    for legacy in ("#0b1511","#b9e2ab","#93c8a1","#31513a"):
+        assert legacy not in css
+    assert ".screen" in css and ".action-keep" in css
