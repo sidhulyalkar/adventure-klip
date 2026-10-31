@@ -1,3 +1,9 @@
+## 0.6 UI integration and palette update
+
+- Adopt one navy / light-grey / salmon / white theme for the focused screening room, virtual media Library and approved-only Sequence editor.
+- Preserve access to the prior detailed analysis and A/B comparison dashboard via the optional local `/classic` route, without cluttering the default UI.
+- Verify focused view routes, keyboard-review controls, packaged assets, activity correction metadata and source-file immutability. No media reprocessing required for UI changes.
+
 ## 0.6.0 · Focus Studio and virtual Library
 
 - Replace busy multi-card inbox as the default interface with a video-dominant, one-clip-at-a-time screening room.
