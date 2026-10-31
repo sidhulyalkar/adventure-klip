@@ -1,3 +1,21 @@
+## Evidence-first scene atlas and reviewed clips
+
+Klip can now save append-only human-reviewed source intervals and compare already
+cached semantic embeddings without re-encoding original footage. Audio is an
+inexpensive **review-prioritization cue**, not a classifier for maneuvers,
+breathing, crashes or boring moments.
+
+See [Review-driven scene atlas](docs/REVIEW_DRIVEN_SCENE_ATLAS.md) for the staged
+local workflow and safety/evaluation limitations. Useful commands:
+
+```sh
+klip --workspace ~/AdventureAI acoustics
+klip --workspace ~/AdventureAI scout --recipe ski-highlights --top 20
+klip --workspace ~/AdventureAI examples audit
+klip --workspace ~/AdventureAI examples evaluate
+klip --workspace ~/AdventureAI plan --recipe ski-highlights --ranking context --diversity visual --provider siglip2 --seconds 90
+```
+
 # Adventure Klip 🏔️ 🐠 🚵
 
 Incrementally process a permanent DJI folder without moving footage:
