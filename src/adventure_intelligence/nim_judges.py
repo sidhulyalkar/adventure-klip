@@ -190,11 +190,11 @@ def _json_reply(response: dict) -> dict:
 def send_nim(payload: dict, *, endpoint: str, api_key: str, timeout: int = 75) -> dict:
     """Single network request, no retries to avoid surprise expense."""
     _safe_endpoint(endpoint)
-    if not api_key:
-        raise ValueError("An explicit NIM API key is required")
+    if endpoint==DEFAULT_ENDPOINT and not api_key:
+        raise ValueError("An explicit NVIDIA API key is required")
     data=json.dumps(payload, separators=(",",":")).encode()
     req=Request(endpoint,data=data,headers={
-        "Authorization":"Bearer "+api_key,
+        "Authorization":"Bearer "+(api_key or "not-used"),
         "Content-Type":"application/json","Accept":"application/json",
     },method="POST")
     try:
@@ -237,7 +237,8 @@ def summarize_jury(votes: list[dict]) -> dict:
 def evaluate_manifest(manifest: dict, *, frames_dir: Path, models: list[str],
                       allow_external_upload: bool = False,
                       endpoint: str = DEFAULT_ENDPOINT, api_key: str = "",
-                      max_calls: int = 12, transport=None) -> dict:
+                      max_calls: int = 12, transport=None,
+                      checkpoint_file: Path | None = None) -> dict:
     """Defaults to validation-only. No external request without explicit approval."""
     _safe_endpoint(endpoint)
     if not isinstance(models,list) or not 2<=len(models)<=4 or len(models)!=len(set(models)):
@@ -263,16 +264,54 @@ def evaluate_manifest(manifest: dict, *, frames_dir: Path, models: list[str],
     if endpoint==DEFAULT_ENDPOINT and not api_key:
         raise ValueError("NVIDIA_API_KEY required for hosted uploads")
     call=transport or send_nim
+    cached={}
+    checkpoint=None
+    if checkpoint_file is not None:
+        checkpoint=Path(checkpoint_file).expanduser().resolve()
+        checkpoint.parent.mkdir(parents=True,exist_ok=True)
+        if checkpoint.exists():
+            if checkpoint.stat().st_size>2_000_000:
+                raise ValueError("Checkpoint exceeds safe size")
+            with checkpoint.open("r",encoding="utf-8") as stream:
+                for line in stream:
+                    if not line.strip():continue
+                    entry=json.loads(line)
+                    if (not isinstance(entry,dict) or
+                        not isinstance(entry.get("requestId"),str) or
+                        not isinstance(entry.get("vote"),dict) or
+                        entry["vote"].get("status")!="ok"):
+                        raise ValueError("Invalid checkpoint entry")
+                    cached[entry["requestId"]]=entry["vote"]
     outputs=[]
     for clip in clips:
         answers=[]
         for model in models:
+            signature=json.dumps({
+                "clipId":clip["clipId"],"model":model,"endpoint":endpoint,
+                "hashes":clip["frameHashes"],
+                "timestamps":clip["frameTimestampsMs"],
+                "rubric":RUBRIC_VERSION,"systemPrompt":SYSTEM_PROMPT,
+            },sort_keys=True,separators=(",",":"))
+            request_id=sha256(signature.encode()).hexdigest()
+            if request_id in cached:
+                answers.append({**cached[request_id],"resumed":True})
+                continue
             try:
                 response=call(judge_payload(model,clip), endpoint=endpoint,
                               api_key=api_key)
                 assessment=_json_reply(response)
-                answers.append({"model":model,"status":"ok","assessment":assessment,
-                                "usage":response.get("usage") if isinstance(response.get("usage"),dict) else None})
+                vote={"model":model,"status":"ok","assessment":assessment,
+                      "usage":response.get("usage") if isinstance(response.get("usage"),dict) else None}
+                answers.append(vote)
+                if checkpoint is not None:
+                    # Append each accepted response immediately, before the next
+                    # paid request. A connection lost after the server billed but
+                    # before a valid reply cannot be perfectly deduplicated.
+                    with checkpoint.open("a",encoding="utf-8") as ledger:
+                        ledger.write(json.dumps({"requestId":request_id,"vote":vote},
+                                                separators=(",",":"),allow_nan=False)+"\\n")
+                        ledger.flush()
+                        os.fsync(ledger.fileno())
             except (RuntimeError,ValueError) as exc:
                 # Do not serialize exception bodies, raw media, URLs or API keys.
                 answers.append({"model":model,"status":"error","errorType":type(exc).__name__})
