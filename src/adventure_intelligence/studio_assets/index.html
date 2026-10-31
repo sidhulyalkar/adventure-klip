@@ -8,6 +8,7 @@
   <title>Klip · Field Studio</title>
   <link rel="stylesheet" href="/studio.css">
   <script src="/studio.js" defer></script>
+  <script src="/studio_editor.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -57,12 +58,31 @@
             <p class="subtitle">A quieter way to discover, review, and shape your adventures.</p>
           </div>
           <div class="mode" role="tablist" aria-label="Studio mode">
-            <button id="reviewMode" type="button" role="tab" aria-selected="true" class="mode-btn active">Review</button>
+            <button id="queueMode" type="button" role="tab" aria-selected="true" class="mode-btn active">Inbox <span aria-hidden="true">·</span></button>
+            <button id="reviewMode" type="button" role="tab" aria-selected="false" class="mode-btn">Inspect</button>
             <button id="compareMode" type="button" role="tab" aria-selected="false" class="mode-btn">Compare A/B</button>
             <button id="sequenceMode" type="button" role="tab" aria-selected="false" class="mode-btn">Sequence <span aria-hidden="true">↗</span></button>
           </div>
         </div>
-        <section id="reviewWorkspace" class="review-workspace">
+        <section id="queueWorkspace" class="queue-workspace" aria-label="Human video scene triage inbox">
+          <div class="queue-hero">
+            <div><p class="eyebrow">YOUR EDITORIAL INBOX</p><h2>Fewer clips. Better moments.</h2>
+              <p class="subtitle">Klip condenses overlapping proposals. You make the final call.</p></div>
+            <div class="queue-count"><span id="queuePageCount">0</span><small>moments on this page</small></div>
+          </div>
+          <div class="queue-toolbar">
+            <label class="sr-only" for="queueActivity">Choose an activity</label>
+            <select id="queueActivity"><option value="all">All adventures</option><option value="ski">Skiing</option><option value="bike">Biking</option><option value="snorkeling">Snorkeling</option><option value="unknown">Other</option></select>
+            <label class="sr-only" for="queueLane">Choose a review priority</label>
+            <select id="queueLane"><option value="all">All priorities</option><option value="promising">Promising</option><option value="needs_review">Needs review</option><option value="likely_filler">Likely filler</option></select>
+            <span id="queueProgress" class="queue-progress">No clips loaded</span>
+          </div>
+          <div id="queueCards" class="queue-cards" aria-live="polite"></div>
+          <div class="queue-pagination"><button type="button" id="queuePrevious" class="secondary-btn">← Previous</button>
+            <span id="queuePaginationText">Page 1</span><button type="button" id="queueNext" class="secondary-btn">Next batch →</button></div>
+          <p class="queue-footnote">Scene hypotheses are not model certainty. Rejecting a proposed action label and skipping a valid-but-boring clip are different decisions.</p>
+        </section>
+        <section id="reviewWorkspace" class="review-workspace hidden">
           <div class="video-card">
             <div class="video-topline">
               <div class="video-title-stack"><span id="activityTag" class="activity-tag">SKI</span><strong id="clipName">Choose a recording</strong></div>
