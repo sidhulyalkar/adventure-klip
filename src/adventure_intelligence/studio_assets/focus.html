@@ -43,7 +43,7 @@
       <section class="player-shell" aria-label="Clip preview">
         <div class="video-wrap">
           <video id="focusPlayer" playsinline controls preload="metadata" aria-label="Current review clip"></video>
-          <div id="playerEmpty" class="empty-overlay"><div class="empty-icon">▶</div><h2>No clips in this batch</h2><p>Index your recordings, or browse the library to inspect footage directly.</p><button type="button" id="emptyLibrary" class="secondary">Open library</button></div>
+          <div id="playerEmpty" class="empty-overlay"><div class="empty-icon">▶</div><h2>No clips in this batch</h2><p id="emptyExplanation">Suggestions may still be processing. Browse indexed footage without restarting the pipeline.</p><div class="empty-actions"><button type="button" id="emptyLibrary" class="secondary">Open library</button><button type="button" id="emptyNext" class="secondary" hidden>Next batch →</button></div></div>
           <span class="source-flag">SOURCE PREVIEW · READ ONLY</span>
         </div>
       </section>
