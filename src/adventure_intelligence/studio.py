@@ -260,8 +260,11 @@ def make_handler(workspace:Path,token:str):
             if not self._origin_safe():
                 self._json(403,{"error":"Local host required"})
                 return
-            if path=="/":
-                html=paths.joinpath("focus.html").read_text(encoding="utf-8")
+            if path=="/" or path=="/classic":
+                # Focus is the default. Classic keeps the older analysis and
+                # A/B comparison panels available without cluttering Review.
+                name="focus.html" if path=="/" else "index.html"
+                html=paths.joinpath(name).read_text(encoding="utf-8")
                 html=html.replace("KLIP_SESSION_TOKEN",token)
                 self._send(200,html.encode(),"text/html; charset=utf-8")
                 return
