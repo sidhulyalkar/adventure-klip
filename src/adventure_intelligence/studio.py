@@ -33,6 +33,8 @@ _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
 _RESOURCE={
     "/studio.css":("studio.css","text/css; charset=utf-8"),
     "/studio.js":("studio.js","text/javascript; charset=utf-8"),
+    "/studio_editor.js":("studio_editor.js","text/javascript; charset=utf-8"),
+    "/editor.css":("editor.css","text/css; charset=utf-8"),
 }
 
 
