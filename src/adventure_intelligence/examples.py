@@ -30,7 +30,8 @@ def latest_examples(db, *, asset_id: str | None = None) -> list[dict]:
 
 def review_example(workspace, *, asset_id: str, start_seconds: float, end_seconds: float,
                    label: str, decision: str, highlight: str = "neutral",
-                   note: str = "", reviewer: str = "local_user") -> dict:
+                   note: str = "", reviewer: str = "local_user",
+                   proposal: dict | None = None) -> dict:
     if not _LABEL.fullmatch(label):
         raise ValueError("Example label must be lowercase snake-case or namespace token")
     if decision not in DECISIONS or highlight not in HIGHLIGHTS:
@@ -52,6 +53,36 @@ def review_example(workspace, *, asset_id: str, start_seconds: float, end_second
         duration = int((asset["duration"] or 0)*1000)
         if end<=start or (duration>0 and end>duration):
             raise ValueError("Example exceeds source duration or is too short")
+        provenance = None
+        if proposal is not None:
+            if not isinstance(proposal, dict):
+                raise ValueError("Proposal provenance must be an object")
+            source = proposal.get("source")
+            if source not in {"queue","library","manual"}:
+                raise ValueError("Invalid proposal source")
+            pid = proposal.get("id")
+            label_before = proposal.get("label")
+            policy = proposal.get("policyVersion")
+            if not isinstance(pid,str) or not 1<=len(pid)<=180 or not pid.isascii() or not pid.isprintable():
+                raise ValueError("Invalid proposal ID")
+            if not isinstance(label_before,str) or not _LABEL.fullmatch(label_before):
+                raise ValueError("Invalid original proposal label")
+            if policy is not None and (not isinstance(policy,str) or not 1<=len(policy)<=80
+                                       or not policy.isascii() or not policy.isprintable()):
+                raise ValueError("Invalid trim policy version")
+            a, b = proposal.get("startMs"), proposal.get("endMs")
+            if (type(a) is not int or type(b) is not int or a<0 or b<=a
+                    or (duration>0 and b>duration)):
+                raise ValueError("Invalid original proposal interval")
+            suggested_a, suggested_b = proposal.get("suggestedStartMs"),proposal.get("suggestedEndMs")
+            if (suggested_a is None) != (suggested_b is None):
+                raise ValueError("Both proposed trim boundaries are required")
+            if suggested_a is not None and (
+                type(suggested_a) is not int or type(suggested_b) is not int or
+                suggested_a<0 or suggested_b<=suggested_a or
+                (duration>0 and suggested_b>duration)):
+                raise ValueError("Invalid trim suggestion interval")
+            provenance = (asset_id,source,pid,label_before,a,b,policy,suggested_a,suggested_b)
         previous = db.execute(
             "SELECT * FROM example_revisions WHERE example_id=? ORDER BY rowid DESC LIMIT 1",
             (example_id,)).fetchone()
@@ -66,6 +97,12 @@ def review_example(workspace, *, asset_id: str, start_seconds: float, end_second
           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
           (revision,example_id,previous["revision_id"] if previous else None,
            asset_id,start,end,label,decision,highlight,note,reviewer))
+        if provenance is not None:
+            db.execute("""INSERT INTO review_proposal_links
+              (revision_id,asset_id,proposal_source,proposal_id,proposal_label,
+               proposed_start_ms,proposed_end_ms,trim_policy_version,
+               suggested_start_ms,suggested_end_ms)
+              VALUES (?,?,?,?,?,?,?,?,?,?)""",(revision,*provenance))
     return {"exampleId":example_id,"revisionId":revision,"status":"reviewed",
             "revisionsAdded":1,"previousRevisionId":previous["revision_id"] if previous else None}
 
