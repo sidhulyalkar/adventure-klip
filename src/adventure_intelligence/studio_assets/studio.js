@@ -3,7 +3,7 @@
   const el = id => document.getElementById(id);
   const token = document.querySelector('meta[name="klip-session"]').content;
   const state = {assets:[],details:new Map(),asset:null,selected:null,selectedIndex:-1,
-    filter:'all',sort:'quality',decision:'confirmed',highlight:'neutral',mode:'review',
+    filter:'all',sort:'quality',decision:'confirmed',highlight:'neutral',mode:'queue',
     vote:null,range:null};
   const fmt = raw => {let v=Math.max(0,Math.floor(Number(raw)||0));return String(Math.floor(v/60)).padStart(2,'0')+':'+String(v%60).padStart(2,'0');};
   const sec = ms => Math.round(ms/100)/10;
@@ -229,20 +229,21 @@
       await loadDetail(state.asset.id);
       const overview=await api('/api/overview');state.assets=overview.assets;
       stats(overview);library();renderCurrent();
+      window.dispatchEvent(new Event('klip-review-changed'));
       toast(result.status==='unchanged'?'Already saved.':'Review saved. Klip will remember this moment.');
     }catch(error){toast(error.message,true);}
     finally{btn.disabled=false;}
   }
   async function mode(next){
     state.mode=next;
-    el('reviewWorkspace').classList.toggle('hidden',next!=='review');
-    el('compareWorkspace').classList.toggle('hidden',next!=='compare');
-    el('reviewMode').classList.toggle('active',next==='review');
-    el('compareMode').classList.toggle('active',next==='compare');
-    el('reviewMode').setAttribute('aria-selected',String(next==='review'));
-    el('compareMode').setAttribute('aria-selected',String(next==='compare'));
+    for(const tab of ['queue','review','compare','sequence']){
+      el(tab+'Workspace').classList.toggle('hidden',next!==tab);
+      el(tab+'Mode').classList.toggle('active',next===tab);
+      el(tab+'Mode').setAttribute('aria-selected',String(next===tab));
+    }
     if(next==='compare'){el('player').pause();await initCompare();}
     else{el('videoLeft').pause();el('videoRight').pause();}
+    if(next==='sequence'||next==='queue'){el('player').pause();}
   }
   function fillAssetSelect(id,value){
     const node=el(id);node.replaceChildren();
@@ -325,6 +326,8 @@
       library();
     }));
     el('reviewMode').addEventListener('click',()=>mode('review'));
+    el('queueMode').addEventListener('click',()=>mode('queue'));
+    el('sequenceMode').addEventListener('click',()=>mode('sequence'));
     el('compareMode').addEventListener('click',()=>mode('compare').catch(e=>toast(e.message,true)));
     el('sortMoments').addEventListener('change',()=>{
       state.sort=el('sortMoments').value;state.selectedIndex=-1;renderCurrent();
@@ -393,5 +396,23 @@
       else toast('Library is empty. Index DJI videos from your Terminal first.');
     }catch(error){toast('Could not open studio: '+error.message,true);}
   }
-  start();
+  window.KlipStudio = Object.freeze({
+    api,post,media,toast,mode,
+    async inspect(assetId,start,end,label=''){
+      await mode('review');
+      await openAsset(assetId);
+      selectRange(start/1000,end/1000,label);
+      el('player').currentTime=start/1000;
+    },
+    async refresh(){
+      const data=await api('/api/overview');
+      state.assets=data.assets;stats(data);library();
+      if(state.asset) {
+        state.details.delete(state.asset.id);
+        await loadDetail(state.asset.id);
+        renderCurrent();
+      }
+    }
+  });
+  start().then(()=>window.dispatchEvent(new Event('klip-ready')));
 })();
