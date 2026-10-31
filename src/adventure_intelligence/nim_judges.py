@@ -309,7 +309,7 @@ def evaluate_manifest(manifest: dict, *, frames_dir: Path, models: list[str],
                     # before a valid reply cannot be perfectly deduplicated.
                     with checkpoint.open("a",encoding="utf-8") as ledger:
                         ledger.write(json.dumps({"requestId":request_id,"vote":vote},
-                                                separators=(",",":"),allow_nan=False)+"\\n")
+                                                separators=(",",":"),allow_nan=False)+"\n")
                         ledger.flush()
                         os.fsync(ledger.fileno())
             except (RuntimeError,ValueError) as exc:
