@@ -338,6 +338,19 @@
     $('annotateToggle').setAttribute('aria-expanded',String(show));
     if(show)$('fieldLabel').focus();
   }
+  function previewMarkedRange(){
+    const item=state.current;if(!item)return;
+    const start=Number($('fieldStart').value),end=Number($('fieldEnd').value);
+    const asset=state.assets.find(a=>a.id===item.assetId);
+    if(!asset||!Number.isFinite(start)||!Number.isFinite(end)||
+       start<0||end<=start||end>(Number(asset.duration)||0)){
+      report('Check start and end: they must be inside the source recording.',true);
+      return;
+    }
+    state.previewBounds={startMs:Math.round(start*1000),endMs:Math.round(end*1000)};
+    display();seekStart();player.play().catch(()=>{});
+    report('Previewing your in/out selection. Save the annotation to keep these boundaries.');
+  }
   function previewTrim(){
     const item=state.current;
     const suggestion=item?.trimSuggestion;
@@ -378,6 +391,7 @@
     $('skipClip').onclick=()=>save('skip');
     $('replayClip').onclick=()=>{seekStart();player.play().catch(()=>{});};
     $('applyTrim').onclick=previewTrim;
+    $('previewMarked').onclick=previewMarkedRange;
     player.addEventListener('loadedmetadata',seekStart);
     $('annotateToggle').onclick=()=>toggleAnnotation($('annotationPanel').hidden);
     $('closeAnnotation').onclick=()=>toggleAnnotation(false);
