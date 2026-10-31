@@ -25,6 +25,7 @@ from .editorial_quality import editorial_candidates
 from .diagnostics import diagnostics_for_workspace
 from .locking import lock_workspace
 from .sources import resolve_source
+from .sequence_editor import sequence_state, save_sequence, review_combination, export_sequence
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -267,6 +268,8 @@ def make_handler(workspace:Path,token:str):
             try:
                 if path=="/api/overview":
                     self._json(200,studio_overview(workspace))
+                elif path=="/api/sequence":
+                    self._json(200,sequence_state(workspace))
                 elif path.startswith("/api/asset/"):
                     self._json(200,studio_asset(workspace,path.removeprefix("/api/asset/")))
                 elif path=="/api/comparisons":
@@ -307,6 +310,23 @@ def make_handler(workspace:Path,token:str):
                             end_seconds=body["endSeconds"],label=body["label"],
                             decision=body["decision"],highlight=body.get("highlight","neutral"),
                             note=body.get("note",""))
+                elif parsed.path=="/api/sequence":
+                    with lock_workspace(workspace):
+                        result=save_sequence(workspace,entries=body["entries"],
+                            expected_revision=body.get("expectedRevision"),
+                            name=body.get("name","My highlights"))
+                elif parsed.path=="/api/sequence/feedback":
+                    with lock_workspace(workspace):
+                        result=review_combination(workspace,
+                            sequence_revision=body["sequenceRevision"],
+                            left_example_id=body["leftExampleId"],
+                            right_example_id=body["rightExampleId"],
+                            verdict=body["verdict"],reason=body.get("reason","other"),
+                            note=body.get("note",""))
+                elif parsed.path=="/api/sequence/export":
+                    with lock_workspace(workspace):
+                        result=export_sequence(workspace,
+                            expected_revision=body["expectedRevision"])
                 elif parsed.path=="/api/compare":
                     with lock_workspace(workspace):
                         result=compare_clips(
