@@ -1,3 +1,11 @@
+## 0.7.0 · Semantic edge evidence and selective fades
+
+- Cache-only, provenance-checked entrance/exit metadata for OWLv2 object queries, SigLIP2 scene-context similarities, compatible embeddings and audio triage, with explicit unknown coverage.
+- Explain per-join transition suggestions and shared unverified object queries in the existing minimal Sequence inspector.
+- Embed versioned, exact-pair `cut`/`fade` suggestions into approved-only exported edit plans.
+- Add `klip render --transition smart`, applying video/audio fades through black only at suggested joins while preserving traditional cut/fade options.
+- Validate local-only metadata access, malformed model scores, cross-model comparability, render safety and unchanged source bytes.
+
 ## 0.6.1 · Cinematic Focus refinement
 
 - Add quiet film-gate framing, soft navy atmosphere, improved editorial type scale and sparse progress rail to one-clip Review.
