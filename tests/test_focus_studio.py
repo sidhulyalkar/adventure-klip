@@ -1,7 +1,7 @@
 """Focused Review & Library regression tests: security, virtual folders, and asset safety."""
 from __future__ import annotations
 
-import http.client
+import http.client as http_client
 import json
 import threading
 from http.server import ThreadingHTTPServer
@@ -37,7 +37,7 @@ def focused_server(tmp_path, monkeypatch):
 
 def http(server, method, path, data=None, authorized=False):
     app,_,_,_=server
-    conn=http.client.HTTPConnection("127.0.0.1",app.server_port,timeout=10)
+    conn=http_client.HTTPConnection("127.0.0.1",app.server_port,timeout=10)
     headers={"Host":"127.0.0.1:"+str(app.server_port)}
     if authorized:
         headers["X-Klip-Token"]="focus-test-token"
