@@ -35,6 +35,44 @@ def _approved(db):
             if x["decision"]=="confirmed" and x["highlight"]=="keep"}
 
 
+def _join_hints(db,workspace,entries):
+    """Explain a cut using source chronology and compatible cached visuals."""
+    from .scene_atlas import frames_for_asset,clip_feature,similarity
+    if len(entries)<2:
+        return []
+    source={r["id"]:dict(r) for r in db.execute(
+        "SELECT id,activity FROM assets")}
+    cache={}
+    def vector(item):
+        aid=item["sourceAssetId"]
+        if aid not in cache:
+            cache[aid]=frames_for_asset(db,workspace,aid,provider="siglip2")
+        return clip_feature(*cache[aid],item["startMs"],item["endMs"])
+    out=[]
+    for a,b in zip(entries,entries[1:]):
+        flags=[]
+        x,y=a["sourceAssetId"],b["sourceAssetId"]
+        if source.get(x,{}).get("activity")!=source.get(y,{}).get("activity"):
+            flags.append("Activity changes between scenes; check narrative transition")
+        if x==y and 0<=b["startMs"]-a["endMs"]<=6000:
+            flags.append("Nearby source footage may give a smoother natural continuation")
+        duration_a=a["endMs"]-a["startMs"]
+        duration_b=b["endMs"]-b["startMs"]
+        if min(duration_a,duration_b)>0 and max(duration_a,duration_b)/min(duration_a,duration_b)>3:
+            flags.append("Large change in clip duration; check pacing")
+        left,right=vector(a),vector(b)
+        visual=None
+        if left.get("available") and right.get("available") and left["modelKey"]==right["modelKey"]:
+            visual=similarity(left["vector"],right["vector"])
+            if visual is not None and visual>=.94:
+                flags.append("Shots look visually similar; decide whether repetition helps")
+        out.append({"leftExampleId":a["exampleId"],"rightExampleId":b["exampleId"],
+                    "hints":flags or ["No obvious sequence warning from available metadata"],
+                    "visualSimilarity":round(visual,4) if visual is not None else None,
+                    "status":"unverified_editorial_evidence"})
+    return out
+
+
 def sequence_state(workspace: Path) -> dict:
     with connect(workspace) as db:
         approved=_approved(db)
@@ -48,13 +86,14 @@ def sequence_state(workspace: Path) -> dict:
                 "SELECT left_example_id,right_example_id,verdict,reason,note,created_at "
                 "FROM sequence_combination_feedback WHERE sequence_revision_id=? "
                 "ORDER BY rowid", (current["revision_id"],))]
+        hints=_join_hints(db,workspace,entries)
         bank=[{"exampleId":x["example_id"],"assetId":x["asset_id"],
                "startMs":x["start_ms"],"endMs":x["end_ms"],"label":x["label"],
                "note":x["reviewer_note"],"source":names.get(x["asset_id"],"Indexed video")}
               for x in sorted(approved.values(),key=lambda r:(r["asset_id"],r["start_ms"]))]
         return {"schemaVersion":1,"name":current["name"] if current else "My highlights",
                 "revisionId":current["revision_id"] if current else None,
-                "entries":entries,"bank":bank,"feedback":feedback,
+                "entries":entries,"bank":bank,"feedback":feedback,"joinHints":hints,
                 "totalSeconds":round(sum((e["endMs"]-e["startMs"]) for e in entries)/1000,3),
                 "limits":{"maxClips":MAX_CLIPS,"maxSeconds":MAX_DURATION_MS/1000},
                 "note":"Only explicitly confirmed Keep examples can be sequenced"}
