@@ -329,7 +329,14 @@
   function fullscreenPlayer(){
     if(!state.current)return;
     const node=player;
-    if(node.requestFullscreen){node.requestFullscreen().catch(()=>report('Fullscreen is unavailable in this browser.',true));}
+    if(node.requestFullscreen){
+      try{
+        const result=node.requestFullscreen();
+        if(result&&typeof result.catch==='function'){
+          result.catch(()=>report('Fullscreen is unavailable in this browser.',true));
+        }
+      }catch(e){report('Fullscreen is unavailable in this browser.',true);}
+    }
     else if(node.webkitEnterFullscreen){node.webkitEnterFullscreen();}
     else report('Fullscreen is unavailable in this browser.',true);
   }
