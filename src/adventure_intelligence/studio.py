@@ -363,7 +363,7 @@ def make_handler(workspace:Path,token:str):
                             asset_id=body["assetId"],start_seconds=body["startSeconds"],
                             end_seconds=body["endSeconds"],label=body["label"],
                             decision=body["decision"],highlight=body.get("highlight","neutral"),
-                            note=body.get("note",""))
+                            note=body.get("note",""),proposal=body.get("proposal"))
                 elif parsed.path=="/api/region":
                     with lock_workspace(workspace):
                         result=set_asset_region(workspace,
