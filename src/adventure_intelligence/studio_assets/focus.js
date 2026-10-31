@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name="klip-session"]').content;
   const state = {view:'review',page:0,activity:'all',items:[],position:0,current:null,
-    library:[],group:'day',active:null,detail:null,tab:'reviews',queueGeneration:0};
+    library:[],group:'day',active:null,detail:null,tab:'reviews',queueGeneration:0,seen:new Set()};
   const mm = ms => {const n=Math.floor(Math.max(0,Number(ms)||0)/1000);
     return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');};
   const human = str => String(str||'moment').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
@@ -47,7 +47,7 @@
     const generation=++state.queueGeneration;
     const data=await api('/api/queue?activity='+encodeURIComponent(state.activity)+'&page='+state.page);
     if(generation!==state.queueGeneration)return;
-    state.items=data.moments;
+    state.items=data.moments.filter(c=>!state.seen.has(c.assetId+'|'+c.startMs+'|'+c.endMs));
     $('queueExplanation').textContent='Suggestions, not verified actions · '+data.totalAssets+
       ' recordings · '+data.totalPages+' pages';
     $('nextBatch').disabled=!data.hasNext;
@@ -108,9 +108,10 @@
     // The queue can shift after each review. Preserve the next position,
     // rather than jumping back to the first candidate every time.
     const index=state.position;
+    if(state.current)state.seen.add(state.current.assetId+'|'+state.current.startMs+'|'+state.current.endMs);
     await totals();
     const data=await api('/api/queue?activity='+encodeURIComponent(state.activity)+'&page='+state.page);
-    state.items=data.moments;
+    state.items=data.moments.filter(c=>!state.seen.has(c.assetId+'|'+c.startMs+'|'+c.endMs));
     $('nextBatch').disabled=!data.hasNext;
     if(state.items.length)show(Math.min(index,state.items.length-1));
     else if(data.hasNext){state.page++;await loadQueue();}
