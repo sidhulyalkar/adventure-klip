@@ -9,11 +9,11 @@ The local studio now opens **Review** at `/`. **Library** is a second top-level 
 ## Review
 
 - The current review candidate fills a large native video viewer, with its original source streamed read-only. Playback is limited to its suggested in/out interval; it does not export or trim a file.
-- Three primary editorial choices are **Keep**, **Later**, **Skip**. All decisions are saved to revisioned human-review records. Quick decisions always leave the scene label **uncertain** unless it was explicitly marked correct in the annotation panel. Keeping a cinematic moment does not mean its action classification was accurate.
+- Three primary editorial choices are **Keep**, **Later**, **Skip**. All decisions are saved to revisioned human-review records. Quick decisions always leave the scene label **uncertain** unless it was explicitly marked correct in the annotation panel. A human **Keep** enters the sequence clip shelf regardless of label certainty, with the unverified model label explicitly separated from the export kind. Keeping a cinematic moment does not mean its action classification was accurate.
 - **Add details** reveals start/end seconds, scene label, independent label accuracy, editorial decision, and a note. The player is not covered by the form.
 - Navigation uses the existing bounded `/api/queue` (up to 3 distinct candidates from each of 6 recordings). It never silently discards source footage.
 - Shortcuts when not typing in a form: **Space** play/pause; **←/→** previous/next; **K** Keep; **M** Later; **X** Skip; **[ / ]** set in/out. Next reviewed suggestion is surfaced automatically. Shortcuts can be displayed via **Shortcuts ?**.
-- The queue is provisional. Prioritized/visual-similarity hypotheses are not confirmed events. An empty queue is not evidence that all good moments were found. **Later** survives as uncertain data and can appear in a future session.
+- Clips explicitly kept or skipped disappear from the next review queue even if their action classification remains uncertain. "Later" remains eligible for later review.\n- The queue is provisional. Prioritized/visual-similarity hypotheses are not confirmed events. An empty queue is not evidence that all good moments were found. **Later** survives as uncertain data and can appear in a future session.
 
 ## Library
 
