@@ -13,7 +13,7 @@
 <body>
 <div class="app">
   <header class="masthead">
-    <div class="identity"><span class="brand-symbol" aria-hidden="true">◢</span><strong>klip<span class="mint">.</span></strong><span class="identity-small">FIELD STUDIO</span></div>
+    <div class="identity"><span class="brand-symbol" aria-hidden="true">◢</span><strong>klip<span class="mint">.</span></strong><span class="identity-small">FIELD STUDIO / PERSONAL EDITION</span></div>
     <nav class="primary-nav" aria-label="Main navigation">
       <button type="button" data-view="review" class="nav-current">Review</button>
       <button type="button" data-view="library">Library</button>
@@ -35,11 +35,19 @@
             <span id="reviewMeta">Source-relative preview. Nothing is published.</span>
           </div>
           <div class="film-nav">
+            <button id="cinemaToggle" type="button" class="cinema-toggle" aria-pressed="false" aria-label="Toggle cinema viewing layout" title="Cinema layout (F)">
+              <span aria-hidden="true">⛶</span> Cinema
+            </button>
             <button id="previousClip" type="button" aria-label="Previous clip" title="Previous clip">←</button>
             <button id="nextClip" type="button">Next <span>→</span></button>
           </div>
         </div>
-        <div class="screen">
+        <div id="reviewProgress" class="review-progress" role="progressbar" aria-label="Progress through the review batch" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="reviewProgressFill"></span></div>
+        <div class="screen" aria-label="The screening stage">
+          <div class="stage-corner top-left" aria-hidden="true"></div>
+          <div class="stage-corner top-right" aria-hidden="true"></div>
+          <div class="stage-corner bottom-left" aria-hidden="true"></div>
+          <div class="stage-corner bottom-right" aria-hidden="true"></div>
           <video id="reviewPlayer" playsinline controls preload="metadata" aria-label="Current source clip"></video>
           <div id="emptyScreen" class="screen-empty">
             <div class="empty-mark">◈</div>
@@ -50,7 +58,8 @@
         <div class="playback-strip">
           <span id="clipSpan" class="mono">00:00 — 00:00</span>
           <span id="clipNature">Predicted scene · needs human review</span>
-          <button type="button" id="viewOriginal" class="text-action">View in Library ↗</button>
+          <div class="playback-actions"><button type="button" id="replayClip" class="text-action" title="Replay selected interval (R)" disabled>↺ Replay</button>
+            <button type="button" id="viewOriginal" class="text-action">Library ↗</button></div>
         </div>
         <div class="review-bottom">
           <div class="decision-header"><div><p class="eyebrow">YOUR DECISION</p><h2 id="clipHeading">Watch. Decide. Move on.</h2></div>
@@ -155,9 +164,18 @@
       </div>
     </section>
   </main>
-  <footer><span>KLIP / A QUIETER WAY TO FIND THE MOMENTS</span><span>ORIGINAL FOOTAGE · READ ONLY</span></footer>
+  <footer><span>KLIP / THE ADVENTURE, CONSIDERED</span><span>ORIGINAL FOOTAGE · READ ONLY <span class="footer-separator">·</span> <button type="button" id="shortcutsButton" class="footer-shortcuts" aria-label="Show keyboard shortcuts">?</button></span></footer>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="shortcutsDialog" aria-labelledby="shortcutsTitle">
+  <h2 id="shortcutsTitle">Stay in the moment.</h2>
+  <p class="secondary-copy">A few shortcuts so your attention stays on the footage.</p>
+  <dl class="shortcut-list"><div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div><div><dt><kbd>R</kbd></dt><dd>Replay this moment</dd></div>
+  <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next</dd></div>
+  <div><dt><kbd>1</kbd></dt><dd>Keep</dd></div><div><dt><kbd>2</kbd></dt><dd>Skip</dd></div>
+  <div><dt><kbd>3</kbd></dt><dd>Wrong detection</dd></div><div><dt><kbd>F</kbd></dt><dd>Toggle cinema layout</dd></div></dl>
+  <button id="closeShortcuts" type="button" class="outlined">Back to the film</button>
+</dialog>
 <dialog id="joinDialog" aria-labelledby="joinTitle"><form id="joinForm">
   <p class="eyebrow">EDITORIAL CONTINUITY</p><h2 id="joinTitle">Does this cut belong?</h2>
   <p id="joinDescription" class="secondary-copy"></p>
