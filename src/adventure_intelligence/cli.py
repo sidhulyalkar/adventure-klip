@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -21,6 +22,9 @@ from .semantic import generate_semantics
 from .storyboard import plan_storyboard
 from .process import process_folder
 from .run_audit import audit_log
+from .nim_judges import evaluate_manifest, DEFAULT_ENDPOINT
+from .nim_benchmark import prepare_benchmark
+from .nim_calibration import calibrate_workspace
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
@@ -97,6 +101,27 @@ def main(argv: list[str] | None = None) -> int:
     proc.add_argument("--force",action="store_true")
     proc.add_argument("--detector",default="baseline",help="Detector name: baseline, flow (requires [vision]), or installed plugin")
     sub.add_parser("status",help="Summarize catalog, episodes and pipeline status")
+    prep=sub.add_parser("prepare-nim-benchmark",
+                        help="Plan seeded candidate+random intervals; optional LOCAL frame extraction")
+    prep.add_argument("--output-dir",type=Path,required=True,
+                      help="New directory within the Klip workspace")
+    prep.add_argument("--samples",type=int,default=12)
+    prep.add_argument("--seed",type=int,default=20261031)
+    prep.add_argument("--window-seconds",type=int,default=14)
+    prep.add_argument("--decode-frames",action="store_true",
+                      help="Explicitly seek and extract 6 still frames per clip locally")
+    jury=sub.add_parser("judge-nim",help="Opt-in external VLM jury over PRE-EXTRACTED frames")
+    jury.add_argument("manifest",type=Path,help="Explicit JSON list of candidate and random clips")
+    jury.add_argument("--frames-dir",type=Path,required=True,help="Root of approved JPEG/PNG frames")
+    jury.add_argument("--model",action="append",required=True,help="Repeat with 2-4 image-capable NIM models")
+    jury.add_argument("--allow-external-upload",action="store_true",
+                      help="Explicitly transmit selected frames to a third-party endpoint")
+    jury.add_argument("--max-calls",type=int,default=12)
+    jury.add_argument("--endpoint",default=DEFAULT_ENDPOINT)
+    jury.add_argument("--output",type=Path,help="Write JSON result; fails if destination exists")
+    cal=sub.add_parser("calibrate-nim",help="Compare jury scores to explicit local human reviews")
+    cal.add_argument("manifest",type=Path)
+    cal.add_argument("jury_report",type=Path)
     audit=sub.add_parser("audit-log",help="Summarize a completed or ongoing run log without reading media")
     audit.add_argument("log",type=Path,help="Log file produced by --log-file")
     sessions=sub.add_parser("sessions",help="Suggest cross-file sessions for review (never auto-stitch)")
@@ -165,6 +190,42 @@ def main(argv: list[str] | None = None) -> int:
     args=parser.parse_args(argv)
     root=root_at(args.workspace)
     try:
+        if args.command=="calibrate-nim":
+            _print(calibrate_workspace(root,
+                json.loads(args.manifest.expanduser().read_text(encoding="utf-8")),
+                json.loads(args.jury_report.expanduser().read_text(encoding="utf-8"))))
+            return 0
+        if args.command=="prepare-nim-benchmark":
+            _print(prepare_benchmark(root, output_dir=args.output_dir,
+                  sample_count=args.samples,seed=args.seed,
+                  window_ms=args.window_seconds*1000,
+                  decode_frames=args.decode_frames))
+            return 0
+        if args.command=="judge-nim":
+            manifest_path=args.manifest.expanduser().resolve()
+            manifest=json.loads(manifest_path.read_text(encoding="utf-8"))
+            destination=args.output.expanduser().resolve() if args.output else None
+            approved_dir=manifest_path.parent
+            if destination is not None and (
+                    destination.exists() or not destination.is_relative_to(approved_dir)
+                    or destination==manifest_path):
+                raise ValueError("Judge report must be a new file inside the manifest directory")
+            checkpoint=approved_dir/"jury-checkpoint.jsonl" if args.allow_external_upload else None
+            if destination==checkpoint:
+                raise ValueError("Report output cannot overwrite the judge checkpoint")
+            report=evaluate_manifest(
+                manifest,frames_dir=args.frames_dir,models=args.model,
+                allow_external_upload=args.allow_external_upload,
+                endpoint=args.endpoint, max_calls=args.max_calls,
+                checkpoint_file=checkpoint,
+                api_key=(os.environ.get("NVIDIA_API_KEY","")
+                         if args.allow_external_upload else ""))
+            if destination is not None:
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                with destination.open("x",encoding="utf-8") as f:
+                    f.write(json.dumps(report,indent=2,allow_nan=False)+"\n")
+            _print(report)
+            return 0
         if args.command=="audit-log":
             _print(audit_log(args.log))
             return 0
