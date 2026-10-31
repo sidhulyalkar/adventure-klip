@@ -150,8 +150,8 @@ def make_handler(workspace:Path,token:str):
         protocol_version="HTTP/1.1"
 
         def log_message(self,fmt,*args):
-            # Don't leak paths or tokens to terminal logs.
-            print("[studio] "+fmt.split(" %")[0],flush=True)
+            # Never log requested paths: video URL contains session credentials.
+            print("[studio] request handled",flush=True)
 
         def _send(self,status:int,body:bytes=b"",content_type="application/json; charset=utf-8",
                   extra:dict|None=None):
@@ -163,7 +163,7 @@ def make_handler(workspace:Path,token:str):
             self.send_header("X-Frame-Options","DENY")
             self.send_header("Referrer-Policy","no-referrer")
             self.send_header("Content-Security-Policy",
-                "default-src 'none'; script-src 'self'; style-src 'self'; "
+                "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data:; media-src 'self'; connect-src 'self'; "
                 "base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
             for k,v in (extra or {}).items():
