@@ -7,6 +7,7 @@ from datetime import datetime
 from .reels import plan_reel, RECIPES
 from .editorial_quality import editorial_candidates, select_diverse, VERSION as RANK_VERSION
 from .catalog import connect
+from .scene_atlas import enrich_candidates, diverse_representatives
 from pathlib import Path
 
 
@@ -22,11 +23,16 @@ def _date(raw:str|None)->datetime|None:
 
 def plan_storyboard(workspace:Path,recipe:str='best-sequences',max_seconds:int=75,
                     style:str='chronological',ranking:str='legacy',
-                    context_policy:str='suggest')->dict:
+                    context_policy:str='suggest',
+                    diversity:str='none',provider:str='siglip2')->dict:
     if style not in ('chronological','crescendo'):
         raise ValueError('style must be chronological or crescendo')
     if ranking not in ('legacy', 'context'):
         raise ValueError('ranking must be legacy or context')
+    if diversity not in ('none','visual'):
+        raise ValueError('diversity must be none or visual')
+    if provider not in ('siglip2','histogram','stack'):
+        raise ValueError('provider must be siglip2, stack or histogram')
     if max_seconds < 1:
         raise ValueError('max_seconds must be positive')
     if ranking == 'context':
@@ -40,17 +46,29 @@ def plan_storyboard(workspace:Path,recipe:str='best-sequences',max_seconds:int=7
                   and (rule['activity'] is None or activity.get(r['asset_id'])==rule['activity'])]
             candidates, rejected=editorial_candidates(db, workspace, rows,
                                                        policy=context_policy)
+            atlas_metadata=None
+            if diversity=='visual':
+                candidates,atlas_metadata=enrich_candidates(
+                    db,workspace,candidates,provider=provider)
         for candidate in candidates:
             candidate['score']=round(candidate['score']*
                                      rule['kinds'].get(candidate['kind'],0),4)
-        chosen=select_diverse(candidates,max_seconds=max_seconds)
+        if diversity=='visual':
+            chosen,selection_metadata=diverse_representatives(
+                candidates,max_seconds=max_seconds)
+            atlas_metadata={**(atlas_metadata or {}),**selection_metadata}
+        else:
+            chosen=select_diverse(candidates,max_seconds=max_seconds)
         document={'schemaVersion':1,'recipe':recipe,'maxSeconds':max_seconds,
                   'totalSeconds':round(sum(c['duration'] for c in chosen),3),
                   'segments':chosen,'status':'draft',
                   'quality':{'version':RANK_VERSION,'contextPolicy':context_policy,
                              'proposals':len(candidates),'excluded':rejected,
+                             'atlas':atlas_metadata,
                              'warning':'Unverified scene labels require review before publication'}}
     else:
+        if diversity=='visual':
+            raise ValueError('Visual diversity requires --ranking context')
         document=plan_reel(workspace,recipe,max_seconds)
     with connect(workspace) as db:
         dates={r['id']:_date(r['capture_time']) for r in db.execute('SELECT id,capture_time FROM assets')}
@@ -71,7 +89,8 @@ def plan_storyboard(workspace:Path,recipe:str='best-sequences',max_seconds:int=7
         items[:]=[item for _,group in sorted(groups.items(),
             key=lambda x:(sum(y['score'] for y in x[1])/len(x[1]),x[0])) for item in group]
     document['editor']={'version':'storyboard-v2' if ranking=='context' else 'storyboard-v1',
-       'ranking':ranking,'style':style,
+       'ranking':ranking,'style':style,'diversity':diversity,
+       'embeddingProvider':provider if diversity=='visual' else None,
        'selection':'episode scores, non-overlap, duration budget',
        'ordering':'verified chronology when available' if style=='chronological'
                   else 'rising quality across source groups, source-local order preserved',
