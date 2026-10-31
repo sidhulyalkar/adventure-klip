@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/focus.css">
   <link rel="stylesheet" href="/focus_refine.css">
   <script src="/focus.js" defer></script>
+  <script src="/boundary_review.js" defer></script>
 </head>
 <body>
   <div class="app">
@@ -86,6 +87,25 @@
             <button type="button" id="applyTrim" class="secondary small">Preview suggested trim</button>
             <p class="hint">Preview only. Your original interval stays unchanged until you save a review.</p>
           </div>
+          <div class="boundary-inspector-entry">
+            <button type="button" id="openBoundaryInspector" class="ghost small" disabled
+                    aria-expanded="false" aria-controls="boundaryInspector">⌁ Inspect cut boundaries</button>
+            <span class="hint">Optional · cached evidence only</span>
+          </div>
+          <section id="boundaryInspector" class="boundary-inspector" hidden aria-label="Boundary evidence">
+            <div class="boundary-toolbar"><span class="overline">IMAGE MOTION · LOCAL OBSERVATIONS</span><span id="boundaryWindow" class="trim-time"></span></div>
+            <p id="boundaryStatus" class="hint" role="status" aria-live="polite">Not loaded.</p>
+            <div class="boundary-plot" aria-label="Local camera-motion samples">
+              <div id="boundaryBins" class="boundary-bins"></div>
+              <div id="boundaryCore" class="boundary-core" aria-hidden="true"></div>
+            </div>
+            <div class="boundary-range-labels"><span id="boundaryIn"></span><span id="boundaryOut"></span></div>
+            <div id="boundaryHints" class="boundary-hints"></div>
+            <div class="boundary-frame-toolbar"><button id="loadBoundaryFrames" type="button" class="secondary small">Preview 5 local frames</button><span class="hint">Only on request · no model inference</span></div>
+            <div id="boundaryFrames" class="boundary-frames" aria-label="Locally decoded frame previews"></div>
+            <p id="boundaryFrameStatus" class="hint" role="status" aria-live="polite"></p>
+            <p class="hint">Motion troughs are navigation cues, not verified action boundaries. Preview frames approximate browser seek positions.</p>
+          </section>
           <div class="mark-buttons"><button id="markStart" type="button" class="secondary small">[ Set in at playhead</button><button id="markEnd" type="button" class="secondary small">] Set out at playhead</button><button type="button" id="previewMarked" class="secondary small">▶ Preview my cut</button></div>
           <label class="notes">Your note<textarea id="fieldNote" rows="3" maxlength="500" placeholder="Action, wildlife, composition, why it matters..."></textarea></label>
           <div class="annotation-actions"><span>Keep/Skip is editorial. Label accuracy is a separate judgment.</span><button type="submit" id="saveDetails" class="primary">Save annotation</button></div>
