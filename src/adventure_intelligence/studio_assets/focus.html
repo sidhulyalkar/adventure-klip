@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101514">
+  <meta name="theme-color" content="#101827">
   <meta name="klip-session" content="KLIP_SESSION_TOKEN">
   <title>Klip · Review & Library</title>
   <meta name="application-name" content="KLIP FIELD STUDIO">
   <link rel="stylesheet" href="/focus.css">
+  <link rel="stylesheet" href="/focus_refine.css">
   <script src="/focus.js" defer></script>
 </head>
 <body>
@@ -19,7 +20,9 @@
         <button type="button" id="tabLibrary" class="nav">Library</button>
       </nav>
       <div class="header-right">
-        <span class="privacy"><i aria-hidden="true"></i> Local & private</span>
+        <span class="privacy"><i aria-hidden="true"></i> Private</span>
+        <span id="indexedCount" class="indexed-count" aria-live="polite">Catalog</span>
+        <button type="button" class="refresh-catalog" id="refreshCatalog" title="Refresh catalog (no processing)" aria-label="Refresh catalog metadata">↻</button>
         <a class="classic" href="/classic" title="Open the full editing tools">Full studio <span aria-hidden="true">↗</span></a>
       </div>
     </header>
@@ -48,6 +51,7 @@
         <div class="clip-range">
           <span id="clipIn">00:00</span><div class="range-rule"><span id="rangeFill"></span></div><span id="clipOut">00:00</span>
           <button type="button" id="replayClip" class="ghost small" title="Replay current interval">↻ Replay</button>
+          <button type="button" id="focusFullscreen" class="ghost small" title="Fullscreen player (F)">⛶ Expand</button>
         </div>
         <span id="clipEvidence" class="evidence" title="Model suggestions are hypotheses, not confirmed labels">Suggested moment · not yet verified</span>
       </div>
@@ -86,7 +90,7 @@
           <button type="button" id="helpToggle" class="ghost small">Shortcuts ?</button>
         </div>
       </footer>
-      <div id="shortcutHelp" class="shortcut-help" hidden>Space: play/pause <span>·</span> ←/→: previous/next <span>·</span> K: keep <span>·</span> M: later <span>·</span> X: skip <span>·</span> [ / ]: mark in/out</div>
+      <div id="shortcutHelp" class="shortcut-help" hidden>Space: play/pause <span>·</span> ←/→: previous/next <span>·</span> K: keep <span>·</span> M: later <span>·</span> X: skip <span>·</span> F: fullscreen <span>·</span> [ / ]: mark in/out</div>
     </main>
 
     <main id="libraryPage" class="page library-page" hidden>
