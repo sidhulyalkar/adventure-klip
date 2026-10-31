@@ -47,7 +47,11 @@ If a candidate action/event is too long for the maximum, *preserve it whole* and
 flag `manual_split`. When the core plus padding exceeds the budget, sacrifice
 padding first, never any of the action core. For generic motion proposals with no
 verified event, propose a centered shorter **alternative** and clearly state
-that the actual action could be missed. Always keep the original candidate.
+that the actual action could be missed. **Active sequences and generic
+snorkeling candidates are exempt from midpoint shortening** because they may
+contain continuous action or wildlife footage; these retain their full
+candidate interval even when the label is uncertain. Always keep the original
+candidate.
 
 ## Hard invariants
 
