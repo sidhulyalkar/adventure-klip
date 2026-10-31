@@ -28,6 +28,7 @@ from .sources import resolve_source
 from .sequence_editor import sequence_state, save_sequence, review_combination, export_sequence
 from .curation_queue import review_queue
 from .clip_rules import suggest_trim, exclusion_spans
+from .boundary_inspector import boundary_evidence
 from .examples import latest_examples
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
@@ -313,6 +314,15 @@ def make_handler(workspace:Path,token:str):
                         raise ValueError("Invalid queue page")
                     self._json(200,review_queue(workspace,
                         activity=q.get("activity",["all"])[0],page=int(raw_page)))
+                elif path.startswith("/api/boundary/"):
+                    raw_start=q.get("startMs",[""])[0]
+                    raw_end=q.get("endMs",[""])[0]
+                    if (not raw_start.isdigit() or not raw_end.isdigit()
+                            or len(raw_start)>9 or len(raw_end)>9):
+                        raise ValueError("Invalid boundary time")
+                    self._json(200,boundary_evidence(
+                        workspace,path.removeprefix("/api/boundary/"),
+                        int(raw_start),int(raw_end)))
                 elif path.startswith("/api/asset/"):
                     self._json(200,studio_asset(workspace,path.removeprefix("/api/asset/")))
                 elif path=="/api/comparisons":
