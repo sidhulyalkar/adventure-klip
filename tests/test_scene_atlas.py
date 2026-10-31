@@ -255,3 +255,15 @@ def test_cli_scout_and_example_audit_do_not_read_or_modify_origins(sample,capsys
     empty=json.loads(capsys.readouterr().out)
     assert empty["count"]==0
     assert all(v.read_bytes()==("ORIGINAL/"+v.name).encode() for v in videos)
+
+
+
+def test_cross_label_keep_skip_conflict_requires_re_review(sample):
+    work,aids,_=sample
+    review_example(work,asset_id=aids[0],start_seconds=5,end_seconds=12,
+                   label="ski_lift",decision="confirmed",highlight="skip")
+    review_example(work,asset_id=aids[0],start_seconds=5,end_seconds=12,
+                   label="smooth_flow",decision="confirmed",highlight="keep")
+    conflicts=review_inventory(work)["overlapConflicts"]
+    assert len(conflicts)==1
+    assert conflicts[0]["reason"]=="cross_label_editorial_conflict"
