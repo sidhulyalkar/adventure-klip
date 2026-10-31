@@ -110,8 +110,8 @@ def audit_log(log_path: Path) -> dict:
                     "outputFramesPerSecond":rate,"observedComplete":done>=total,
                 }
                 last_event={"kind":"decode","stage":stage,"file":filename}
-                if not recent or recent[-1] != filename:
-                    recent.append(filename)
+                if not recent or recent[-1] != (stage,filename):
+                    recent.append((stage,filename))
                 continue
             if match := _ITEMS_RE.fullmatch(msg):
                 stage=match["stage"]
@@ -158,7 +158,7 @@ def audit_log(log_path: Path) -> dict:
         "medianOutputFramesPerSecondOfObservedCompletions":
             round(median(x["outputFramesPerSecond"] for x in completed),3)
             if completed else None,
-        "decodeSamples":rows[-12:],
+        "decodeSamples":[decoder[key] for key in recent if key in decoder],
         "sourceVerification":{"observedChecksByStage":dict(hash_observations),
                               "distinctStageFilePairs":len(hash_files),
                               "note":"Heartbeat lines are not unique hash operations"},
