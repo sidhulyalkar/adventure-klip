@@ -88,7 +88,9 @@
     $('openBoundaryInspector').setAttribute('aria-expanded','true');
     note('Reading cached evidence…');
     const generation=state.generation;
-    const start=state.item.startMs,end=state.item.endMs;
+    const fieldA=Number($('fieldStart').value)*1000;
+    const fieldB=Number($('fieldEnd').value)*1000;
+    const start=Math.round(fieldA),end=Math.round(fieldB);
     if(!safeMs(start)||!safeMs(end)||end<=start||end-start>180000){
       note('This interval is outside the bounded evidence window. Inspect manually.');
       return;
@@ -107,9 +109,11 @@
   function framePoints(){
     const item=state.item,asset=state.asset;
     if(!item||!asset)return [];
-    const proposed=item.trimSuggestion;
-    const a=proposed&&proposed.canApply?proposed.startMs:item.startMs;
-    const b=proposed&&proposed.canApply?proposed.endMs:item.endMs;
+    const fieldA=Number($('fieldStart').value)*1000;
+    const fieldB=Number($('fieldEnd').value)*1000;
+    const valid=safeMs(fieldA)&&safeMs(fieldB)&&fieldB>fieldA;
+    const a=valid?fieldA:item.startMs;
+    const b=valid?fieldB:item.endMs;
     const duration=asset.duration*1000;
     if(!safeMs(a)||!safeMs(b)||b<=a||!safeMs(duration))return [];
     const positions=[a,(3*a+b)/4,(a+b)/2,(a+3*b)/4,b];
@@ -140,7 +144,7 @@
     $('boundaryFrameStatus').textContent='Decoding five preview frames locally…';
     const generation=state.generation;
     const video=document.createElement('video');
-    video.muted=true;video.playsInline=true;video.preload='metadata';
+    video.muted=true;video.playsInline=true;video.preload='auto';
     video.className='boundary-hidden-video';
     document.body.append(video);state.decoder=video;
     const canvas=document.createElement('canvas');
@@ -155,9 +159,14 @@
       if(!ctx||!Number.isFinite(video.duration))throw Error('Video decoder unavailable');
       for(const at of points){
         if(generation!==state.generation)throw Error('Clip changed');
-        const seek=ready(video,'seeked',10000,generation);
-        video.currentTime=Math.min(Math.max(0,at/1000),Math.max(0,video.duration-.05));
-        await seek;
+        const target=Math.min(Math.max(0,at/1000),Math.max(0,video.duration-.05));
+        if(Math.abs(video.currentTime-target)>.01){
+          const seek=ready(video,'seeked',10000,generation);
+          video.currentTime=target;
+          await seek;
+        }else if(video.readyState<2){
+          await ready(video,'loadeddata',10000,generation);
+        }
         if(generation!==state.generation)throw Error('Clip changed');
         if(video.videoWidth<1||video.videoHeight<1)throw Error('No decoded image');
         ctx.fillStyle='#0c1522';ctx.fillRect(0,0,220,124);
