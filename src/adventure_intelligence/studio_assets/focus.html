@@ -70,6 +70,7 @@
             <label>End (seconds)<input id="fieldEnd" type="number" min="0" step="0.1" required></label>
             <label>Scene or action label<input id="fieldLabel" maxlength="80" pattern="[a-z][a-z0-9_:.]{1,79}" required placeholder="e.g. ski_turn"></label>
             <label>Label accuracy<select id="fieldDecision"><option value="uncertain">Unverified</option><option value="confirmed">Correct</option><option value="rejected">Incorrect</option></select></label>
+            <label>Editorial choice<select id="fieldHighlight"><option value="neutral">Later / unsure</option><option value="keep">Keep</option><option value="skip">Skip</option></select></label>
           </div>
           <div class="mark-buttons"><button id="markStart" type="button" class="secondary small">[ Set in at playhead</button><button id="markEnd" type="button" class="secondary small">] Set out at playhead</button></div>
           <label class="notes">Your note<textarea id="fieldNote" rows="3" maxlength="500" placeholder="Action, wildlife, composition, why it matters..."></textarea></label>
