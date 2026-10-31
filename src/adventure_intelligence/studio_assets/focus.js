@@ -274,7 +274,8 @@
     document.addEventListener('keydown',e=>{
       if(e.metaKey||e.ctrlKey||e.altKey||state.view!=='review')return;
       const t=e.target;
-      if(t&&(/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName)||t.isContentEditable))return;
+      if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable))return;
+      if(t&&t.tagName==='BUTTON'&&(e.key===' '||e.key==='Enter'))return;
       if(e.key===' '){e.preventDefault();if(player.paused)player.play().catch(()=>{});else player.pause();}
       else if(e.key==='ArrowLeft'){e.preventDefault();move(-1).catch(err=>report(err.message,true));}
       else if(e.key==='ArrowRight'){e.preventDefault();move(1).catch(err=>report(err.message,true));}
