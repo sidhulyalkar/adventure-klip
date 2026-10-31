@@ -162,10 +162,18 @@ function drawSequence(){
     board.append(node);
     if(i<state.order.length-1){
       const next=state.order[i+1],feedback=(state.seq.feedback||[]).filter(x=>x.left_example_id===id&&x.right_example_id===next).at(-1);
+      const hint=(state.seq.joinHints||[]).find(x=>x.leftExampleId===id&&x.rightExampleId===next);
       const join=document.createElement('div');join.className='join-row';
       const caption=feedback?(feedback.verdict==='approve'?'✓ Accepted join':'⚑ Rejected join'):'◇ Review this join';
       join.innerHTML='<span>· · ·</span><button type="button"'+(state.dirty?' disabled':'')+'>'+caption+'</button><span>· · ·</span>';
       join.querySelector('button').onclick=()=>openJoin(i);
+      if(hint&&hint.hints.length){
+        join.title=hint.hints.join(' · ');
+        const explanation=document.createElement('span');
+        explanation.className='join-evidence';
+        explanation.textContent=hint.hints[0];
+        join.append(explanation);
+      }
       board.append(join);
     }
   });
@@ -206,7 +214,9 @@ function openJoin(i){
   if(state.dirty){host().toast('Save the sequence before reviewing a join.',true);return;}
   const left=get(state.order[i]),right=get(state.order[i+1]);if(!left||!right)return;
   state.join={left:left.exampleId,right:right.exampleId};
-  $('transitionDescription').textContent=human(left.label||left.kind)+' → '+human(right.label||right.kind)+'. Does this transition work?';
+  const match=(state.seq.joinHints||[]).find(x=>x.leftExampleId===left.exampleId&&x.rightExampleId===right.exampleId);
+  $('transitionDescription').textContent=human(left.label||left.kind)+' → '+human(right.label||right.kind)+
+    '. Does this transition work? '+(match?match.hints.join(' · '):'');
   $('transitionReason').value='continuity';$('transitionComment').value='';$('transitionDialog').showModal();
 }
 async function saveJoin(verdict){
