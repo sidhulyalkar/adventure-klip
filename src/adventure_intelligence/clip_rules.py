@@ -12,7 +12,7 @@ from dataclasses import dataclass
 VERSION = "trim-policy-v1"
 PRESERVE_COMPLETE = frozenset({
     "jump_chain", "carving_flow", "tree_weaving",
-    "technical_feature_chain", "wildlife_encounter",
+    "technical_feature_chain", "wildlife_encounter", "active_sequence",
 })
 REVIEW_ONLY = frozenset({"incident_review", "camera_rhythm_candidate"})
 
@@ -84,7 +84,10 @@ def suggest_trim(*, start_ms: int, end_ms: int, duration_ms: int,
     guards = _normalize_guards(excluded, duration)
     reasons: list[str] = []
     warnings = ["Review the first and final frames; source-relative milliseconds are not frame-aligned."]
-    preserve = kind in PRESERVE_COMPLETE
+    # A generic underwater interval might contain a continuous encounter;
+    # do not arbitrarily cut its middle before a human verifies the scene.
+    preserve = (kind in PRESERVE_COMPLETE or
+                (activity == "snorkeling" and kind == "sustained_motion_candidate"))
     incident = incident_flags or kind in REVIEW_ONLY
     profile = INCIDENT if incident else (PROFILES.get(activity, PROFILES["unknown"]) if preserve
                                         else GENERIC)
@@ -152,7 +155,7 @@ def suggest_trim(*, start_ms: int, end_ms: int, duration_ms: int,
             "warnings": warnings, "requiresReview": True, "timestampBasis": "source_relative_ms",
         }
     if preserve:
-        reasons.append("Kept the entire proposed multi-frame action or encounter interval.")
+        reasons.append("Preserved the full candidate sequence; its content remains unverified.")
     if incident:
         reasons.append("Inspect the event manually; this is not a highlight-quality claim.")
     if not reasons:
