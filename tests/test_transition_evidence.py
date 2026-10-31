@@ -74,7 +74,7 @@ def populate(root,ids,*,different_model=False,with_owl=True):
                     [{"tMs":2000,"objects":[{"label":"fish","score":.44,"reviewed":False},
                           {"label":"shark","score":float(".9") if i==0 else .13}]},
                      {"tMs":8200,"objects":[{"label":"fish","score":.55},
-                          {"label":"inaccurate species","score":float("nan")}]}])
+                          {"label":"inaccurate species","score":1.1}]}])
 
 
 def test_no_model_means_unknown_not_invented_object(world):
@@ -162,8 +162,6 @@ def test_smart_render_applies_fades_selectively_without_source_writes(world,monk
     for aid in ids:
         review_example(root,asset_id=aid,start_seconds=1,end_seconds=11,
             label="highlight_moment",decision="confirmed",highlight="keep")
-    with connect(root) as db:
-        entries=[dict(x) for x in db.execute("SELECT * FROM example_revisions")]
     from adventure_intelligence.examples import latest_examples
     with connect(root) as db:
         refs=[x["example_id"] for x in latest_examples(db)]
