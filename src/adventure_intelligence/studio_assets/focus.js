@@ -5,7 +5,8 @@
   const state = {view:'review',assets:[],queue:[],page:0,activity:'all',index:0,
     hasNext:false,totalPages:0,totalAssets:0,current:null,selectedAsset:null,
     details:new Map(),folder:{kind:'all',value:''},seen:new Set(),busy:false,
-    expanded:new Set(['day']),allExpanded:new Set(),visibleLimit:60,refreshing:false};
+    expanded:new Set(['day']),allExpanded:new Set(),visibleLimit:60,refreshing:false,
+    previewBounds:null};
   const player = $('focusPlayer');
   const secs = ms => Number(ms||0)/1000;
   const mmss = s => {s=Math.max(0,Math.floor(Number(s)||0));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');};
@@ -37,11 +38,22 @@
     return state.details.get(id);
   }
   function updatePanel(item) {
-    $('fieldStart').value=secs(item.startMs).toFixed(1);
-    $('fieldEnd').value=secs(item.endMs).toFixed(1);
+    state.previewBounds=null;
+    $('fieldStart').value=secs(item.startMs).toFixed(3);
+    $('fieldEnd').value=secs(item.endMs).toFixed(3);
     $('fieldLabel').value=item.label||'moment';
     $('fieldDecision').value='uncertain';$('fieldHighlight').value='neutral';
     $('fieldNote').value='';
+    const suggestion=item.trimSuggestion;
+    $('trimProposal').hidden=!suggestion;
+    if(suggestion){
+      $('trimRangeLabel').textContent=mmss(secs(suggestion.startMs))+' – '+mmss(secs(suggestion.endMs));
+      $('trimReason').textContent=[...(suggestion.reasons||[]),...(suggestion.warnings||[])].join(' ');
+      $('applyTrim').hidden=!suggestion.canApply;
+    }
+  }
+  function activeRange(){
+    return state.previewBounds||state.current||{startMs:0,endMs:0};
   }
   function setSelected(item) {
     state.current=item;
@@ -78,18 +90,18 @@
     $('clipTitle').textContent=titleCase(item.label)+' · '+(asset?asset.title:item.sourceName||'Recording');
     $('clipDescription').textContent=(asset?dateOf(asset):'Unknown date')+' · '+(asset&&asset.region?asset.region+' · ':'')+'Suggested interval, '+mmss(secs(item.endMs-item.startMs))+' long';
     $('clipActivity').textContent=(item.activity||asset?.activity||'footage').toUpperCase();
-    $('clipIn').textContent=mmss(secs(item.startMs));$('clipOut').textContent=mmss(secs(item.endMs));
+    const range=activeRange();
+    $('clipIn').textContent=mmss(secs(range.startMs));$('clipOut').textContent=mmss(secs(range.endMs));
     $('clipEvidence').textContent=item.manual?'Manually selected interval':'Suggestion · '+(item.lane||'unverified').replace(/_/g,' ')+' · not confirmed';
     const url=videoUrl(item.assetId);
     if(player.getAttribute('src')!==url){
       player.pause();player.src=url;
-      player.addEventListener('loadedmetadata',function onMeta(){player.removeEventListener('loadedmetadata',onMeta);seekStart();},{once:false});
       player.load();
     }else seekStart();
   }
   function seekStart(){
     if(!state.current||!Number.isFinite(player.duration))return;
-    const t=Math.min(secs(state.current.startMs),Math.max(0,player.duration-0.1));
+    const t=Math.min(secs(activeRange().startMs),Math.max(0,player.duration-0.1));
     try{player.currentTime=t;}catch{}
   }
   async function loadQueue({resetIndex=true,skipEmpty=true}={}){
@@ -326,6 +338,20 @@
     $('annotateToggle').setAttribute('aria-expanded',String(show));
     if(show)$('fieldLabel').focus();
   }
+  function previewTrim(){
+    const item=state.current;
+    const suggestion=item?.trimSuggestion;
+    if(!suggestion?.canApply)return;
+    const start=suggestion.startMs,end=suggestion.endMs;
+    if(!(Number.isInteger(start)&&Number.isInteger(end)&&start>=0&&end>start))return;
+    $('fieldStart').value=secs(start).toFixed(3);
+    $('fieldEnd').value=secs(end).toFixed(3);
+    state.previewBounds={startMs:start,endMs:end};
+    display();
+    seekStart();
+    player.play().catch(()=>{});
+    report('Previewing suggested boundaries; save only after checking the first and final frames.');
+  }
   function fullscreenPlayer(){
     if(!state.current)return;
     const node=player;
@@ -351,6 +377,8 @@
     $('maybeClip').onclick=()=>save('neutral');
     $('skipClip').onclick=()=>save('skip');
     $('replayClip').onclick=()=>{seekStart();player.play().catch(()=>{});};
+    $('applyTrim').onclick=previewTrim;
+    player.addEventListener('loadedmetadata',seekStart);
     $('annotateToggle').onclick=()=>toggleAnnotation($('annotationPanel').hidden);
     $('closeAnnotation').onclick=()=>toggleAnnotation(false);
     $('annotationForm').onsubmit=e=>{e.preventDefault();save($('fieldHighlight').value,{stay:true});};
@@ -361,7 +389,14 @@
     $('focusFullscreen').onclick=fullscreenPlayer;
     $('reviewActivity').onchange=()=>{state.activity=$('reviewActivity').value;state.page=0;state.seen.clear();loadQueue().catch(e=>report(e.message,true));};
     $('helpToggle').onclick=()=>{$('shortcutHelp').hidden=!$('shortcutHelp').hidden;};
-    player.addEventListener('timeupdate',()=>{if(state.current&&player.currentTime>=secs(state.current.endMs)-0.06&&!player.paused){player.pause();}});
+    player.addEventListener('timeupdate',()=>{
+      if(!state.current)return;
+      const range=activeRange();
+      const fraction=Math.max(0,Math.min(1,(player.currentTime-secs(range.startMs))/
+        Math.max(.001,secs(range.endMs-range.startMs))));
+      $('rangeFill').style.width=(100*fraction).toFixed(2)+'%';
+      if(player.currentTime>=secs(range.endMs)-0.06&&!player.paused){player.pause();}
+    });
     player.addEventListener('error',()=>report('Video could not play in this browser. Try Safari for DJI HEVC recordings.',true));
     document.addEventListener('keydown',e=>{
       if(e.metaKey||e.ctrlKey||e.altKey||state.view!=='review')return;
