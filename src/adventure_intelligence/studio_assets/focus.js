@@ -26,6 +26,25 @@
   const post=(path,data)=>api(path,{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
   const fail=e=>toast(e.message||String(e),true);
+  function cinema(enabled){
+    const active=Boolean(enabled)&&state.view==='review';
+    document.body.classList.toggle('cinema-active',active);
+    $('cinemaToggle').setAttribute('aria-pressed',String(active));
+    $('cinemaToggle').title=active?'Return to standard layout (F)':'Expand the playback stage (F)';
+  }
+  function progress(index,total){
+    const percent=total?Math.min(100,Math.round(100*(index+1)/total)):0;
+    $('reviewProgress').setAttribute('aria-valuenow',String(percent));
+    $('reviewProgress').setAttribute('aria-valuetext',total?
+      (index+1)+' of '+total+' proposed moments in this batch':'No proposed moments in this batch');
+    $('reviewProgressFill').style.width=percent+'%';
+  }
+  function replay(){
+    if(!state.current)return;
+    const player=$('reviewPlayer');
+    player.currentTime=Number($('clipIn').value)||state.current.startMs/1000;
+    player.play().catch(()=>toast('This browser cannot play the source codec. Try Safari.',true));
+  }
   function view(name){
     state.view=name;
     for(const key of ['review','library','sequence']){
@@ -35,7 +54,10 @@
       if(name===key)b.setAttribute('aria-current','page');
       else b.removeAttribute('aria-current');
     }
-    if(name!=='review')$('reviewPlayer').pause();
+    if(name!=='review'){
+      $('reviewPlayer').pause();
+      cinema(false);
+    }
     if(name!=='library')$('libraryPlayer').pause();
     if(name==='library')refreshLibrary().catch(fail);
     if(name==='sequence')window.dispatchEvent(new Event('klip-sequence-visible'));
@@ -59,6 +81,9 @@
       $('clipHeading').textContent='Nothing to review here';
       const video=$('reviewPlayer');video.pause();video.removeAttribute('src');video.load();
       $('emptyScreen').classList.remove('hidden');
+      $('stageState').classList.add('hidden');
+      $('replayClip').disabled=true;
+      progress(0,0);
       for(const id of ['keepClip','skipClip','wrongClip'])$(id).disabled=true;
     }
   }
@@ -66,6 +91,7 @@
     const c=state.items[index];if(!c)return;
     state.position=index;state.current=c;
     $('reviewPosition').textContent=(index+1)+' / '+state.items.length;
+    progress(index,state.items.length);
     $('reviewSource').textContent=c.sourceName||'Indexed recording';
     $('reviewMeta').textContent='Indexed activity: '+human(c.activity)+' · unverified · '+human(c.lane);
     $('clipSpan').textContent=mm(c.startMs)+' — '+mm(c.endMs);
@@ -77,13 +103,21 @@
     $('evidenceSummary').textContent=(c.reasons||[]).join(' · ')||'Camera motion is not verified action';
     $('feedbackForm').classList.add('hidden');$('detailsPanel').classList.add('hidden');
     $('detailsToggle').setAttribute('aria-expanded','false');
-    for(const id of ['keepClip','skipClip','wrongClip'])$(id).disabled=false;
+    for(const id of ['keepClip','skipClip','wrongClip','replayClip'])$(id).disabled=false;
     $('previousClip').disabled=index===0&&state.page===0;
     const player=$('reviewPlayer'),generation=++streamGeneration;
     player.pause();player.src=media(c.assetId);player.load();
     $('emptyScreen').classList.add('hidden');
+    $('stageState').textContent='Opening verified local footage…';
+    $('stageState').classList.remove('hidden');
+    player.onerror=()=>{
+      if(generation!==streamGeneration)return;
+      $('stageState').textContent='Playback unavailable here · try Safari for DJI footage';
+      $('stageState').classList.remove('hidden');
+    };
     player.onloadedmetadata=()=>{
       if(generation!==streamGeneration)return;
+      $('stageState').classList.add('hidden');
       player.currentTime=c.startMs/1000;
     };
   }
@@ -269,6 +303,10 @@
   function bind(){
     document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>view(b.dataset.view));
     $('previousClip').onclick=previous;$('nextClip').onclick=next;
+    $('cinemaToggle').onclick=()=>cinema(!document.body.classList.contains('cinema-active'));
+    $('replayClip').onclick=replay;
+    $('shortcutsButton').onclick=()=>$('shortcutsDialog').showModal();
+    $('closeShortcuts').onclick=()=>$('shortcutsDialog').close();
     $('nextBatch').onclick=()=>{state.page++;loadQueue().catch(fail);};
     $('activityFilter').onchange=()=>{state.activity=$('activityFilter').value;state.page=0;loadQueue().catch(fail);};
     $('keepClip').onclick=()=>decide('keep');$('skipClip').onclick=()=>decide('skip');
@@ -308,6 +346,9 @@
       if(e.key==='1'){e.preventDefault();decide('keep');}
       if(e.key==='2'){e.preventDefault();decide('skip');}
       if(e.key==='3'){e.preventDefault();decide('wrong');}
+      if(e.key.toLowerCase()==='f'){e.preventDefault();cinema(!document.body.classList.contains('cinema-active'));}
+      if(e.key.toLowerCase()==='r'){e.preventDefault();replay();}
+      if(e.key==='Escape'&&document.body.classList.contains('cinema-active')){e.preventDefault();cinema(false);}
       if(e.key==='ArrowRight'){e.preventDefault();next();}
       if(e.key==='ArrowLeft'){e.preventDefault();previous();}
       if(e.code==='Space'){
