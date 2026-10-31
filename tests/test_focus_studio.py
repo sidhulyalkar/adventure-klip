@@ -267,3 +267,34 @@ def test_boundary_inspector_is_lazy_and_packaged(focused_server):
     assert b"loadBoundaryFrames').onclick=thumbnails" in script
     assert b"/api/boundary/" in script
     assert b"/api/process" not in script
+
+
+def test_http_review_records_proposed_and_corrected_cut_without_modifying_media(focused_server):
+    _,workspace,asset_id,original=focused_server
+    before=original.read_bytes()
+    review={
+        "assetId":asset_id,"startSeconds":8.2,"endSeconds":17.1,
+        "label":"ski_jump","decision":"uncertain","highlight":"keep",
+        "note":"Retain landing",
+        "proposal":{"source":"queue","id":"ep-1:9000:16000","label":"jump_chain",
+                    "startMs":9000,"endMs":16000,
+                    "policyVersion":"trim-policy-v1",
+                    "suggestedStartMs":7000,"suggestedEndMs":18800}
+    }
+    code,raw=http(focused_server,"POST","/api/reviews",review,authorized=True)
+    assert code==200,raw
+    revision=json.loads(raw)["revisionId"]
+    with connect(workspace) as db:
+        link=db.execute("SELECT * FROM review_proposal_links WHERE revision_id=?",
+                        (revision,)).fetchone()
+        assert link["asset_id"]==asset_id
+        assert (link["proposed_start_ms"],link["proposed_end_ms"])==(9000,16000)
+        assert link["trim_policy_version"]=="trim-policy-v1"
+    assert original.read_bytes()==before
+    review["proposal"]["endMs"] = 999999
+    status,_=http(focused_server,"POST","/api/reviews",review,authorized=True)
+    assert status==400
+    with connect(workspace) as db:
+        assert db.execute("SELECT COUNT(*) FROM review_proposal_links").fetchone()[0]==1
+        assert db.execute("SELECT COUNT(*) FROM example_revisions").fetchone()[0]==1
+    assert original.read_bytes()==before
