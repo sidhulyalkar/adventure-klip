@@ -39,7 +39,7 @@
     $('fieldStart').value=secs(item.startMs).toFixed(1);
     $('fieldEnd').value=secs(item.endMs).toFixed(1);
     $('fieldLabel').value=item.label||'moment';
-    $('fieldDecision').value='uncertain';
+    $('fieldDecision').value='uncertain';$('fieldHighlight').value='neutral';
     $('fieldNote').value='';
   }
   function setSelected(item) {
@@ -230,6 +230,16 @@
         moments.append(button);
       }
       side.append(moments);
+      if(detail.reviews&&detail.reviews.length){
+        side.append(element('div','detail-label','REVIEWED MOMENTS'));
+        for(const review of detail.reviews.slice(0,30)){
+          const button=element('button','moment-link',titleCase(review.label)+' · '+titleCase(review.highlight));
+          button.append(element('span','',mmss(secs(review.startMs))+' – '+mmss(secs(review.endMs))));
+          button.onclick=()=>inspect({assetId:id,activity:asset.activity,label:review.label,
+            startMs:review.startMs,endMs:review.endMs,manual:true});
+          side.append(button);
+        }
+      }
       const inspectButton=element('button','primary detail-button','Review this recording');
       inspectButton.onclick=()=>inspect({assetId:id,activity:asset.activity,label:'moment',startMs:0,endMs:Math.round(Math.min(15,Number(asset.duration)||15)*1000),manual:true});
       side.append(inspectButton,element('p','hint','Virtual folders never move, rename, or modify source video files.'));
@@ -253,7 +263,7 @@
     $('replayClip').onclick=()=>{seekStart();player.play().catch(()=>{});};
     $('annotateToggle').onclick=()=>toggleAnnotation($('annotationPanel').hidden);
     $('closeAnnotation').onclick=()=>toggleAnnotation(false);
-    $('annotationForm').onsubmit=e=>{e.preventDefault();save('neutral',{stay:true});};
+    $('annotationForm').onsubmit=e=>{e.preventDefault();save($('fieldHighlight').value,{stay:true});};
     $('markStart').onclick=()=>{$('fieldStart').value=player.currentTime.toFixed(1);};
     $('markEnd').onclick=()=>{$('fieldEnd').value=player.currentTime.toFixed(1);};
     $('librarySearch').oninput=renderLibrary;
