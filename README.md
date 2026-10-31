@@ -1,3 +1,11 @@
+## Klip 0.6 · Focus Studio and Library
+
+The default studio now shows **one large review clip at a time**, with Keep, Skip, and Wrong detection decisions. The separate **Library** behaves like a virtual file browser: group by filming day, region, activity, original folder, or collection and correct old activity mistakes without modifying video files. The **Sequence** tab preserves the existing approved-only editing workflow.
+
+    klip --workspace ~/AdventureAI studio
+
+For safely indexing a mixed DJI SSD with unknown activity, see [Focus Studio and whole-SSD processing](docs/FOCUS_AND_WHOLE_SSD.md).
+
 # Klip 0.5 · Inbox and Sequence Editor
 
 The local Field Studio now starts with a small, prioritized **editorial Inbox** instead of every raw motion proposal. Preview each moment, Keep it, or Reject with a note explaining a wrong label or boring scene. Approved moments appear on the **Sequence** tab, where you can drag them into order, review transitions, save revisioned drafts, and export a render-compatible JSON plan. The original DJI files remain untouched.
