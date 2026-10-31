@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0d1513">
+<meta name="klip-session" content="KLIP_SESSION_TOKEN">
+<title>Klip · Field Studio</title>
+<link rel="stylesheet" href="/focus.css">
+<script defer src="/focus.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="masthead">
+    <div class="identity"><span class="brand-symbol" aria-hidden="true">◢</span><strong>klip<span class="mint">.</span></strong><span class="identity-small">FIELD STUDIO</span></div>
+    <nav class="primary-nav" aria-label="Main navigation">
+      <button type="button" data-view="review" class="nav-current">Review</button>
+      <button type="button" data-view="library">Library</button>
+      <button type="button" data-view="sequence">Sequence <span id="sequenceNumber" class="tiny-num">0</span></button>
+    </nav>
+    <div class="session"><span class="session-dot"></span><span>LOCAL ONLY</span><span class="soft-separator"></span><span id="reviewedTotal">0 reviewed</span></div>
+  </header>
+  <main>
+    <section id="reviewView" class="view">
+      <div class="review-content">
+        <div class="review-top">
+          <div class="heading-line"><p class="eyebrow">01 / SCREENING ROOM</p>
+            <h1>One moment at a time<span class="mint">.</span></h1></div>
+          <div class="review-step"><span id="reviewPosition">0 / 0</span><span class="step-caption">IN THIS BATCH</span></div>
+        </div>
+        <div class="film-context">
+          <div class="film-source">
+            <strong id="reviewSource">Choose a moment to begin</strong>
+            <span id="reviewMeta">Source-relative preview. Nothing is published.</span>
+          </div>
+          <div class="film-nav">
+            <button id="previousClip" type="button" aria-label="Previous clip" title="Previous clip">←</button>
+            <button id="nextClip" type="button">Next <span>→</span></button>
+          </div>
+        </div>
+        <div class="screen">
+          <video id="reviewPlayer" playsinline controls preload="metadata" aria-label="Current source clip"></video>
+          <div id="emptyScreen" class="screen-empty">
+            <div class="empty-mark">◈</div>
+            <h2>Your footage, center stage.</h2>
+            <p>Only one proposed moment is shown at a time.</p>
+          </div>
+        </div>
+        <div class="playback-strip">
+          <span id="clipSpan" class="mono">00:00 — 00:00</span>
+          <span id="clipNature">Predicted scene · needs human review</span>
+          <button type="button" id="viewOriginal" class="text-action">View in Library ↗</button>
+        </div>
+        <div class="review-bottom">
+          <div class="decision-header"><div><p class="eyebrow">YOUR DECISION</p><h2 id="clipHeading">Watch. Decide. Move on.</h2></div>
+            <button type="button" id="detailsToggle" class="quiet-button" aria-expanded="false">Details <span>⌄</span></button></div>
+          <div id="detailsPanel" class="details-panel hidden">
+            <div class="details-grid">
+              <label>In <span>seconds</span><input id="clipIn" type="number" min="0" step=".1"></label>
+              <label>Out <span>seconds</span><input id="clipOut" type="number" min="0" step=".1"></label>
+              <label class="wide">What actually happens?<select id="clipLabel">
+                <option value="highlight_moment">Highlight worth keeping</option>
+                <option value="carving_flow">Carving / smooth flow</option>
+                <option value="tree_weave">Tree navigation</option>
+                <option value="jump">Jump or landing</option>
+                <option value="wildlife_encounter">Wildlife encounter</option>
+                <option value="underwater_stable">Continuous underwater filming</option>
+                <option value="technical_feature">Technical feature</option>
+                <option value="ski_lift">Chairlift</option>
+                <option value="slow_flat_skiing">Slow / flat skiing</option>
+                <option value="surface_break">Surfacing</option>
+                <option value="non_action">Not an action scene</option>
+              </select></label>
+            </div>
+            <div id="evidenceSummary" class="evidence-text">No independent action verification available.</div>
+          </div>
+          <div class="decision-buttons">
+            <button type="button" id="keepClip" class="action-keep"><span>✓</span> Keep this moment <small>1</small></button>
+            <button type="button" id="skipClip" class="action-skip">Skip <small>2</small></button>
+            <button type="button" id="wrongClip" class="action-wrong">Wrong detection <small>3</small></button>
+          </div>
+          <form id="feedbackForm" class="feedback-form hidden">
+            <div class="feedback-top"><div><p class="eyebrow">REVIEW NOTE</p><h3 id="feedbackTitle">Why doesn't it belong?</h3></div>
+              <button type="button" id="cancelFeedback" class="bare-close" aria-label="Cancel feedback">×</button></div>
+            <label>Reason<select id="feedbackReason">
+              <option value="boring">Correct but not interesting</option>
+              <option value="lift">Lift / transport footage</option>
+              <option value="flat">Slow or flat skiing</option>
+              <option value="surface">Interrupted underwater filming</option>
+              <option value="camera">Camera handling / poor framing</option>
+              <option value="duplicate">Too similar to another clip</option>
+              <option value="other">Other</option>
+            </select></label>
+            <label>Tell Klip what was wrong<textarea id="feedbackNote" rows="2" maxlength="450" minlength="5" required placeholder="E.g., this is the chairlift, not an active downhill run."></textarea></label>
+            <div class="feedback-controls"><button type="button" id="backFeedback">Cancel</button><button type="submit" id="submitFeedback">Save feedback & next →</button></div>
+          </form>
+        </div>
+        <div class="review-footer"><span id="queueExplanation">Potential highlights are suggestions, not verified actions.</span>
+          <div><label class="sr-only" for="activityFilter">Review activity</label><select id="activityFilter"><option value="all">All recordings</option><option value="ski">Skiing</option><option value="bike">Biking</option><option value="snorkeling">Underwater</option><option value="unknown">Other</option></select>
+          <button id="nextBatch" type="button">Next batch →</button></div></div>
+      </div>
+    </section>
+    <section id="libraryView" class="view hidden">
+      <div class="library-head"><div><p class="eyebrow">02 / THE ARCHIVE</p><h1>Everything, in its place<span class="mint">.</span></h1>
+        <p class="secondary-copy">A virtual library. Browsing never moves or renames a video.</p></div>
+        <span id="libraryCount" class="library-count">0 recordings</span></div>
+      <div class="library-toolbar">
+        <div class="search-field"><span aria-hidden="true">⌕</span><input id="librarySearch" type="search" placeholder="Search filenames, regions, days, scenes…" aria-label="Search library"></div>
+        <label class="browse-label" for="libraryGroup">GROUP BY</label>
+        <select id="libraryGroup"><option value="day">Date</option><option value="region">Region</option><option value="activity">Activity</option><option value="folder">Source folder</option><option value="collection">Collection</option></select>
+      </div>
+      <div class="library-shell">
+        <aside class="library-tree" aria-label="Folders and recording hierarchy">
+          <div class="pane-label">BROWSE <span id="treeCount"></span></div>
+          <div id="libraryTree" class="tree-content"></div>
+        </aside>
+        <div class="library-reader">
+          <div id="libraryPlaceholder" class="library-placeholder"><span>◈</span><h2>Choose a recording.</h2><p>Browse by day, region, activity, or source folder.</p></div>
+          <div id="libraryRecord" class="hidden">
+            <div class="record-head"><div><p class="eyebrow">SOURCE RECORDING</p><h2 id="recordName">Recording</h2><p id="recordMetadata" class="secondary-copy"></p></div>
+              <button type="button" id="recordOrganize" class="outlined">Organize ↗</button></div>
+            <video id="libraryPlayer" controls preload="none" playsinline aria-label="Selected library recording"></video>
+            <div class="record-tabs"><button type="button" id="recordClipsTab" class="subtab-current">Reviewed moments</button><button type="button" id="recordSuggestedTab">Suggested segments</button></div>
+            <div id="recordMoments" class="record-moments"></div>
+            <form id="organizeForm" class="organize-form hidden">
+              <div class="organize-top"><h3>Organize this recording</h3><button type="button" id="closeOrganize" aria-label="Close organization form">×</button></div>
+              <p>These are your labels, not AI guesses. Stored separately from the source file.</p>
+              <div class="organize-grid">
+                <label>Region<input id="organizeRegion" maxlength="90" placeholder="e.g. California, Moorea"></label>
+                <label>Specific place<input id="organizePlace" maxlength="90" placeholder="e.g. North shore"></label>
+                <label>Collection<input id="organizeCollection" maxlength="90" placeholder="e.g. Winter 2026"></label>
+                <label>Actual activity<select id="organizeActivity"><option value="">Use indexed label (unverified)</option><option value="ski">Skiing</option><option value="bike">Biking</option><option value="snorkeling">Snorkeling</option><option value="unknown">Other / unknown</option></select></label>
+              </div>
+              <label>Notes<textarea id="organizeNote" rows="2" maxlength="240" placeholder="Optional recording notes"></textarea></label>
+              <button type="submit" id="saveOrganization" class="action-keep">Save library labels</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section id="sequenceView" class="view hidden">
+      <div class="sequence-top"><div><p class="eyebrow">03 / THE CUTTING ROOM</p><h1>Build the story<span class="mint">.</span></h1>
+        <p class="secondary-copy">Only clips you've approved enter the edit.</p></div>
+        <div class="sequence-controls"><span id="draftState">No unsaved changes</span><button type="button" id="saveDraft" class="outlined" disabled>Save draft</button><button type="button" id="exportDraft" class="action-keep" disabled>Export edit plan ↗</button></div></div>
+      <div class="sequence-layout">
+        <aside class="shelf"><div class="pane-label">APPROVED CLIPS <span id="shelfCount"></span></div>
+          <input id="shelfSearch" type="search" placeholder="Find a clip…" aria-label="Search approved clips">
+          <div id="approvedShelf"></div></aside>
+        <div class="edit-main"><div class="edit-title-row"><label>Reel name<input id="reelTitle" maxlength="72" value="My highlights"></label><span id="editDuration">00:00 / 10:00</span></div>
+          <video id="editPlayer" playsinline controls preload="none" aria-label="Selected reel clip preview"></video>
+          <div class="edit-play-row"><span id="editNowPlaying">Select a clip to preview</span><button id="playReel" type="button" class="outlined" disabled>▶ Preview sequence</button></div>
+          <div id="editTimeline" class="edit-timeline" aria-label="Draggable sequence of clips"></div>
+          <p class="edit-hint">Drag to reorder, or use ↑/↓. Review a join to explain why two scenes do or don't belong together. Saving a draft never creates a video.</p></div>
+      </div>
+    </section>
+  </main>
+  <footer><span>KLIP / A QUIETER WAY TO FIND THE MOMENTS</span><span>ORIGINAL FOOTAGE · READ ONLY</span></footer>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="joinDialog" aria-labelledby="joinTitle"><form id="joinForm">
+  <p class="eyebrow">EDITORIAL CONTINUITY</p><h2 id="joinTitle">Does this cut belong?</h2>
+  <p id="joinDescription" class="secondary-copy"></p>
+  <label>What matters?<select id="joinReason"><option value="continuity">Continuity</option><option value="pacing">Pacing</option><option value="duplicate">Repetition</option><option value="visual_mismatch">Visual mismatch</option><option value="activity_mismatch">Activity change</option><option value="narrative">Narrative</option><option value="other">Other</option></select></label>
+  <label>Why?<textarea id="joinNote" maxlength="500" rows="3" placeholder="Optional for approval; required if rejecting"></textarea></label>
+  <div class="dialog-actions"><button type="button" id="closeJoin">Cancel</button><button type="button" id="rejectJoin">Reject join</button><button type="button" id="approveJoin" class="action-keep">Approve join</button></div>
+</form></dialog>
+</body>
+</html>
