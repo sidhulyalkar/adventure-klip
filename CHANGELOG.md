@@ -1,3 +1,12 @@
+## 0.6.0 · Focus Studio and virtual Library
+
+- Replace busy multi-card inbox as the default interface with a video-dominant, one-clip-at-a-time screening room.
+- Keep, Skip with a note, or mark a wrong detection; hide secondary annotation controls until needed.
+- Add filesystem-like virtual organization by filming date, activity, region, original source folder, and collection with search and playback.
+- Store user-confirmed activity, region and place metadata outside original source videos. Display provenance when a date is estimated from a DJI filename.
+- Preserve human-reviewed examples and existing approved-only reel sequences, with no source video writes.
+- Check bundled focused UI scripts, date-provenance behavior, local-only metadata API and immutable source bytes in CI.
+
 ## 0.5.0 · Editorial Inbox and Sequence Cutting Room
 
 - Paged, non-overlapping candidate review across recordings, with provisional low-value and promising lanes; no automatic deletion or unreviewed content rejection.
