@@ -200,3 +200,58 @@ def test_confirmed_skip_trims_cinematic_candidate(sample):
     assert all(c["startMs"]>=20300 for c in plan["segments"])
     assert plan["quality"]["atlas"]["provider"]=="siglip2"
     assert all(v.read_bytes()==("ORIGINAL/"+v.name).encode() for v in videos)
+
+
+
+def test_evaluation_abstains_without_visual_model(sample):
+    from adventure_intelligence.review_evaluation import review_quality_report
+    workspace,aids,videos=sample
+    review_example(workspace,asset_id=aids[0],start_seconds=0,end_seconds=10,
+                   label="ski_lift",decision="confirmed",highlight="skip")
+    report=review_quality_report(workspace)
+    groups=list(report["groups"].values())
+    assert groups
+    row=groups[0]["ski_lift"]
+    assert row["abstained"]==1
+    assert row["precision"] is None and row["recall"] is None
+    assert row["coverage"]==0
+    assert all(v.read_bytes()==("ORIGINAL/"+v.name).encode() for v in videos)
+
+
+def test_evaluation_with_real_cached_context_scores(sample):
+    from adventure_intelligence.review_evaluation import review_quality_report
+    workspace,aids,_=sample
+    aid=aids[0]
+    frames=[]
+    for t in (1000,3000,5000,7000,9000):
+        frames.append({"tMs":t,"sceneScores":{
+            "method":"siglip2_image_text_cosine",
+            "similarities":{"ski_lift":.65,"ski_downhill":.20,
+                            "ski_flat":.16,"ski_stopped":.12}}})
+    with connect(workspace) as db:
+        add_semantics(db,workspace,aid,"context-model","context",frames)
+    review_example(workspace,asset_id=aid,start_seconds=0,end_seconds=10,
+                   label="ski_lift",decision="confirmed",highlight="skip")
+    report=review_quality_report(workspace)
+    row=next(iter(report["groups"].values()))["ski_lift"]
+    assert row["abstained"]==0
+    assert row["tp"]==1
+    assert row["recall"]==1
+    assert "trip" in " ".join(report["evaluationWarnings"]).lower()
+
+
+def test_cli_scout_and_example_audit_do_not_read_or_modify_origins(sample,capsys):
+    from adventure_intelligence.cli import main
+    workspace,aids,videos=sample
+    assert main(["--workspace",str(workspace),"examples","add",aids[0],
+                 "--start","2","--end","8","--label","carving_flow",
+                 "--decision","confirmed","--highlight","keep"])==0
+    capsys.readouterr()
+    assert main(["--workspace",str(workspace),"examples","audit"])==0
+    doc=json.loads(capsys.readouterr().out)
+    assert doc["reviewed"]==1
+    assert main(["--workspace",str(workspace),"scout",
+                 "--recipe","motion-review","--top","10"])==0
+    empty=json.loads(capsys.readouterr().out)
+    assert empty["count"]==0
+    assert all(v.read_bytes()==("ORIGINAL/"+v.name).encode() for v in videos)
