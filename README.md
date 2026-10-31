@@ -1,3 +1,16 @@
+# Klip 1.0 candidate · Auditable run performance
+
+`klip audit-log <log-file>` summarizes stage progress, sparse FFmpeg output
+throughput, source-verification heartbeats and restarts using only an existing
+append-only log. It does **not** read source footage, open the project catalog,
+run processing, acquire a workspace lock or estimate whole-library completion.
+
+While a library processing run is active, test the audit utility in a
+**separate checkout/environment** rather than changing the running one.
+See [run log audit](docs/PROCESSING.md#run-log-audit-and-performance-evaluation).
+
+## Earlier releases
+
 # Klip 0.9 · Preserve the original proposal when saving reviews
 
 Each new user review can record the shown candidate and suggested in/out
