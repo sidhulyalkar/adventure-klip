@@ -131,7 +131,12 @@ function drawSequence(){
   $('exportSequence').disabled=state.dirty||!state.seq.revisionId||!state.order.length;
   $('playSequence').disabled=!state.order.length;
   if(!available.size){const p=document.createElement('p');p.className='muted-paragraph';p.textContent='Keep your first moment in the Inbox to add it to your shelf.';shelf.append(p);}
+  const query=$('sequenceBankSearch').value.trim().toLowerCase();
+  let shown=0;
   for(const m of available.values()){
+    if(query && ![m.label,m.source,m.note].some(v=>String(v||'').toLowerCase().includes(query)))continue;
+    if(shown>=80)continue; // Bounded DOM, not a limit on stored approved clips.
+    shown++;
     const node=document.createElement('div');node.className='shelf-clip';
     node.innerHTML='<div class="shelf-clip-type">'+html(human(m.label))+'</div><strong>'+html(m.source||m.assetId.slice(0,12))+
       '</strong><span class="shelf-clip-time">'+t(m.startMs)+'–'+t(m.endMs)+'</span>'+
@@ -140,6 +145,11 @@ function drawSequence(){
     node.querySelector('.shelf-preview').addEventListener('click',()=>preview(m));
     node.querySelector('.shelf-add').addEventListener('click',()=>add(m.exampleId,state.order.length));
     shelf.append(node);
+  }
+  if(available.size>shown){
+    const more=document.createElement('p');more.className='muted-paragraph';
+    more.textContent='Showing '+shown+' of '+available.size+' approved clips. Refine the search to find more.';
+    shelf.append(more);
   }
   if(!state.order.length){const p=document.createElement('div');p.className='sequence-empty';p.textContent='Drag approved clips here, or use Add.';board.append(p);}
   state.order.forEach((id,i)=>{
@@ -242,6 +252,7 @@ function bind(){
   $('saveSequence').onclick=save;$('exportSequence').onclick=exportPlan;
   $('playSequence').onclick=()=>{if(!state.order.length)return;state.playing=true;state.index=0;preview(get(state.order[0]));};
   $('sequenceName').oninput=dirty;
+  $('sequenceBankSearch').oninput=drawSequence;
   $('sequencePlayer').addEventListener('timeupdate',()=>{
     const v=$('sequencePlayer'),end=Number(v.dataset.endMs)/1000;
     if(end>0&&v.currentTime>=end-.06){v.pause();if(state.playing)advance();}
