@@ -38,6 +38,7 @@ _RESOURCE={
     "/editor.css":("editor.css","text/css; charset=utf-8"),
     "/focus.css":("focus.css","text/css; charset=utf-8"),
     "/focus.js":("focus.js","text/javascript; charset=utf-8"),
+    "/focus_sequence.js":("focus_sequence.js","text/javascript; charset=utf-8"),
 }
 
 
@@ -260,7 +261,7 @@ def make_handler(workspace:Path,token:str):
                 self._json(403,{"error":"Local host required"})
                 return
             if path=="/":
-                html=paths.joinpath("index.html").read_text(encoding="utf-8")
+                html=paths.joinpath("focus.html").read_text(encoding="utf-8")
                 html=html.replace("KLIP_SESSION_TOKEN",token)
                 self._send(200,html.encode(),"text/html; charset=utf-8")
                 return
