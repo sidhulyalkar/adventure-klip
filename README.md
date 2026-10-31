@@ -1,4 +1,10 @@
-# Klip 0.5 · Inbox and Sequence Editor
+# Klip 0.6 · Focused Review and Library
+
+**The default page is now Review:** one large clip at a time, with Keep / Later / Skip and optional annotations. Switch to **Library** for virtual folders by recording day, original folder, manually assigned region, activity, and review status. Search recordings and inspect suggested or previously reviewed intervals. The old multipanel editorial UI remains at `/classic`.
+
+See [Focused Review + Library](docs/FOCUS_REVIEW_LIBRARY.md) for shortcuts, workflow, data safety and limitations.
+
+## Previous studio: Inbox and Sequence Editor
 
 The local Field Studio now starts with a small, prioritized **editorial Inbox** instead of every raw motion proposal. Preview each moment, Keep it, or Reject with a note explaining a wrong label or boring scene. Approved moments appear on the **Sequence** tab, where you can drag them into order, review transitions, save revisioned drafts, and export a render-compatible JSON plan. The original DJI files remain untouched.
 
