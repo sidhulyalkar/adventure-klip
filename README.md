@@ -1,3 +1,7 @@
+## Klip 0.6 · Navy Focus Studio
+
+The primary interface uses a minimal midnight-navy, soft-grey, salmon and white palette. A single video dominates Review, while Library handles virtual date/region/folder organization, and Sequence provides approved-only drag-and-drop editing. The detailed legacy comparison dashboard remains available by opening `/classic` on the local studio server. Changing the UI does not reprocess footage.
+
 ## Klip 0.6 · Focus Studio and Library
 
 The default studio now shows **one large review clip at a time**, with Keep, Skip, and Wrong detection decisions. The separate **Library** behaves like a virtual file browser: group by filming day, region, activity, original folder, or collection and correct old activity mistakes without modifying video files. The **Sequence** tab preserves the existing approved-only editing workflow.
