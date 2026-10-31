@@ -257,7 +257,9 @@ function bind(){
     const v=$('sequencePlayer'),end=Number(v.dataset.endMs)/1000;
     if(end>0&&v.currentTime>=end-.06){v.pause();if(state.playing)advance();}
   });
-  $('sequencePlayer').addEventListener('ended',advance);
+  // The interval timeupdate boundary owns advancement; a second ended handler
+  // could advance twice and skip a clip when source segments finish exactly
+  // at the file boundary.
   $('cancelTransition').onclick=()=>$('transitionDialog').close();
   $('rejectTransition').onclick=()=>saveJoin('reject');
   $('approveTransition').onclick=()=>saveJoin('approve');
