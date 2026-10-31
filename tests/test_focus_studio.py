@@ -4,9 +4,7 @@ from __future__ import annotations
 import http.client
 import json
 import threading
-from datetime import date
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 
 import pytest
 
