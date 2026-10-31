@@ -1,3 +1,13 @@
+## Klip Field Studio
+
+Review and compare your indexed adventure footage in a private, local web UI. The player opens originals read-only, while labels and A/B preferences are appended to the separate workspace database.
+
+~~~bash
+klip --workspace ~/AdventureAI studio
+~~~
+
+See [Field Studio guide](docs/FIELD_STUDIO.md) for setup, keyboard shortcuts, safety, and codec limitations.
+
 ## Evidence-first scene atlas and reviewed clips
 
 Klip can now save append-only human-reviewed source intervals and compare already

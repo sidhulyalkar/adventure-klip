@@ -26,6 +26,7 @@ from .progress import Progress
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
+from .studio import serve_studio
 from .examples import review_example, review_inventory
 from .review_evaluation import review_quality_report
 from .editorial_quality import editorial_candidates
@@ -97,6 +98,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status",help="Summarize catalog, episodes and pipeline status")
     sessions=sub.add_parser("sessions",help="Suggest cross-file sessions for review (never auto-stitch)")
     sessions.add_argument("--gap-minutes",type=float,default=15.0)
+    studio=sub.add_parser('studio',help='Open local, private video review studio')
+    studio.add_argument('--port',type=int,default=0,help='Loopback-only port; 0 chooses a free port')
+    studio.add_argument('--no-browser',action='store_true',help='Print URL without opening a browser')
     review=sub.add_parser("review",help="Create a local HTML report for video/event review")
     review.add_argument("--output",type=Path)
     mark=sub.add_parser('mark',help='Append one human-reviewed activity/incident label')
@@ -271,6 +275,8 @@ def main(argv: list[str] | None = None) -> int:
                 _print({"assets":assets})
         elif args.command=="sessions":
             _print(session_candidates(root,args.gap_minutes))
+        elif args.command=='studio':
+            serve_studio(root,port=args.port,open_browser=not args.no_browser)
         elif args.command=="review":
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":

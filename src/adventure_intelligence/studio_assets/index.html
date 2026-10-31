@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#091312">
+  <meta name="klip-session" content="KLIP_SESSION_TOKEN">
+  <title>Klip · Field Studio</title>
+  <link rel="stylesheet" href="/studio.css">
+  <script src="/studio.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <span class="brand-name">klip<span class="brand-period">.</span></span>
+        <span class="brand-divider"></span>
+        <span class="brand-sub">FIELD STUDIO</span>
+      </div>
+      <div class="top-actions">
+        <span class="local-tag"><span class="live-dot"></span> PRIVATE · ON THIS MAC</span>
+        <span id="topProgress" class="top-progress">0 reviewed</span>
+        <button id="helpBtn" class="icon-btn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="rail" aria-label="Video library">
+        <div class="rail-head">
+          <div>
+            <p class="eyebrow">YOUR LIBRARY</p>
+            <h2>Recordings <span id="libraryCount">0</span></h2>
+          </div>
+          <div class="rail-head-icon" aria-hidden="true">▤</div>
+        </div>
+        <div class="filter-group" role="group" aria-label="Activity filter">
+          <button type="button" data-filter="all" class="filter-pill is-active">All</button>
+          <button type="button" data-filter="ski" class="filter-pill">Ski</button>
+          <button type="button" data-filter="bike" class="filter-pill">Bike</button>
+          <button type="button" data-filter="snorkeling" class="filter-pill">Water</button>
+        </div>
+        <div id="library" class="library" aria-live="polite"></div>
+        <div class="rail-foot">
+          <div class="subtle-line"></div>
+          <p class="eyebrow">YOUR COLLECTION</p>
+          <div class="rail-stat"><span>Reviewed moments</span><strong id="reviewedCount">0</strong></div>
+          <div class="rail-stat"><span>Comparisons</span><strong id="comparisonCount">0</strong></div>
+          <div class="rail-stat"><span>Needs a second look</span><strong id="conflictCount">0</strong></div>
+          <p class="rail-note">Original files stay exactly where they are. Your judgments live in Klip’s separate workspace.</p>
+        </div>
+      </aside>
+      <main class="main">
+        <div class="main-intro">
+          <div>
+            <p class="eyebrow"><span class="accent-line"></span> MOMENTS WORTH KEEPING</p>
+            <h1>Find the good stuff<span>.</span></h1>
+            <p class="subtitle">A quieter way to discover, review, and shape your adventures.</p>
+          </div>
+          <div class="mode" role="tablist" aria-label="Studio mode">
+            <button id="reviewMode" type="button" role="tab" aria-selected="true" class="mode-btn active">Review</button>
+            <button id="compareMode" type="button" role="tab" aria-selected="false" class="mode-btn">Compare A/B</button>
+          </div>
+        </div>
+        <section id="reviewWorkspace" class="review-workspace">
+          <div class="video-card">
+            <div class="video-topline">
+              <div class="video-title-stack"><span id="activityTag" class="activity-tag">SKI</span><strong id="clipName">Choose a recording</strong></div>
+              <span id="durationLabel" class="time-mono">00:00</span>
+            </div>
+            <div class="viewer">
+              <video id="player" controls preload="metadata" playsinline aria-label="Selected recording"></video>
+              <div id="viewerEmpty" class="viewer-empty"><span class="empty-symbol">◈</span><h2>Your next story starts here.</h2><p>Choose a recording from the library.</p></div>
+              <div class="viewer-shade"></div>
+            </div>
+            <div class="video-bottomline">
+              <span><span class="small-indicator"></span> SOURCE PREVIEW · READ ONLY</span>
+              <span id="playbackStatus">Playback at original quality</span>
+            </div>
+          </div>
+          <section class="timeline-card" aria-label="Recording timeline">
+            <div class="section-heading">
+              <div><p class="eyebrow">THE STORYLINE</p><h2>Every moment has its place.</h2></div>
+              <div class="timeline-legend"><span><i class="legend-block mint"></i> Suggested</span><span><i class="legend-block amber"></i> Review cue</span></div>
+            </div>
+            <div class="timeline-ruler"><span>00:00</span><span id="rulerHalf">00:00</span><span id="rulerEnd">00:00</span></div>
+            <div id="visualTimeline" class="visual-timeline" role="group" aria-label="Clickable video chapters">
+              <div id="suggestionTrack" class="timeline-track"></div>
+              <div id="contextTrack" class="timeline-track context-track"></div>
+              <div id="playhead" class="playhead"></div>
+            </div>
+            <input id="seekSlider" class="seek-slider" type="range" min="0" max="1000" value="0" aria-label="Scrub recording">
+            <div class="timeline-bottom">
+              <span id="currentTime" class="time-mono">00:00</span>
+              <span class="timeline-hint">Select a moment below or drag the playhead</span>
+              <span class="time-mono" id="timelineDuration">00:00</span>
+            </div>
+          </section>
+          <section class="moments-section" aria-label="Suggested moments">
+            <div class="section-heading">
+              <div><p class="eyebrow">CURATED CANDIDATES</p><h2>Moments to consider <span id="momentCount" class="count-bubble">0</span></h2></div>
+              <select id="sortMoments" aria-label="Sort suggested moments"><option value="quality">Strongest first</option><option value="time">Chronological</option></select>
+            </div>
+            <div id="moments" class="moments"></div>
+          </section>
+        </section>
+        <section id="compareWorkspace" class="compare-workspace hidden" aria-label="Compare two clips">
+          <div class="section-heading"><div><p class="eyebrow">THE EDITOR'S EYE</p><h2>Which moment tells it better?</h2><p class="subtitle small">Choose two clips. Compare action, clarity, flow, or story. Your judgment stays versioned.</p></div></div>
+          <div class="comparison-grid">
+            <div class="comparison-card">
+              <div class="comparison-title"><span class="comparison-letter">A</span><span>FIRST MOMENT</span></div>
+              <label for="compareLeftAsset" class="sr-only">First recording</label><select id="compareLeftAsset"></select>
+              <label for="compareLeftClip" class="sr-only">First moment</label><select id="compareLeftClip"></select>
+              <video id="videoLeft" playsinline preload="metadata" controls aria-label="First comparison clip"></video>
+              <span id="leftRange" class="range-caption">Choose a segment</span>
+            </div>
+            <div class="comparison-card">
+              <div class="comparison-title"><span class="comparison-letter">B</span><span>SECOND MOMENT</span></div>
+              <label for="compareRightAsset" class="sr-only">Second recording</label><select id="compareRightAsset"></select>
+              <label for="compareRightClip" class="sr-only">Second moment</label><select id="compareRightClip"></select>
+              <video id="videoRight" playsinline preload="metadata" controls aria-label="Second comparison clip"></video>
+              <span id="rightRange" class="range-caption">Choose a segment</span>
+            </div>
+          </div>
+          <div class="comparison-decision">
+            <div><p class="eyebrow">YOUR VERDICT</p><h2>Which clip wins?</h2></div>
+            <div class="vote-buttons" role="group" aria-label="Comparison preference">
+              <button type="button" class="vote" data-vote="left">A is stronger</button>
+              <button type="button" class="vote" data-vote="tie">Equally good</button>
+              <button type="button" class="vote" data-vote="right">B is stronger</button>
+              <button type="button" class="vote" data-vote="uncertain">Not sure</button>
+            </div>
+            <div class="compare-meta"><label for="compareReason">What mattered most?</label><select id="compareReason"><option value="action">The action</option><option value="continuity">Continuity</option><option value="composition">Composition</option><option value="clarity">Visual clarity</option><option value="story">Story</option><option value="variety">Variety</option><option value="wildlife">Wildlife behavior</option><option value="technique">Technique</option><option value="other">Other</option></select><input id="compareNote" maxlength="500" aria-label="Comparison note" placeholder="Optional note about this comparison"></div>
+            <button type="button" class="primary-btn" id="saveComparison" disabled>Save comparison <span>↗</span></button>
+          </div>
+        </section>
+      </main>
+      <aside class="inspector" aria-label="Moment review details">
+        <div class="inspector-title"><p class="eyebrow">THE INSPECTOR</p><span class="inspector-icon">⌘</span></div>
+        <div class="inspector-inner">
+          <div class="focus-card">
+            <div class="focus-index">01 / SELECTED MOMENT</div>
+            <h2 id="momentTitle">Select a moment</h2>
+            <div class="focus-times"><div><small>IN</small><strong id="focusIn">00:00</strong></div><span class="focus-arrow">→</span><div><small>OUT</small><strong id="focusOut">00:00</strong></div></div>
+            <button id="playSelected" class="secondary-btn" type="button" disabled>▶ &nbsp; Play this moment</button>
+          </div>
+          <div class="inspector-divider"></div>
+          <div class="evidence-block">
+            <div class="eyebrow">WHY THIS CLIP?</div>
+            <p id="evidenceText" class="muted-paragraph">Select a suggested section to inspect its evidence.</p>
+            <div id="evidencePills" class="evidence-pills"></div>
+          </div>
+          <div class="inspector-divider"></div>
+          <form id="reviewForm">
+            <p class="eyebrow">YOUR CALL</p>
+            <h3>Teach Klip what matters.</h3>
+            <div class="form-row">
+              <label>Start (seconds)<input id="reviewStart" type="number" min="0" step=".1" required></label>
+              <label>End (seconds)<input id="reviewEnd" type="number" min="0" step=".1" required></label>
+            </div>
+            <label for="reviewLabel">What is happening?</label>
+            <select id="reviewLabel" required></select>
+            <label for="reviewDecision">Is that label correct?</label>
+            <div class="option-grid" role="group" aria-label="Label validity">
+              <button type="button" data-decision="confirmed" class="option-button selected">Yes</button>
+              <button type="button" data-decision="rejected" class="option-button">No</button>
+              <button type="button" data-decision="uncertain" class="option-button">Unsure</button>
+            </div>
+            <label>Should it make the reel?</label>
+            <div class="option-grid" role="group" aria-label="Highlight preference">
+              <button type="button" data-highlight="keep" class="option-button">Keep</button>
+              <button type="button" data-highlight="skip" class="option-button">Skip</button>
+              <button type="button" data-highlight="neutral" class="option-button selected">Maybe</button>
+            </div>
+            <label for="reviewNote">Your observation <span class="optional">OPTIONAL</span></label>
+            <textarea id="reviewNote" rows="3" maxlength="500" placeholder="What makes this moment worth keeping, or not?"></textarea>
+            <button id="saveReview" class="primary-btn" type="submit" disabled>Save to Klip <span>↗</span></button>
+          </form>
+          <div class="inspector-divider"></div>
+          <div class="review-history">
+            <p class="eyebrow">YOUR RECENT REVIEWS</p>
+            <div id="reviewHistory" class="history-list"><p class="muted-paragraph">No reviews for this recording yet.</p></div>
+          </div>
+        </div>
+        <div class="inspector-foot"><span class="small-indicator"></span> Nothing is published automatically.</div>
+      </aside>
+    </div>
+    <footer class="footer"><span>KLIP / MADE FOR THE MOMENTS BETWEEN THE MOMENTS</span><span>⌘ LOCAL SESSION · NO UPLOADS</span></footer>
+  </div>
+  <div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
+  <dialog id="helpDialog" class="help-dialog">
+    <h2>In the flow.</h2><p>Keyboard shortcuts to stay in the moment.</p>
+    <div class="shortcut"><kbd>Space</kbd><span>Play or pause</span></div>
+    <div class="shortcut"><kbd>← / →</kbd><span>Seek 3 seconds</span></div>
+    <div class="shortcut"><kbd>[ / ]</kbd><span>Set selection in / out</span></div>
+    <div class="shortcut"><kbd>J / K</kbd><span>Previous / next suggestion</span></div>
+    <div class="shortcut"><kbd>Esc</kbd><span>Close this window</span></div>
+    <button type="button" id="closeHelp" class="primary-btn">Back to the footage</button>
+  </dialog>
+</body>
+</html>
