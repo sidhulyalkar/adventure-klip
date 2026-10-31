@@ -38,6 +38,7 @@
     return state.details.get(id);
   }
   function updatePanel(item) {
+    window.KlipBoundaryInspector?.select(item,state.assets.find(a=>a.id===item.assetId));
     state.previewBounds=null;
     $('fieldStart').value=secs(item.startMs).toFixed(3);
     $('fieldEnd').value=secs(item.endMs).toFixed(3);
@@ -76,6 +77,7 @@
     $('batchProgress').textContent='Review queue';
     $('batchDetail').textContent=state.totalAssets+' recordings indexed · batch '+(state.page+1)+' of '+Math.max(1,state.totalPages);
     if(!item){
+      window.KlipBoundaryInspector?.select(null,null);
       $('clipTitle').textContent='Nothing to review yet';$('clipDescription').textContent='Browse your source recordings, or process additional video.';
       $('clipIn').textContent='00:00';$('clipOut').textContent='00:00';$('clipEvidence').textContent='No candidate selected';
       $('clipActivity').textContent='CLIP REVIEW';$('playerEmpty').hidden=false;
