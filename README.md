@@ -1,3 +1,7 @@
+## Klip 0.6.1 · Cinematic Focus
+
+The calm one-clip screening room now has a delicately framed, video-first stage, a minimal batch progress rule, one-key Replay, an optional Cinema layout, and discreet shortcut help. The navy / soft-grey / salmon / white palette remains consistent across Review, Library and Sequence. See [Cinematic Focus](docs/CINEMATIC_FOCUS.md). Source videos, processing caches, and reviewed edit history are unchanged.
+
 ## Klip 0.6 · Navy Focus Studio
 
 The primary interface uses a minimal midnight-navy, soft-grey, salmon and white palette. A single video dominates Review, while Library handles virtual date/region/folder organization, and Sequence provides approved-only drag-and-drop editing. The detailed legacy comparison dashboard remains available by opening `/classic` on the local studio server. Changing the UI does not reprocess footage.
