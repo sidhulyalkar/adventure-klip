@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -21,6 +22,7 @@ from .semantic import generate_semantics
 from .storyboard import plan_storyboard
 from .process import process_folder
 from .run_audit import audit_log
+from .nim_judges import evaluate_manifest, DEFAULT_ENDPOINT
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
@@ -97,6 +99,15 @@ def main(argv: list[str] | None = None) -> int:
     proc.add_argument("--force",action="store_true")
     proc.add_argument("--detector",default="baseline",help="Detector name: baseline, flow (requires [vision]), or installed plugin")
     sub.add_parser("status",help="Summarize catalog, episodes and pipeline status")
+    jury=sub.add_parser("judge-nim",help="Opt-in external VLM jury over PRE-EXTRACTED frames")
+    jury.add_argument("manifest",type=Path,help="Explicit JSON list of candidate and random clips")
+    jury.add_argument("--frames-dir",type=Path,required=True,help="Root of approved JPEG/PNG frames")
+    jury.add_argument("--model",action="append",required=True,help="Repeat with 2-4 image-capable NIM models")
+    jury.add_argument("--allow-external-upload",action="store_true",
+                      help="Explicitly transmit selected frames to a third-party endpoint")
+    jury.add_argument("--max-calls",type=int,default=12)
+    jury.add_argument("--endpoint",default=DEFAULT_ENDPOINT)
+    jury.add_argument("--output",type=Path,help="Write JSON result; fails if destination exists")
     audit=sub.add_parser("audit-log",help="Summarize a completed or ongoing run log without reading media")
     audit.add_argument("log",type=Path,help="Log file produced by --log-file")
     sessions=sub.add_parser("sessions",help="Suggest cross-file sessions for review (never auto-stitch)")
@@ -165,6 +176,23 @@ def main(argv: list[str] | None = None) -> int:
     args=parser.parse_args(argv)
     root=root_at(args.workspace)
     try:
+        if args.command=="judge-nim":
+            manifest=json.loads(args.manifest.expanduser().read_text(encoding="utf-8"))
+            report=evaluate_manifest(
+                manifest,frames_dir=args.frames_dir,models=args.model,
+                allow_external_upload=args.allow_external_upload,
+                endpoint=args.endpoint, max_calls=args.max_calls,
+                api_key=(os.environ.get("NVIDIA_API_KEY","")
+                         if args.allow_external_upload else ""))
+            if args.output:
+                destination=args.output.expanduser().resolve()
+                if destination.exists() or destination==args.manifest.expanduser().resolve():
+                    raise ValueError("Judge report output already exists or overlaps the manifest")
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                with destination.open("x",encoding="utf-8") as f:
+                    f.write(json.dumps(report,indent=2,allow_nan=False)+"\n")
+            _print(report)
+            return 0
         if args.command=="audit-log":
             _print(audit_log(args.log))
             return 0
