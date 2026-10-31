@@ -1,3 +1,13 @@
+# Klip 0.5 · Inbox and Sequence Editor
+
+The local Field Studio now starts with a small, prioritized **editorial Inbox** instead of every raw motion proposal. Preview each moment, Keep it, or Reject with a note explaining a wrong label or boring scene. Approved moments appear on the **Sequence** tab, where you can drag them into order, review transitions, save revisioned drafts, and export a render-compatible JSON plan. The original DJI files remain untouched.
+
+```sh
+klip --workspace ~/AdventureAI studio
+```
+
+See [Curation Inbox and Sequence](docs/CURATION_INBOX_AND_SEQUENCE.md) for the workflow and limitations.
+
 ## Klip Field Studio
 
 Review and compare your indexed adventure footage in a private, local web UI. The player opens originals read-only, while labels and A/B preferences are appended to the separate workspace database.

@@ -122,6 +122,26 @@ CREATE TABLE IF NOT EXISTS pairwise_revisions (
  FOREIGN KEY(previous_revision_id) REFERENCES pairwise_revisions(revision_id)
 );
 CREATE INDEX IF NOT EXISTS pairwise_reviews ON pairwise_revisions(comparison_id);
+CREATE TABLE IF NOT EXISTS sequence_draft_revisions (
+ revision_id TEXT PRIMARY KEY,
+ previous_revision_id TEXT REFERENCES sequence_draft_revisions(revision_id),
+ name TEXT NOT NULL,
+ entries_json TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sequence_combination_feedback (
+ feedback_id TEXT PRIMARY KEY,
+ sequence_revision_id TEXT NOT NULL REFERENCES sequence_draft_revisions(revision_id),
+ left_example_id TEXT NOT NULL,
+ right_example_id TEXT NOT NULL,
+ verdict TEXT NOT NULL CHECK(verdict IN ('approve','reject')),
+ reason TEXT NOT NULL,
+ note TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS sequence_feedback_revision
+ ON sequence_combination_feedback(sequence_revision_id);
+
 """
 
 

@@ -1,3 +1,11 @@
+## 0.5.0 · Editorial Inbox and Sequence Cutting Room
+
+- Paged, non-overlapping candidate review across recordings, with provisional low-value and promising lanes; no automatic deletion or unreviewed content rejection.
+- Keep/reject quick review with required explanation for skipped or incorrectly classified scenes; re-reviewable revisions remain in the local catalog.
+- Source-safe drag-and-drop reel board restricted to human-approved clips, keyboard-accessible order controls and timed source preview.
+- Per-join approval or rejection with reasons, revisioned draft edits, stale-write protection, and validated render-compatible JSON plan export.
+- Tests and CI check for source immutability, review semantics, queue deduplication, HTTP authorization, packaged static assets and both browser scripts.
+
 ## 0.4.0 · Klip Field Studio
 
 - Introduce a professional, responsive, local-only review UI with video playback, time-aligned event timelines, selection, annotation, evidence inspection, A/B comparisons, and shortcuts.
