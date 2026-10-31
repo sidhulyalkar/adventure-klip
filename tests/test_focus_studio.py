@@ -226,3 +226,44 @@ def test_explicit_skipped_interval_blocks_trim_expansion(focused_server):
     assert out["status"]=="suggested"
     assert out["startMs"]>=4300  # explicit skip ends at 4000 + 300ms guard
     assert original.read_bytes()==before
+
+
+def test_boundary_inspector_api_is_token_protected_and_has_no_side_effects(focused_server):
+    _,workspace,asset_id,original=focused_server
+    before=original.read_bytes()
+    endpoint=f"/api/boundary/{asset_id}?startMs=5000&endMs=15000"
+    code,body=http(focused_server,"GET",endpoint,authorized=False)
+    assert code==403
+    code,body=http(focused_server,"GET",endpoint,authorized=True)
+    assert code==200,body
+    payload=json.loads(body)
+    assert payload["assetId"]==asset_id
+    assert payload["status"]=="insufficient_evidence"
+    assert payload["hints"]==[]
+    assert all(b["level"] is None for b in payload["bins"])
+    assert payload["requiresReview"] is True
+    assert original.read_bytes()==before
+    for bad in (
+        f"/api/boundary/{asset_id}?startMs=-1&endMs=1000",
+        f"/api/boundary/{asset_id}?startMs=1000&endMs=1000",
+        f"/api/boundary/{asset_id}?startMs=1000&endMs=999999999",
+        f"/api/boundary/{asset_id}?startMs=abc&endMs=2000",
+        f"/api/boundary/not-a-valid-id?startMs=0&endMs=1000",
+    ):
+        status,_=http(focused_server,"GET",bad,authorized=True)
+        assert status==400,bad
+    assert original.read_bytes()==before
+
+
+def test_boundary_inspector_is_lazy_and_packaged(focused_server):
+    code,body=http(focused_server,"GET","/")
+    assert code==200 and b"boundary_review.js" in body
+    assert b'id="openBoundaryInspector"' in body
+    assert b'id="loadBoundaryFrames"' in body
+    code,script=http(focused_server,"GET","/boundary_review.js")
+    assert code==200
+    assert b"Inspect" in script or b"boundaryBins" in script
+    assert b"thumbnails" in script
+    assert b"loadBoundaryFrames').onclick=thumbnails" in script
+    assert b"/api/boundary/" in script
+    assert b"/api/process" not in script
