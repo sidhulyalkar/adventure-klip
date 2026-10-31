@@ -108,6 +108,24 @@ CREATE INDEX IF NOT EXISTS example_reviews_by_example
  ON example_revisions(example_id,created_at);
 CREATE INDEX IF NOT EXISTS example_reviews_by_asset
  ON example_revisions(asset_id,start_ms,end_ms);
+CREATE TABLE IF NOT EXISTS review_proposal_links (
+ revision_id TEXT PRIMARY KEY REFERENCES example_revisions(revision_id),
+ asset_id TEXT NOT NULL REFERENCES assets(id),
+ proposal_source TEXT NOT NULL CHECK(proposal_source IN ('queue','library','manual')),
+ proposal_id TEXT NOT NULL,
+ proposal_label TEXT NOT NULL,
+ proposed_start_ms INTEGER NOT NULL,
+ proposed_end_ms INTEGER NOT NULL,
+ trim_policy_version TEXT,
+ suggested_start_ms INTEGER,
+ suggested_end_ms INTEGER,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK (proposed_start_ms >= 0 AND proposed_end_ms > proposed_start_ms),
+ CHECK ((suggested_start_ms IS NULL AND suggested_end_ms IS NULL)
+     OR (suggested_start_ms >= 0 AND suggested_end_ms > suggested_start_ms))
+);
+CREATE INDEX IF NOT EXISTS review_proposal_asset
+ ON review_proposal_links(asset_id,proposal_id);
 CREATE TABLE IF NOT EXISTS pairwise_revisions (
  revision_id TEXT PRIMARY KEY,
  comparison_id TEXT NOT NULL,
