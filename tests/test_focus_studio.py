@@ -59,10 +59,15 @@ def test_focus_is_default_while_legacy_editor_remains(focused_server):
     assert b"focus-test-token" in body
     assert b'id="reviewPage"' in body and b'id="libraryPage"' in body
     assert b"/focus.js" in body and b"/focus.css" in body
+    assert b"/focus_refine.css" in body
+    assert b'id="refreshCatalog"' in body
+    assert b'id="emptyNext"' in body
+    assert b'id="focusFullscreen"' in body
     code,old=http(focused_server,"GET","/classic")
     assert code==200 and b'id="queueWorkspace"' in old
     for path,needle in (("/focus.js",b"/api/reviews"),
-                        ("/focus.css",b".video-wrap")):
+                        ("/focus.css",b".video-wrap"),
+                        ("/focus_refine.css",b"--bg:#0d1725")):
         code,body=http(focused_server,"GET",path)
         assert code==200 and needle in body
     assert b"cdn." not in body
@@ -156,3 +161,27 @@ def test_explicit_keep_or_skip_is_not_suggested_again_but_later_can_return():
     assert _group_candidates(candidates,[review],aid,"ski")==[]
     review["highlight"]="neutral"
     assert len(_group_candidates(candidates,[review],aid,"ski"))==1
+
+
+def test_catalog_refresh_route_is_read_only_even_with_unprocessed_recording(focused_server):
+    _,workspace,asset_id,original=focused_server
+    before=original.read_bytes()
+    code,raw=http(focused_server,"GET","/api/overview",authorized=True)
+    assert code==200
+    overview=json.loads(raw)
+    assert overview["assets"][0]["id"]==asset_id
+    assert overview["assets"][0]["reviews"]==0
+    assert overview["assets"][0]["proposals"]==0
+    assert original.read_bytes()==before
+
+
+def test_quiet_ui_does_not_claim_catalog_count_is_processing_completion(focused_server):
+    code,body=http(focused_server,"GET","/focus.js")
+    assert code==200
+    assert b"indexed" in body
+    assert b"async function refreshCatalog" in body
+    assert b"skipped>=2" in body
+    assert b"visibleLimit:60" in body
+    assert b"loadQueue({skipEmpty:false})" in body
+    # No inference endpoint or processing job is called during navigation.
+    assert b"/api/process" not in body
