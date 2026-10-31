@@ -1,4 +1,12 @@
-# Klip 0.7 · Evidence-aware clip boundaries
+# Klip 0.8 · Cached boundary inspector (opt-in)
+
+Inspect local, cached motion evidence around an in/out range without
+reprocessing source files. A **Preview 5 local frames** button decodes at
+most five frames from one recording only when explicitly clicked.
+Neither feature modifies source clips or automatically applies edits.
+See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md).
+
+## Previous: Evidence-aware clip boundaries
 
 The focused review screen now offers an optional **Preview suggested trim**
 action. A deterministic, versioned trim policy protects complete multi-frame
