@@ -272,7 +272,6 @@ def make_handler(workspace:Path,token:str):
                 elif path=="/api/sequence":
                     self._json(200,sequence_state(workspace))
                 elif path=="/api/queue":
-                    from urllib.parse import parse_qs
                     raw_page=q.get("page",["0"])[0]
                     if not raw_page.isdigit() or len(raw_page)>6:
                         raise ValueError("Invalid queue page")
