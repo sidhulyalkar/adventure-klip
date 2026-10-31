@@ -87,10 +87,18 @@ a hosted video endpoint works.
      --output ~/AdventureAI/nim-benchmark/pilot-01/jury-results.json
    ```
 
-   If a request fails, the result indicates an error without sending
-   another paid/restricted request automatically. Different model families
-   may require model-specific parameters and may not support still-frame
-   arrays. Never count such errors as low-quality video.
+   Successful model votes are also checkpointed immediately to
+   `jury-checkpoint.jsonl` in the manifest folder, with request fingerprints
+   based on the exact frame hashes, model, prompt version and endpoint.
+   Rerunning the same experiment skips these completed votes instead of
+   resending them. Failed requests are not silently retried during a run.
+   A network failure **after** the provider accepted a request but
+   **before** the client received its response can still cause duplicate
+   billing on a deliberate rerun; at-most-once billing cannot be guaranteed
+   from the client alone. Check your provider usage before retrying.
+
+   Different model families may require model-specific parameters and may not
+   support still-frame arrays. Never count such errors as low-quality video.
 
 5. Use Klip's existing Review/Library to make explicit human choices on
    the **same** source intervals. Then compare:
