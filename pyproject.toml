@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "adventure-klip"
-version = "0.3.3"
+version = "0.4.0"
 description = "Read-only video indexing, calibrated temporal event graphs, and intelligent adventure highlights"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +27,9 @@ adventure = "adventure_intelligence.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+adventure_intelligence = ["studio_assets/*.html", "studio_assets/*.css", "studio_assets/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
