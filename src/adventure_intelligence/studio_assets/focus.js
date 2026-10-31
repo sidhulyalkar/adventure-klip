@@ -88,7 +88,11 @@
     const asset=state.assets.find(a=>a.id===item.assetId);
     $('playerEmpty').hidden=true;
     $('clipTitle').textContent=titleCase(item.label)+' · '+(asset?asset.title:item.sourceName||'Recording');
-    $('clipDescription').textContent=(asset?dateOf(asset):'Unknown date')+' · '+(asset&&asset.region?asset.region+' · ':'')+'Suggested interval, '+mmss(secs(item.endMs-item.startMs))+' long';
+    const shown=activeRange();
+    $('clipDescription').textContent=(asset?dateOf(asset):'Unknown date')+' · '+
+      (asset&&asset.region?asset.region+' · ':'')+
+      (state.previewBounds?'Previewing selected cut, ':'Candidate interval, ')+
+      mmss(secs(shown.endMs-shown.startMs))+' long';
     $('clipActivity').textContent=(item.activity||asset?.activity||'footage').toUpperCase();
     const range=activeRange();
     $('clipIn').textContent=mmss(secs(range.startMs));$('clipOut').textContent=mmss(secs(range.endMs));
