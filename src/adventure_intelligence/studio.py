@@ -36,6 +36,7 @@ _RESOURCE={
     "/studio_editor.js":("studio_editor.js","text/javascript; charset=utf-8"),
     "/editor.css":("editor.css","text/css; charset=utf-8"),
     "/focus.css":("focus.css","text/css; charset=utf-8"),
+    "/focus_refine.css":("focus_refine.css","text/css; charset=utf-8"),
     "/focus.js":("focus.js","text/javascript; charset=utf-8"),
 }
 
