@@ -100,6 +100,7 @@ def test_focused_ui_assets_and_library_api_are_local_authenticated(library):
         for url,fragment in (
           ("/",b"One moment at a time"),
           ("/focus.css",b"#f4aa9b"),
+          ("/classic_theme.css",b"--bg:#0d1728"),
           ("/focus.js",b"/api/queue"),
           ("/focus_sequence.js",b"/api/sequence")):
             status,data=req("GET",url)
@@ -107,6 +108,7 @@ def test_focused_ui_assets_and_library_api_are_local_authenticated(library):
         classic_code,classic_html=req("GET","/classic")
         assert classic_code==200
         assert b"compareMode" in classic_html and b"studio.js" in classic_html
+        assert b"classic_theme.css" in classic_html
         # The calmer one-player UI remains the default; the advanced suite
         # is an explicitly requested destination, not an extra panel.
         focus_code,focus_html=req("GET","/")
