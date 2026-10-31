@@ -140,7 +140,16 @@
           (review.verdict==='approve'?'✓ Approved cut':'⚑ Rejected cut'):'◇ Review this cut');
         button.disabled=st.dirty;
         button.onclick=()=>openJoin(i);
-        join.append(button);timeline.append(join);
+        join.append(button);
+        const cue=(st.data.joinHints||[]).find(h=>
+          h.leftExampleId===id&&h.rightExampleId===next);
+        if(cue){
+          const hint=node('span',cue.suggestedTransition==='fade'?
+            'Suggested soft break':'Suggested natural cut','join-method');
+          hint.title='Provisional edit guidance from cached scene edges, not a verified match';
+          join.append(hint);
+        }
+        timeline.append(join);
       }
     });
     timeline.ondragover=e=>e.preventDefault();
@@ -173,8 +182,19 @@
     st.join={left:left.exampleId,right:right.exampleId};
     const warning=(st.data.joinHints||[]).find(h=>
       h.leftExampleId===left.exampleId&&h.rightExampleId===right.exampleId);
+    const evidence=warning?.edgeEvidence;
+    const observed=warning?.objectQueries||[];
+    const visual=warning?.visualSimilarity;
+    const objectText=observed.length?
+      ' · Common object queries: '+observed.slice(0,5).join(', ')+' (unverified)':'';
+    const cueText=visual!==null&&visual!==undefined?
+      ' · Edge visual cosine: '+Number(visual).toFixed(3)+' (uncalibrated)':'';
+    const coverage=evidence?
+      ' · Sample coverage: '+evidence.outgoing.objectSampleCount+
+      ' outgoing / '+evidence.incoming.objectSampleCount+' incoming object frames':'';
     $('joinDescription').textContent=human(left.label||left.kind)+' → '+
-      human(right.label||right.kind)+'. '+(warning?warning.hints.join(' · '):'Review the cut.');
+      human(right.label||right.kind)+'. '+(warning?warning.hints.join(' · '):'Review the cut.')+
+      objectText+cueText+coverage;
     $('joinNote').value='';$('joinDialog').showModal();
   }
   async function judgeJoin(verdict){
