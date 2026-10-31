@@ -83,6 +83,26 @@ CREATE TABLE IF NOT EXISTS semantic_active (
  PRIMARY KEY(asset_id,provider),
  FOREIGN KEY(asset_id,config_id) REFERENCES semantic_jobs(asset_id,config_id)
 );
+CREATE TABLE IF NOT EXISTS example_revisions (
+ revision_id TEXT PRIMARY KEY,
+ example_id TEXT NOT NULL,
+ previous_revision_id TEXT,
+ asset_id TEXT NOT NULL REFERENCES assets(id),
+ start_ms INTEGER NOT NULL,
+ end_ms INTEGER NOT NULL,
+ label TEXT NOT NULL,
+ decision TEXT NOT NULL CHECK(decision IN ('confirmed','rejected','uncertain')),
+ highlight TEXT NOT NULL CHECK(highlight IN ('keep','skip','neutral')),
+ reviewer_note TEXT NOT NULL DEFAULT '',
+ reviewer TEXT NOT NULL DEFAULT 'local_user',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK(end_ms > start_ms),
+ FOREIGN KEY(previous_revision_id) REFERENCES example_revisions(revision_id)
+);
+CREATE INDEX IF NOT EXISTS example_reviews_by_example
+ ON example_revisions(example_id,created_at);
+CREATE INDEX IF NOT EXISTS example_reviews_by_asset
+ ON example_revisions(asset_id,start_ms,end_ms);
 """
 
 
