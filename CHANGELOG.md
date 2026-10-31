@@ -1,3 +1,10 @@
+## 0.4.0 · Klip Field Studio
+
+- Introduce a professional, responsive, local-only review UI with video playback, time-aligned event timelines, selection, annotation, evidence inspection, A/B comparisons, and shortcuts.
+- Serve only indexed, source-hash-verified videos over loopback HTTP with tokenized byte-range requests; preserve original footage.
+- Append pairwise preference revisions to SQLite, with no automatic publication.
+- Package HTML/CSS/JS and test serving, security, source immutability, HTTP ranges, reviews, A/B writes, wheel contents, and JS syntax.
+
 # Adventure Klip changes
 
 ## 0.3.3
