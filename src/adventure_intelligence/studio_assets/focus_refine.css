@@ -113,3 +113,14 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{
 @media(prefers-reduced-motion:reduce){
   .square,.secondary,.ghost,.decision,.primary{transition:none}
 }
+
+.empty-actions{display:flex;justify-content:center;gap:9px;flex-wrap:wrap;margin-top:15px}
+.empty-overlay{z-index:1}
+.empty-overlay .secondary{font-size:12px}
+#emptyNext[hidden]{display:none}
+#focusFullscreen:disabled,#replayClip:disabled{opacity:.35}
+@media(max-width:650px){
+  .empty-actions{gap:7px}
+  .empty-actions .secondary{padding:9px 12px}
+  .asset-detail{scroll-margin-top:18px}
+}
