@@ -95,6 +95,9 @@ def test_reel_assembly_revision_checks_review_reversal_and_export(sample):
     current=sequence_state(work)
     assert [e["exampleId"] for e in current["entries"]]==refs[::-1]
     assert current["totalSeconds"]==20
+    assert len(current["joinHints"])==1
+    assert current["joinHints"][0]["visualSimilarity"] is None
+    assert current["joinHints"][0]["status"]=="unverified_editorial_evidence"
     feedback=review_combination(work,sequence_revision=one["revisionId"],
         left_example_id=refs[1],right_example_id=refs[0],
         verdict="reject",reason="continuity",note="Abrupt change in terrain")
