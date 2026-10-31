@@ -1,4 +1,10 @@
-# Klip 0.6 · Focused Review and Library
+# Klip 0.6 · Quiet Review + Library
+
+The focused studio now uses a low-noise navy, grey, white and salmon palette. **Refresh catalog** reads newly indexed metadata during a long-running processing job without restarting analysis. A large clip viewer includes optional fullscreen, while the Library defaults to collapsed collections and renders 60 recording rows at a time. These are UI-only optimizations and do not change the source videos.
+
+See [Focused Review + Library](docs/FOCUS_REVIEW_LIBRARY.md) for the full interface and shortcuts.
+
+## Original Focused Review and Library
 
 **The default page is now Review:** one large clip at a time, with Keep / Later / Skip and optional annotations. Switch to **Library** for virtual folders by recording day, original folder, manually assigned region, activity, and review status. Search recordings and inspect suggested or previously reviewed intervals. The old multipanel editorial UI remains at `/classic`.
 
