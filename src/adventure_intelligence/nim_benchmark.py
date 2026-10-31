@@ -53,7 +53,7 @@ def plan_benchmark(assets: list[dict], episodes: list[dict], *,
         a,b=ep.get("start_ms"),ep.get("end_ms")
         if type(a) is not int or type(b) is not int or a<0 or b<=a:
             continue
-        if b-a>30000 or b>round(eligible[aid]["duration"]*1000):
+        if b-a<3000 or b-a>30000 or b>round(eligible[aid]["duration"]*1000):
             continue
         # An episode already represents a bounded candidate, not a guaranteed event.
         candidates.append((aid,a,b))
