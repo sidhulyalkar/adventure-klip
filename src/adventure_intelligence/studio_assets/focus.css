@@ -91,7 +91,7 @@ footer{background:#0b1526}
   content:"";position:absolute;inset:0;z-index:2;pointer-events:none;
   background:linear-gradient(180deg,#0c16263d,transparent 12%,transparent 90%,#0c16264d);
 }
-.screen video{position:relative;z-index:1}
+.screen video{z-index:1}
 .stage-corner{
   width:16px;height:16px;position:absolute;z-index:3;
   pointer-events:none;opacity:.56;
