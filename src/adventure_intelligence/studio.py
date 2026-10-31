@@ -41,6 +41,7 @@ _RESOURCE={
     "/focus.css":("focus.css","text/css; charset=utf-8"),
     "/focus_refine.css":("focus_refine.css","text/css; charset=utf-8"),
     "/focus.js":("focus.js","text/javascript; charset=utf-8"),
+    "/boundary_review.js":("boundary_review.js","text/javascript; charset=utf-8"),
 }
 
 
