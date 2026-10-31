@@ -4,7 +4,7 @@ const $=id=>document.getElementById(id), host=()=>window.KlipStudio;
 const t=ms=>{const v=Math.floor(Math.max(0,Number(ms)||0)/1000);return String(Math.floor(v/60)).padStart(2,'0')+':'+String(v%60).padStart(2,'0');};
 const human=s=>String(s||'moment').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
 const html=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state={queue:[],page:0,activity:'all',lane:'all',selected:null,seq:null,order:[],dirty:false,join:null,playing:false,index:0};
+const state={queue:[],page:0,activity:'all',lane:'all',selected:null,seq:null,order:[],dirty:false,join:null,playing:false,index:0,inlineVideo:null};
 function warn(e){host().toast(e.message||String(e),true);}
 async function loadQueue(){
   const result=await host().api('/api/queue?activity='+state.activity+'&page='+state.page);
@@ -16,6 +16,7 @@ async function loadQueue(){
   drawQueue();
 }
 function drawQueue(){
+  if(state.inlineVideo){state.inlineVideo.pause();state.inlineVideo.removeAttribute('src');state.inlineVideo.load();state.inlineVideo=null;}
   const box=$('queueCards');box.replaceChildren();
   const rows=state.queue.filter(x=>state.lane==='all'||x.lane===state.lane);
   if(!rows.length){const p=document.createElement('p');p.className='queue-empty';p.textContent='Nothing here. Try another priority or the next batch of recordings.';box.append(p);return;}
@@ -28,7 +29,25 @@ function drawQueue(){
       '<div class="queue-card-buttons"><button type="button" class="queue-view">Preview</button><button type="button" class="queue-keep">✓ Keep</button><button type="button" class="queue-reject">✕ Reject</button></div>';
     const preview=()=>host().inspect(m.assetId,m.startMs,m.endMs,m.label).catch(warn);
     card.querySelector('.queue-view').addEventListener('click',preview);
-    card.querySelector('.queue-card-media').addEventListener('click',preview);
+    card.querySelector('.queue-card-media').addEventListener('click',()=>{
+      if(state.inlineVideo){state.inlineVideo.pause();state.inlineVideo.removeAttribute('src');state.inlineVideo.load();}
+      const video=document.createElement('video');
+      video.controls=true;video.playsInline=true;video.preload='none';
+      video.className='queue-inline-preview';video.setAttribute('aria-label','Review candidate source segment');
+      video.src=host().media(m.assetId);
+      const surface=card.querySelector('.queue-card-media');
+      surface.replaceWith(video);
+      state.inlineVideo=video;
+      const start=m.startMs/1000,end=m.endMs/1000;
+      video.addEventListener('loadedmetadata',()=>{
+        video.currentTime=start;
+        video.play().catch(()=>host().toast('Try Safari for DJI playback.',true));
+      },{once:true});
+      video.addEventListener('timeupdate',()=>{
+        if(video.currentTime>=end-.06)video.pause();
+      });
+      video.load();
+    });
     card.querySelector('.queue-keep').addEventListener('click',async()=>{
       try{
         await host().post('/api/reviews',{assetId:m.assetId,startSeconds:m.startMs/1000,endSeconds:m.endMs/1000,
