@@ -37,6 +37,7 @@ _RESOURCE={
     "/studio_editor.js":("studio_editor.js","text/javascript; charset=utf-8"),
     "/editor.css":("editor.css","text/css; charset=utf-8"),
     "/focus.css":("focus.css","text/css; charset=utf-8"),
+    "/classic_theme.css":("classic_theme.css","text/css; charset=utf-8"),
     "/focus.js":("focus.js","text/javascript; charset=utf-8"),
     "/focus_sequence.js":("focus_sequence.js","text/javascript; charset=utf-8"),
 }
