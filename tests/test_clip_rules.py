@@ -135,3 +135,20 @@ def test_all_proposed_intervals_stay_bounded_and_preserve_long_action_core():
                 if out["status"] not in {"manual_split","blocked","manual_review"}:
                     assert out["startMs"]<=start and out["endMs"]>=end
 
+
+
+def test_continuous_active_sequence_is_preserved_even_if_unverified():
+    result=propose(10000,30000,kind="active_sequence",activity="ski")
+    assert result["startMs"]<=10000
+    assert result["endMs"]>=30000
+    assert result["status"] in {"suggested","unchanged"}
+    assert result["durationMs"]<=24000
+
+
+def test_snorkeling_generic_motion_does_not_midpoint_cut_a_continuous_shot():
+    result=propose(12000,35000,kind="sustained_motion_candidate",
+                   activity="snorkeling",duration=90000)
+    assert result["startMs"]<=12000
+    assert result["endMs"]>=35000
+    assert result["durationMs"]<=35000
+    assert any("content remains unverified" in x for x in result["reasons"])
