@@ -201,3 +201,46 @@ def test_clip_metadata_endpoint_validates_bounds_and_never_exposes_vectors(world
     with pytest.raises(ValueError):
         studio_clip_metadata(root,ids[0],1000,25000)
     assert {p.name:p.read_bytes() for p in videos}==before
+
+
+
+def test_private_clip_metadata_api_requires_auth(world):
+    from http.server import ThreadingHTTPServer
+    from http.client import HTTPConnection
+    from threading import Thread
+    from adventure_intelligence.studio import make_handler
+
+    root,ids,videos,before=world
+    populate(root,ids)
+    server=ThreadingHTTPServer(("127.0.0.1",0),make_handler(root,"private-test-token"))
+    server.daemon_threads=True
+    th=Thread(target=server.serve_forever,daemon=True)
+    th.start()
+    def get(path,authorized=True):
+        client=HTTPConnection("127.0.0.1",server.server_port,timeout=15)
+        headers={"Host":f"127.0.0.1:{server.server_port}"}
+        if authorized:
+            headers["X-Klip-Token"]="private-test-token"
+        client.request("GET",path,headers=headers)
+        response=client.getresponse()
+        raw=response.read()
+        status=response.status
+        client.close()
+        return status,raw
+    try:
+        path="/api/clip-metadata?asset="+ids[0]+"&startMs=1000&endMs=11000"
+        assert get(path,False)[0]==403
+        code,raw=get(path)
+        assert code==200
+        doc=json.loads(raw)
+        assert doc["head"]["objectObservations"][0]["label"]=="fish"
+        assert doc["tail"]["objectObservations"][0]["identity"]=="unknown"
+        assert "_vector" not in raw.decode()
+        assert get("/api/clip-metadata?asset="+ids[0]+"&startMs=no&endMs=10")[0]==400
+        assert get("/api/clip-metadata?asset="+ids[0]+"&startMs=1&endMs=999999")[0]==400
+        assert get("/api/clip-metadata?asset=../../etc/passwd&startMs=1&endMs=10")[0]==400
+    finally:
+        server.shutdown()
+        server.server_close()
+        th.join(timeout=5)
+    assert {p.name:p.read_bytes() for p in videos}==before
