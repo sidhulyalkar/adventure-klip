@@ -245,10 +245,11 @@ def evaluate_manifest(manifest: dict, *, frames_dir: Path, models: list[str],
     models=[_safe_model(m) for m in models]
     if type(max_calls) is not int or not 1<=max_calls<=MAX_CALLS:
         raise ValueError("max_calls must be between 1 and 48")
+    count=len(manifest.get("clips",[])) if isinstance(manifest,dict) and isinstance(manifest.get("clips"),list) else 0
+    if count*len(models) > max_calls:
+        raise ValueError(f"{count*len(models)} requests exceed max_calls={max_calls}; select fewer clips")
     clips=validate_manifest(manifest,frames_dir)
     planned=len(clips)*len(models)
-    if planned > max_calls:
-        raise ValueError(f"{planned} requests exceed max_calls={max_calls}; select fewer clips")
     summary={"schemaVersion":1,"version":VERSION,"rubricVersion":RUBRIC_VERSION,
              "models":models,"clipsPlanned":len(clips),"requestsPlanned":planned,
              "totalImageBytesApprox":sum(x["bytesApprox"] for x in clips)*len(models),
