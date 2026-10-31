@@ -24,6 +24,7 @@ from .process import process_folder
 from .run_audit import audit_log
 from .nim_judges import evaluate_manifest, DEFAULT_ENDPOINT
 from .nim_benchmark import prepare_benchmark
+from .nim_calibration import calibrate_workspace
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
@@ -118,6 +119,9 @@ def main(argv: list[str] | None = None) -> int:
     jury.add_argument("--max-calls",type=int,default=12)
     jury.add_argument("--endpoint",default=DEFAULT_ENDPOINT)
     jury.add_argument("--output",type=Path,help="Write JSON result; fails if destination exists")
+    cal=sub.add_parser("calibrate-nim",help="Compare jury scores to explicit local human reviews")
+    cal.add_argument("manifest",type=Path)
+    cal.add_argument("jury_report",type=Path)
     audit=sub.add_parser("audit-log",help="Summarize a completed or ongoing run log without reading media")
     audit.add_argument("log",type=Path,help="Log file produced by --log-file")
     sessions=sub.add_parser("sessions",help="Suggest cross-file sessions for review (never auto-stitch)")
@@ -186,6 +190,11 @@ def main(argv: list[str] | None = None) -> int:
     args=parser.parse_args(argv)
     root=root_at(args.workspace)
     try:
+        if args.command=="calibrate-nim":
+            _print(calibrate_workspace(root,
+                json.loads(args.manifest.expanduser().read_text(encoding="utf-8")),
+                json.loads(args.jury_report.expanduser().read_text(encoding="utf-8"))))
+            return 0
         if args.command=="prepare-nim-benchmark":
             _print(prepare_benchmark(root, output_dir=args.output_dir,
                   sample_count=args.samples,seed=args.seed,
@@ -202,8 +211,10 @@ def main(argv: list[str] | None = None) -> int:
                          if args.allow_external_upload else ""))
             if args.output:
                 destination=args.output.expanduser().resolve()
-                if destination.exists() or destination==args.manifest.expanduser().resolve():
-                    raise ValueError("Judge report output already exists or overlaps the manifest")
+                approved_dir=args.manifest.expanduser().resolve().parent
+                if (destination.exists() or not destination.is_relative_to(approved_dir)
+                        or destination==args.manifest.expanduser().resolve()):
+                    raise ValueError("Judge report must be a new file inside the manifest directory")
                 destination.parent.mkdir(parents=True,exist_ok=True)
                 with destination.open("x",encoding="utf-8") as f:
                     f.write(json.dumps(report,indent=2,allow_nan=False)+"\n")
