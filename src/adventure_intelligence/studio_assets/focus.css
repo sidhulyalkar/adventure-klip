@@ -188,3 +188,21 @@ body.cinema-active .film-nav .cinema-toggle{color:var(--salmon)}
     transition:none!important;transform:none!important
   }
 }
+
+/* Editorial display serif adds atmosphere without downloads or additional UI. */
+.review-top h1,.library-head h1,.sequence-top h1{
+  font-family:Georgia,ui-serif,"Times New Roman",serif;
+  font-size:clamp(33px,3.4vw,50px);
+  font-weight:400;
+  letter-spacing:-1.75px;
+  line-height:1.14;
+}
+.review-top h1 .mint,.library-head h1 .mint,.sequence-top h1 .mint{
+  font-style:italic;
+}
+@media(max-width:720px){
+  .review-top h1,.library-head h1,.sequence-top h1{
+    font-size:clamp(29px,7vw,36px);
+    letter-spacing:-1.1px;
+  }
+}
