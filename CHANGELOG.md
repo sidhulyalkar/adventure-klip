@@ -1,3 +1,10 @@
+## 0.6.1 · Cinematic Focus refinement
+
+- Add quiet film-gate framing, soft navy atmosphere, improved editorial type scale and sparse progress rail to one-clip Review.
+- Add opt-in Cinema layout (F), repeat from selected in-point (R), and discreet keyboard-shortcut help, with accessible status and reduced-motion CSS.
+- Preserve native playback, original file protection, approved-only sequences, virtual Library organization and optional /classic detailed tools.
+- New static regression checks for focused layout, accessible actions and local-only assets.
+
 ## 0.6 UI integration and palette update
 
 - Adopt one navy / light-grey / salmon / white theme for the focused screening room, virtual media Library and approved-only Sequence editor.
