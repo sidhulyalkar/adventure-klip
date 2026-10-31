@@ -115,7 +115,7 @@ def test_streams_original_read_only_and_supports_byte_range(server,fixture):
                         headers={"Range":"bytes=900000-999999"})
     assert code==416
     assert files[0].read_bytes()==original
-    assert list(files[0].parent.iterdir())==list(files)
+    assert set(files[0].parent.iterdir())==set(files)
 
 
 def test_refuses_changed_original_after_first_stream(server,fixture):
