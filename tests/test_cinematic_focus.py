@@ -35,6 +35,8 @@ def test_cinema_appearance_is_sparing_responsive_and_reduced_motion_safe():
     assert "--offwhite:#f6f8fb" in css
     assert "--fog:#b5c1d0" in css
     assert ".stage-corner" in css
+    assert ".screen video{z-index:1}" in css
+    assert ".screen video{position:relative" not in css
     assert ".review-progress" in css
     assert ".cinema-active" in css
     assert "@media(max-width:720px)" in css
