@@ -13,8 +13,9 @@ import math
 from .catalog import connect
 from .editorial_quality import editorial_candidates, _overlap
 from .examples import latest_examples
+from .scene_atlas import frames_for_asset, clip_feature, similarity
 
-QUEUE_VERSION="curation-queue-v1"
+QUEUE_VERSION="curation-queue-v2"
 ACTIVITIES={"all","ski","bike","snorkeling","unknown"}
 PER_ASSET=3
 PAGE_ASSETS=6
@@ -81,6 +82,44 @@ def _group_candidates(candidates,reviewed,aid,activity):
     return groups
 
 
+def _annotate_visual_stacks(db,workspace,moments):
+    """Group only compatible cached embeddings; never discard visual neighbors.
+
+    Pairwise complete-link similarity deliberately avoids transitive chaining.
+    This is an editorial navigation hint, not a model of action equivalence.
+    """
+    cache={}
+    stacks=[]
+    for moment in moments:
+        aid=moment["assetId"]
+        if aid not in cache:
+            cache[aid]=frames_for_asset(db,workspace,aid,provider="siglip2")
+        vec=clip_feature(*cache[aid],moment["startMs"],moment["endMs"])
+        group=None
+        if vec.get("available"):
+            for idx, members in enumerate(stacks):
+                if not members:
+                    continue
+                if all(old["key"]==vec["modelKey"] and
+                       similarity(old["vector"],vec["vector"]) is not None and
+                       similarity(old["vector"],vec["vector"])>=.94
+                       for old in members):
+                    group=idx
+                    break
+        if group is None:
+            group=len(stacks)
+            stacks.append([])
+        stacks[group].append({"key":vec.get("modelKey"),"vector":vec.get("vector")})
+        moment["visualStack"]="stack-"+str(group+1)
+        moment["visualComparisonAvailable"]=bool(vec.get("available"))
+    counts={idx+1:len(items) for idx,items in enumerate(stacks)}
+    for m in moments:
+        group=int(m["visualStack"].split("-")[-1])
+        m["similarSceneCount"]=counts[group]-1 if m["visualComparisonAvailable"] else 0
+        m["visualSimilarityStatus"]="uncalibrated" if m["visualComparisonAvailable"] else "unknown"
+    return moments
+
+
 def review_queue(workspace:Path,*,activity="all",page=0) -> dict:
     if activity not in ACTIVITIES:
         raise ValueError("Unknown activity filter")
@@ -106,10 +145,23 @@ def review_queue(workspace:Path,*,activity="all",page=0) -> dict:
             for g in groups:
                 g["sourceName"]=Path(a["stored_path"]).name
             moments.extend(groups)
+        # Use only previously cached semantic vectors. No decoding or model
+        # downloads occur inside the Inbox.
+        _annotate_visual_stacks(db,workspace,moments)
     # Review uncertain moments first, with diversity across recordings.
     lane_priority={"promising":0,"needs_review":1,"likely_filler":2}
-    moments.sort(key=lambda x:(lane_priority[x["lane"]],-x["editorialScore"],
-                               x["assetId"],x["startMs"]))
+    moments.sort(key=lambda x:(lane_priority[x["lane"]],
+                               -x["editorialScore"],x["assetId"],x["startMs"]))
+    # Keep first representative near the front of each lane. Later same-looking
+    # clips are not hidden: the reviewer can still compare distinct moments.
+    visited=set()
+    for x in moments:
+        stack=x["visualStack"]
+        x["visualRepresentative"]=stack not in visited
+        visited.add(stack)
+    moments.sort(key=lambda x:(lane_priority[x["lane"]],
+                               not x["visualRepresentative"],
+                               -x["editorialScore"],x["assetId"],x["startMs"]))
     counts={lane:sum(x["lane"]==lane for x in moments)
             for lane in lane_priority}
     return {"schemaVersion":1,"version":QUEUE_VERSION,
