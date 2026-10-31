@@ -147,8 +147,19 @@
     if(!/^[a-z][a-z0-9_.:-]{0,79}$/.test(label)){report('Use a lowercase scene label (letters, numbers, underscores).',true);return;}
     state.busy=true;display();
     try{
+      // Source proposal is immutable history. Final reviewer boundaries may differ.
+      const original=item.trimSuggestion;
+      const sourceRange={
+        source:item.manual?'library':'queue',
+        id:String(item.candidateId||item.id||('manual:'+item.startMs+':'+item.endMs)).slice(0,180),
+        label:item.label||'moment',startMs:item.startMs,endMs:item.endMs,
+        policyVersion:original?.version||null,
+        suggestedStartMs:original?.canApply?original.startMs:null,
+        suggestedEndMs:original?.canApply?original.endMs:null
+      };
       const result=await api('/api/reviews',{assetId:item.assetId,startSeconds:start,endSeconds:end,
-        label,decision:$('fieldDecision').value,highlight,note:$('fieldNote').value.trim()});
+        label,decision:$('fieldDecision').value,highlight,note:$('fieldNote').value.trim(),
+        proposal:sourceRange});
       report(result.status==='unchanged'?'Already saved.':'Saved '+highlight+' to your local review history.');
       state.details.delete(item.assetId);
       // Preserve the editorial decision independently from the model's scene-label accuracy.
