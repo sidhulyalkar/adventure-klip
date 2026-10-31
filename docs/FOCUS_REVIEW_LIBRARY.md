@@ -11,7 +11,9 @@ The local studio now opens **Review** at `/`. **Library** is a second top-level 
 - The current review candidate fills a large native video viewer, with its original source streamed read-only. Playback is limited to its suggested in/out interval; it does not export or trim a file.
 - Three primary editorial choices are **Keep**, **Later**, **Skip**. All decisions are saved to revisioned human-review records. Quick decisions always leave the scene label **uncertain** unless it was explicitly marked correct in the annotation panel. A human **Keep** enters the sequence clip shelf regardless of label certainty, with the unverified model label explicitly separated from the export kind. Keeping a cinematic moment does not mean its action classification was accurate.
 - **Add details** reveals start/end seconds, scene label, independent label accuracy, editorial decision, and a note. The player is not covered by the form.
-- Navigation uses the existing bounded `/api/queue` (up to 3 distinct candidates from each of 6 recordings). It never silently discards source footage.
+- Navigation uses the existing bounded `/api/queue` (up to 3 distinct candidates from each of 6 recordings). The client automatically skips **at most two empty batches**, avoiding a runaway scan through hundreds of not-yet-processed recordings. An explicit Next batch action can continue browsing. It never silently discards source footage.
+- The **Refresh catalog** control reloads metadata from the existing workspace; it does not start or interrupt inference. The header count means **indexed**, not processed or fully analyzed. The current 315-video processing run does not need to be restarted to view new catalog results.
+- **Expand** or **F** opens the native video player fullscreen. Escape is handled by the browser.
 - Shortcuts when not typing in a form: **Space** play/pause; **←/→** previous/next; **K** Keep; **M** Later; **X** Skip; **[ / ]** set in/out. Next reviewed suggestion is surfaced automatically. Shortcuts can be displayed via **Shortcuts ?**.
 - Clips explicitly kept or skipped disappear from the next review queue even if their action classification remains uncertain. "Later" remains eligible for later review.\n- The queue is provisional. Prioritized/visual-similarity hypotheses are not confirmed events. An empty queue is not evidence that all good moments were found. **Later** survives as uncertain data and can appear in a future session.
 
@@ -24,6 +26,7 @@ Browse a **virtual hierarchy**, built from the one SQLite catalog. The tree can 
 - **Region**: manually assigned label such as *Lake Tahoe*. Region assignments are recorded in the `asset_regions` table. They are **recording-level**, not automatic GPS/geographic inference.
 - **Activity**: already indexed activity.
 - **Review status**: recording has any review versus none, not a claim that every second was reviewed.
+- Long date/location/source-folder lists are collapsed by default with an eight-group preview and explicit Show all action. The file list initially renders 60 matching rows, with a Show more control. Search still evaluates the entire catalog already loaded in memory.
 
 Select a recording to inspect metadata, model-suggested intervals, and previously reviewed moments, or create a manual interval even if automatic analysis found none. Search filters the active virtual folder by filename, date, region, source directory and activity. These are dynamic *views*, not copied folder structures or migrations of your SSD.
 
@@ -55,3 +58,12 @@ If the branch already exists locally, use `git switch feat/focused-review-librar
 3. **Large libraries:** the overview currently returns all recording metadata; candidate review is still bounded by pages. Add server-side catalog pagination and indexed full-text querying once actual SSD scale warrants it.
 4. **Usability:** test 20–30 mixed candidates across ski, bike and snorkeling recordings. Measure median decision time, false-rejects, model/scene-label disagreement, and high-quality clips found per 10 minutes. The interface should make evaluation faster before tuning models.
 5. **Future navigation:** if needed, add true indexed subfolders for Year → Month → Day → Recording → Reviewed clip, source-tree depth and saved smart collections. Keep them optional, not compulsory navigation layers.
+
+
+## Why this pass is smaller
+
+The default interface deliberately has **two tabs, three editorial choices, one media viewer**. Annotations, original-file details, catalog organization and keyboard help are revealed only on demand. The source media still comes from the same read-only local byte-range endpoint. The new `focus_refine.css` is a visual layer rather than a replacement of the v0.6 layout, keeping the prior UI reversible.
+
+## Validation
+
+Run `python -m pytest -q`, `node --check src/adventure_intelligence/studio_assets/focus.js`, and the wheel packaging check in GitHub CI. Test at least one DJI HEVC recording in Safari and try the keyboard workflow, refresh while batch processing runs, sparse candidate batches and selecting the detail pane on a narrow mobile viewport.
