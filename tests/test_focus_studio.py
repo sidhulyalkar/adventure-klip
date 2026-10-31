@@ -185,3 +185,44 @@ def test_quiet_ui_does_not_claim_catalog_count_is_processing_completion(focused_
     assert b"loadQueue({skipEmpty:false})" in body
     # No inference endpoint or processing job is called during navigation.
     assert b"/api/process" not in body
+
+
+def test_trim_suggestions_from_catalog_are_review_only_and_source_safe(focused_server):
+    from adventure_intelligence.studio import studio_asset
+    _,workspace,asset_id,original=focused_server
+    before=original.read_bytes()
+    with connect(workspace) as db:
+        db.execute("""INSERT INTO episodes
+         (id,asset_id,kind,start_ms,end_ms,score,event_ids_json,
+          evidence_json,origin,version)
+         VALUES (?,?,?,?,?,?,?,?,?,?)""",
+         ("candidate-for-trim",asset_id,"jump_chain",5000,13000,.85,
+          "[]","{}","derived","test"))
+    code,raw=http(focused_server,"GET","/api/queue?activity=ski&page=0",authorized=True)
+    assert code==200
+    data=json.loads(raw)
+    assert data["moments"]
+    cut=data["moments"][0]["trimSuggestion"]
+    assert cut["timestampBasis"]=="source_relative_ms"
+    assert cut["requiresReview"] is True
+    assert cut["startMs"]<=5000 and cut["endMs"]>=13000
+    detail=studio_asset(workspace,asset_id)
+    assert detail["suggestions"][0]["trimSuggestion"]["version"]=="trim-policy-v1"
+    assert original.read_bytes()==before
+
+
+def test_explicit_skipped_interval_blocks_trim_expansion(focused_server):
+    from adventure_intelligence.clip_rules import suggest_trim, exclusion_spans
+    _,workspace,asset_id,original=focused_server
+    before=original.read_bytes()
+    from adventure_intelligence.examples import review_example
+    review_example(workspace,asset_id=asset_id,start_seconds=1,end_seconds=4,
+                   label="non_action",decision="uncertain",highlight="skip")
+    from adventure_intelligence.examples import latest_examples
+    with connect(workspace) as db:
+        guards=exclusion_spans(db,asset_id,"ski",latest_examples(db,asset_id=asset_id))
+    out=suggest_trim(start_ms=4500,end_ms=9500,duration_ms=30000,
+                     kind="jump_chain",activity="ski",excluded=guards)
+    assert out["status"]=="suggested"
+    assert out["startMs"]>=4300  # explicit skip ends at 4000 + 300ms guard
+    assert original.read_bytes()==before

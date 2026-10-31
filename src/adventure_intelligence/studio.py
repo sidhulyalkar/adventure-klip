@@ -27,6 +27,8 @@ from .locking import lock_workspace
 from .sources import resolve_source
 from .sequence_editor import sequence_state, save_sequence, review_combination, export_sequence
 from .curation_queue import review_queue
+from .clip_rules import suggest_trim, exclusion_spans
+from .examples import latest_examples
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -86,6 +88,8 @@ def studio_asset(workspace: Path, asset_id: str) -> dict:
             "SELECT * FROM episodes WHERE asset_id=? ORDER BY start_ms",(asset_id,))]
         candidates, exclusions=editorial_candidates(db,workspace,
             [e for e in rows if e["kind"]!="recording_summary"],policy="suggest")
+        guards=exclusion_spans(db,asset_id,asset["activity"],latest_examples(db,asset_id=asset_id))
+    duration_ms=round(float(asset["duration"] or 0)*1000)
     candidates.sort(key=lambda x:(-x["score"],x["startMs"]))
     diagnostics=diagnostics_for_workspace(workspace,asset_id=asset_id)["assets"][0]
     reviews=review_inventory(workspace,asset_id=asset_id)
@@ -99,6 +103,12 @@ def studio_asset(workspace: Path, asset_id: str) -> dict:
                 "scene":c.get("sceneEvidence"),"motion":c.get("motionEvidence"),
                 "audio":c.get("acousticEvidence"),"reviewedKeep":c.get("reviewedKeepFraction"),
                 "requiresReview":True,
+                "trimSuggestion":suggest_trim(
+                    start_ms=c["startMs"],end_ms=c["endMs"],
+                    duration_ms=duration_ms,kind=c["kind"],
+                    activity=asset["activity"],excluded=guards,
+                    incident_flags=bool(c.get("incidentReviewFlags")))
+                if duration_ms>0 and 0<=c["startMs"]<c["endMs"]<=duration_ms else None,
             } for c in candidates[:90]],
             "diagnostics":{
                 "contextStates":diagnostics["contextStates"][:100],

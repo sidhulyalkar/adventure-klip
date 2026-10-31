@@ -14,6 +14,7 @@ from .catalog import connect
 from .editorial_quality import editorial_candidates, _overlap
 from .examples import latest_examples
 from .scene_atlas import frames_for_asset, clip_feature, similarity
+from .clip_rules import suggest_trim, exclusion_spans
 
 QUEUE_VERSION="curation-queue-v2"
 ACTIVITIES={"all","ski","bike","snorkeling","unknown"}
@@ -142,8 +143,16 @@ def review_queue(workspace:Path,*,activity="all",page=0) -> dict:
             if not rows:continue
             candidates,_=editorial_candidates(db,workspace,rows,policy="suggest")
             groups=_group_candidates(candidates,reviewed,a["id"],a["activity"])
+            guards=exclusion_spans(db,a["id"],a["activity"],reviewed)
+            duration_ms=round(float(a["duration"] or 0)*1000)
             for g in groups:
                 g["sourceName"]=Path(a["stored_path"]).name
+                if duration_ms>0 and 0<=g["startMs"]<g["endMs"]<=duration_ms:
+                    g["trimSuggestion"]=suggest_trim(
+                        start_ms=g["startMs"],end_ms=g["endMs"],
+                        duration_ms=duration_ms,kind=g["label"],
+                        activity=a["activity"],excluded=guards,
+                        incident_flags=bool(g["evidence"]["incidentFlags"]))
             moments.extend(groups)
         # Use only previously cached semantic vectors. No decoding or model
         # downloads occur inside the Inbox.

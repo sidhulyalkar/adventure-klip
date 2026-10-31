@@ -124,3 +124,14 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{
   .empty-actions .secondary{padding:9px 12px}
   .asset-detail{scroll-margin-top:18px}
 }
+
+/* Trim rules are optional and never compete with the video. */
+.trim-proposal{
+  border:1px solid #394b61;background:#172638;
+  border-radius:9px;padding:14px 15px;margin:15px 0 4px;
+}
+.trim-proposal-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.trim-time{font-size:12px;color:#f6d0c7;font-variant-numeric:tabular-nums}
+.trim-proposal .hint{margin:10px 0;line-height:1.55;color:#b3c4d2}
+.trim-proposal .secondary{font-size:12px}
+.trim-proposal .hint:last-child{font-size:10px;color:#91a4b8}

@@ -1,4 +1,15 @@
-# Klip 0.6 · Quiet Review + Library
+# Klip 0.7 · Evidence-aware clip boundaries
+
+The focused review screen now offers an optional **Preview suggested trim**
+action. A deterministic, versioned trim policy protects complete multi-frame
+events, adds bounded context, respects human Skip/manual exclusion intervals,
+and **requires explicit review** before saving. It does not start any new
+processing or alter original DJI files.
+
+See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md) for rules, guardrails, failure
+modes and the human evaluation plan.
+
+## Prior UI: Quiet Review + Library
 
 The focused studio now uses a low-noise navy, grey, white and salmon palette. **Refresh catalog** reads newly indexed metadata during a long-running processing job without restarting analysis. A large clip viewer includes optional fullscreen, while the Library defaults to collapsed collections and renders 60 recording rows at a time. These are UI-only optimizations and do not change the source videos.
 
