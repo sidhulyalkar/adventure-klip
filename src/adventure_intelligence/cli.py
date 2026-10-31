@@ -27,6 +27,7 @@ from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
 from .examples import review_example, review_inventory
+from .review_evaluation import review_quality_report
 from .editorial_quality import editorial_candidates
 from .scene_atlas import enrich_candidates
 from .reels import RECIPES
@@ -117,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     add_ex.add_argument('--note',default='')
     list_ex=ex_sub.add_parser('audit',help='List latest reviews, revisions and conflicts')
     list_ex.add_argument('--asset')
+    ex_sub.add_parser('evaluate',help='Audit scene predictions against held-out reviewed labels')
     scout=sub.add_parser('scout',help='Rank cached visual review and audio triage opportunities')
     scout.add_argument('--recipe',choices=list(RECIPES),default='best-sequences')
     scout.add_argument('--provider',choices=['siglip2','histogram','stack'],
@@ -228,8 +230,10 @@ def main(argv: list[str] | None = None) -> int:
                         start_seconds=args.start,end_seconds=args.end,
                         label=args.label,decision=args.decision,
                         highlight=args.highlight,note=args.note))
-            else:
+            elif args.example_action=='audit':
                 _print(review_inventory(root,asset_id=args.asset))
+            else:
+                _print(review_quality_report(root))
         elif args.command=='scout':
             if args.top<1 or args.top>200:
                 raise ValueError('--top must be 1..200')
