@@ -80,3 +80,45 @@ media exit-status checks, plus controlled interruption, source mutation, duplica
 fallback, artifact corruption, detector-version invalidation and semantic attachment
 regressions. These validate engineering behavior, not athletic action accuracy.
 No real user footage, camera hardware or trained semantic model was evaluated here.
+
+## Run-log audit and performance evaluation
+
+A future standalone code checkout can summarize the existing log:
+
+```sh
+klip audit-log ~/AdventureAI/logs/dji-library-pass1.log
+```
+
+The audit reads the file in streaming mode. It does not scan media, write a
+database, lock the workspace or interfere with the original CLI process.
+**Do not switch branches, reinstall dependencies, or start a second pipeline
+inside the live job's checkout just to use this command.**
+
+The JSON output includes the latest frame decoding observation (reported
+frame count, per-stage elapsed time, observed FFmpeg **output** frames/s),
+the latest indexed/analysis/semantic/acoustic progress, count mismatches,
+verification heartbeats, and the recent recording names. Append-only logs
+may include multiple runs: summaries use the latest detected
+`pipeline: source` segment and report the number of earlier sessions.
+
+The tool deliberately cannot establish whether a process is *currently*
+alive because the historical log lines lack wall-clock timestamps. Its last
+reported stage ETA does not imply a whole-library ETA. FFmpeg's `fps=2`
+filter reports output frame counts, not source decoding speed. Missing final
+progress lines do not mean failure. Logs may contain repeated hash heartbeat
+lines, so these are not treated as unique full-file hash operations.
+
+To establish a grounded performance baseline, collect at least 20 recordings
+across codec, source resolution, source duration, file size, and recording day.
+For each completed stage measure wall duration, bytes read, CPU/energy,
+memory, success/failure, and whether cached artifacts were reused.
+Compare software FFmpeg decoding with an explicitly opt-in VideoToolbox
+variant on the **same representative input files**, under comparable
+thermal/SSD conditions. Verify evidence timestamps, sample counts and
+event outcomes match within accepted tolerances before changing defaults.
+Do not weaken source-integrity checks to gain apparent speed.
+
+A separate human evaluation set must test clip utility. No log progress
+or decoder speed metric establishes highlight precision, recall, event
+completeness or improved editorial efficiency. See
+[clip trim policy](CLIP_TRIM_POLICY.md) for the proposed review study.
