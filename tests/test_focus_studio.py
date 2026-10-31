@@ -121,3 +121,38 @@ def test_review_is_separate_from_label_verification(focused_server):
 def test_set_region_validation():
     with pytest.raises(ValueError,match="Invalid asset id"):
         set_asset_region(__import__("pathlib").Path("/tmp/unused"),"../videos","Hidden")
+
+
+def test_unverified_keep_is_visible_in_clip_shelf_and_exports_without_false_label(focused_server):
+    _,workspace,asset_id,original=focused_server
+    from adventure_intelligence.examples import review_example
+    from adventure_intelligence.sequence_editor import sequence_state, save_sequence, export_sequence
+    before=original.read_bytes()
+    saved=review_example(workspace,asset_id=asset_id,start_seconds=2,
+        end_seconds=7,label="ski_jump",decision="uncertain",highlight="keep",
+        note="Nice shot, action not confirmed")
+    bank=sequence_state(workspace)["bank"]
+    assert len(bank)==1
+    assert bank[0]["exampleId"]==saved["exampleId"]
+    assert bank[0]["labelDecision"]=="uncertain"
+    revision=save_sequence(workspace,entries=[{"exampleId":saved["exampleId"]}],
+                           expected_revision=None)
+    result=export_sequence(workspace,expected_revision=revision["revisionId"])
+    plan=json.loads(__import__("pathlib").Path(result["path"]).read_text())
+    assert plan["segments"][0]["kind"]=="unverified_moment"
+    assert plan["segments"][0]["labelDecision"]=="uncertain"
+    assert original.read_bytes()==before
+
+
+def test_explicit_keep_or_skip_is_not_suggested_again_but_later_can_return():
+    from adventure_intelligence.curation_queue import _group_candidates
+    aid="a"*64
+    candidates=[{"episodeId":"ep1","startMs":1000,"endMs":10000,
+                 "kind":"sustained_motion_candidate","score":0.7}]
+    review={"asset_id":aid,"start_ms":1000,"end_ms":10000,
+            "label":"ski_jump","decision":"uncertain","highlight":"keep"}
+    assert _group_candidates(candidates,[review],aid,"ski")==[]
+    review["highlight"]="skip"
+    assert _group_candidates(candidates,[review],aid,"ski")==[]
+    review["highlight"]="neutral"
+    assert len(_group_candidates(candidates,[review],aid,"ski"))==1
