@@ -55,6 +55,9 @@
     $('previousClip').disabled=state.busy||state.current?.manual||(!state.page&&state.index<=0);
     $('nextClip').disabled=state.busy||(!state.current?.manual&&!state.hasNext&&state.index>=state.queue.length-1);
     $('refreshCatalog').disabled=state.refreshing;
+    $('focusFullscreen').disabled=!item;
+    $('replayClip').disabled=!item;
+    $('emptyNext').hidden=!state.hasNext;
     $('indexedCount').textContent=state.assets.length+' indexed';
     const count=state.queue.length;
     $('clipCounter').textContent=item&&item.manual?'From library':count?(state.index+1)+' of '+count+' in batch':'0 of 0';
@@ -63,7 +66,11 @@
     if(!item){
       $('clipTitle').textContent='Nothing to review yet';$('clipDescription').textContent='Browse your source recordings, or process additional video.';
       $('clipIn').textContent='00:00';$('clipOut').textContent='00:00';$('clipEvidence').textContent='No candidate selected';
-      $('clipActivity').textContent='CLIP REVIEW';$('playerEmpty').hidden=false;player.pause();player.removeAttribute('src');player.load();
+      $('clipActivity').textContent='CLIP REVIEW';$('playerEmpty').hidden=false;
+      $('emptyExplanation').textContent=state.assets.length
+        ? 'No suggestions in this batch. More recordings may still be processing. Try the next batch or open Library.'
+        : 'No indexed recordings yet. Index footage first, then refresh the catalog.';
+      if(player.hasAttribute('src')){player.pause();player.removeAttribute('src');player.load();}
       return;
     }
     const asset=state.assets.find(a=>a.id===item.assetId);
@@ -267,6 +274,9 @@
     try{
       const detail=await getDetail(id);if(state.selectedAsset!==id)return;
       const asset=state.assets.find(a=>a.id===id);side.replaceChildren();
+      if(window.matchMedia&&window.matchMedia('(max-width:650px)').matches){
+        side.scrollIntoView({behavior:'smooth',block:'start'});
+      }
       side.append(element('span','overline','RECORDING DETAILS'),element('h2','',asset.title));
       side.append(element('div','detail-label','DATE'),element('div','detail-value',dateOf(asset)));
       side.append(element('div','detail-label','SOURCE FOLDER'),element('div','detail-value',asset.folder||'Unknown'));
@@ -279,8 +289,10 @@
           await api('/api/region',{assetId:id,region:input.value.trim()});
           const fresh=await api('/api/overview');state.assets=fresh.assets;
           renderLibrary();report('Region saved.');if(state.selectedAsset===id)openAsset(id);
-        }catch(e){alert(e.message);}
-        finally{saveButton.disabled=false;}
+        }catch(e){
+          const warning=element('p','hint','Could not save region: '+e.message);
+          warning.setAttribute('role','alert');editor.append(warning);
+        }finally{saveButton.disabled=false;}
       };
       editor.append(input,saveButton);side.append(editor);
       side.append(element('div','detail-label','SUGGESTED MOMENTS'));
@@ -325,6 +337,7 @@
     $('tabReview').onclick=()=>page('review');
     $('tabLibrary').onclick=()=>page('library');
     $('emptyLibrary').onclick=()=>page('library');
+    $('emptyNext').onclick=()=>move(1).catch(e=>report(e.message,true));
     $('previousClip').onclick=()=>move(-1).catch(e=>report(e.message,true));
     $('nextClip').onclick=()=>move(1).catch(e=>report(e.message,true));
     $('keepClip').onclick=()=>save('keep');
