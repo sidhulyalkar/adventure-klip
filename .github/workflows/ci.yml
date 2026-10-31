@@ -27,10 +27,12 @@ jobs:
       - name: Check package
         run: python -m build --sdist --wheel
       - name: Check browser JavaScript
-        run: node --check src/adventure_intelligence/studio_assets/studio.js
+        run: |
+          node --check src/adventure_intelligence/studio_assets/studio.js
+          node --check src/adventure_intelligence/studio_assets/studio_editor.js
       - name: Verify packaged studio assets
         run: |
-          python -c "import glob,zipfile; p=glob.glob('dist/*.whl')[0]; z=zipfile.ZipFile(p); a=z.namelist(); assert all(any(x.endswith('/studio_assets/'+n) for x in a) for n in ('index.html','studio.css','studio.js')), a"
+          python -c "import glob,zipfile; p=glob.glob('dist/*.whl')[0]; z=zipfile.ZipFile(p); a=z.namelist(); assert all(any(x.endswith('/studio_assets/'+n) for x in a) for n in ('index.html','studio.css','editor.css','studio.js','studio_editor.js')), a"
       - name: Tests
         run: python -m pytest -q
       - name: Compile Python
