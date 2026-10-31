@@ -83,14 +83,23 @@ def review_inventory(workspace, *, asset_id: str | None = None) -> dict:
     conflicts = []
     for i,a in enumerate(examples):
         for b in examples[i+1:]:
-            if a["asset_id"]!=b["asset_id"] or a["label"]!=b["label"]:
+            if a["asset_id"]!=b["asset_id"]:
                 continue
             overlap = max(0,min(a["end_ms"],b["end_ms"])-max(a["start_ms"],b["start_ms"]))
             smaller = min(a["end_ms"]-a["start_ms"],b["end_ms"]-b["start_ms"])
-            if overlap/smaller >= .8 and (a["decision"]!=b["decision"]
-                                            or a["highlight"]!=b["highlight"]):
+            if overlap/smaller < .8:
+                continue
+            same_label = a["label"]==b["label"]
+            same_label_conflict = same_label and (a["decision"]!=b["decision"]
+                                                   or a["highlight"]!=b["highlight"])
+            cross_label_conflict = (not same_label and
+                                    a["decision"]==b["decision"]=="confirmed" and
+                                    {a["highlight"],b["highlight"]}=={"keep","skip"})
+            if same_label_conflict or cross_label_conflict:
                 conflicts.append({"a":a["example_id"],"b":b["example_id"],
-                                  "reason":"overlapping_contradictory_review"})
+                                  "reason":("overlapping_contradictory_review"
+                                   if same_label_conflict else
+                                   "cross_label_editorial_conflict")})
     return {"schemaVersion":1,"examples":[{
         "exampleId":e["example_id"],"revisionId":e["revision_id"],
         "previousRevisionId":e["previous_revision_id"],
