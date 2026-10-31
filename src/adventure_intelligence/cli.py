@@ -26,6 +26,11 @@ from .progress import Progress
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
+from .examples import review_example, review_inventory
+from .review_evaluation import review_quality_report
+from .editorial_quality import editorial_candidates
+from .scene_atlas import enrich_candidates
+from .reels import RECIPES
 
 
 def _print(data):
@@ -100,6 +105,25 @@ def main(argv: list[str] | None = None) -> int:
     mark.add_argument('--start',type=float,required=True,help='Start in source-video seconds')
     mark.add_argument('--end',type=float,required=True,help='End in source-video seconds')
     mark.add_argument('--note',default='',help='Short factual reviewer annotation')
+    examples=sub.add_parser('examples',help='Versioned reviewed clip examples and audit')
+    ex_sub=examples.add_subparsers(dest='example_action',required=True)
+    add_ex=ex_sub.add_parser('add',help='Review a source-video interval')
+    add_ex.add_argument('asset',help='Full source SHA-256')
+    add_ex.add_argument('--start',type=float,required=True)
+    add_ex.add_argument('--end',type=float,required=True)
+    add_ex.add_argument('--label',required=True)
+    add_ex.add_argument('--decision',required=True,
+                        choices=['confirmed','rejected','uncertain'])
+    add_ex.add_argument('--highlight',choices=['keep','skip','neutral'],default='neutral')
+    add_ex.add_argument('--note',default='')
+    list_ex=ex_sub.add_parser('audit',help='List latest reviews, revisions and conflicts')
+    list_ex.add_argument('--asset')
+    ex_sub.add_parser('evaluate',help='Audit scene predictions against held-out reviewed labels')
+    scout=sub.add_parser('scout',help='Rank cached visual review and audio triage opportunities')
+    scout.add_argument('--recipe',choices=list(RECIPES),default='best-sequences')
+    scout.add_argument('--provider',choices=['siglip2','histogram','stack'],
+                       default='siglip2')
+    scout.add_argument('--top',type=int,default=20)
     lab=sub.add_parser("labels",help="Replace manual labels for one asset from JSON")
     lab.add_argument("file",type=Path)
     binding=sub.add_parser("bind",help="Propose or manually approve a WorldLink association")
@@ -114,6 +138,9 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--style",choices=["chronological","crescendo"],default="chronological")
     plan.add_argument('--ranking',choices=['legacy','context'],default='legacy')
     plan.add_argument('--context-policy',choices=['suggest','automatic'],default='suggest')
+    plan.add_argument('--diversity',choices=['none','visual'],default='none')
+    plan.add_argument('--provider',choices=['siglip2','histogram','stack'],
+                      default='siglip2')
     render=sub.add_parser("render",help="Render a reviewable MP4 from an exported edit plan")
     render.add_argument("plan",type=Path)
     render.add_argument("--output",type=Path,required=True)
@@ -196,6 +223,40 @@ def main(argv: list[str] | None = None) -> int:
             with lock_workspace(root):
                 _print(append_review_label(root,args.asset,args.kind,args.start,
                                            args.end,note=args.note))
+        elif args.command=='examples':
+            if args.example_action=='add':
+                with lock_workspace(root):
+                    _print(review_example(root,asset_id=args.asset,
+                        start_seconds=args.start,end_seconds=args.end,
+                        label=args.label,decision=args.decision,
+                        highlight=args.highlight,note=args.note))
+            elif args.example_action=='audit':
+                _print(review_inventory(root,asset_id=args.asset))
+            else:
+                _print(review_quality_report(root))
+        elif args.command=='scout':
+            if args.top<1 or args.top>200:
+                raise ValueError('--top must be 1..200')
+            with connect(root) as db:
+                rule=RECIPES[args.recipe]
+                assets={r['id']:r['activity'] for r in db.execute(
+                    'SELECT id,activity FROM assets')}
+                rows=[dict(r) for r in db.execute('SELECT * FROM episodes')
+                      if r['kind'] in rule['kinds'] and
+                      (rule['activity'] is None or
+                       assets.get(r['asset_id'])==rule['activity'])]
+                candidates,_=editorial_candidates(db,root,rows,policy='suggest')
+                enriched,summary=enrich_candidates(db,root,candidates,
+                                                     provider=args.provider)
+            enriched.sort(key=lambda c:(
+                -(c['score']+.05*bool(c['audioTriage'].get('suggestVisualInspection'))),
+                c['sourceAssetId'],c['startMs']))
+            _print({'schemaVersion':1,'summary':summary,
+                    'count':len(enriched),
+                    'priorityWindows':[{
+                        k:v for k,v in c.items() if not k.startswith('_')}
+                        for c in enriched[:args.top]],
+                    'warning':'Review priorities, not classifications; no source video modified'})
         elif args.command=="labels":
             with lock_workspace(root):
                 _print(import_labels(root,args.file))
@@ -214,7 +275,8 @@ def main(argv: list[str] | None = None) -> int:
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":
             doc=plan_storyboard(root,args.recipe,args.seconds,args.style,
-                                ranking=args.ranking,context_policy=args.context_policy)
+                                ranking=args.ranking,context_policy=args.context_policy,
+                                diversity=args.diversity,provider=args.provider)
             if args.output:
                 with connect(root) as db:
                     protect_source_output(db, args.output)

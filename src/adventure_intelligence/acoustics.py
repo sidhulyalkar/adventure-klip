@@ -18,7 +18,7 @@ from .sources import resolve_source, verified_digest
 from .artifacts import read_artifact, write_artifact
 from .catalog import connect
 
-AUDIO_VERSION = "acoustic-rms-int16-8khz-v1"
+AUDIO_VERSION = "acoustic-multifeature-int16-8khz-v2"
 
 
 def _rms(block: bytes) -> tuple[float, float]:
@@ -36,6 +36,47 @@ def _rms(block: bytes) -> tuple[float, float]:
     return round(rms, 6), round(crossings, 6)
 
 
+
+def acoustic_metrics(block: bytes, previous_spectrum=None) -> tuple[dict, object]:
+    """Nonsemantic audio metrics. FFT features are optional when NumPy exists."""
+    amplitudes = array("h")
+    amplitudes.frombytes(block[:len(block)//2*2])
+    if sys.byteorder != "little":
+        amplitudes.byteswap()
+    if not amplitudes:
+        return {"peak": 0., "clippingFraction": 0., "crestFactor": 0.,
+                "spectralCentroidHz": None, "spectralFlatness": None,
+                "spectralFlux": None, "lowBandFraction": None}, None
+    rms, _ = _rms(block)
+    peak = max(abs(int(v)) for v in amplitudes) / 32768
+    clipped = sum(abs(int(v)) >= 32760 for v in amplitudes) / len(amplitudes)
+    values = {"peak": round(peak,6),
+              "clippingFraction": round(clipped,6),
+              "crestFactor": round(peak/max(rms,1e-8),4),
+              "spectralCentroidHz": None, "spectralFlatness": None,
+              "spectralFlux": None, "lowBandFraction": None}
+    try:
+        import numpy as np
+    except ImportError:
+        return values, None
+    audio = np.asarray(amplitudes,dtype=np.float32)/32768
+    spectrum = np.abs(np.fft.rfft(audio*np.hanning(len(audio))))+1e-12
+    freqs = np.fft.rfftfreq(len(audio),1/8000)
+    energy = spectrum**2
+    total=float(energy.sum())
+    centroid = float((freqs*spectrum).sum()/spectrum.sum())
+    flatness = float(np.exp(np.log(spectrum).mean())/spectrum.mean())
+    low = float(energy[freqs<=300].sum()/total)
+    unit = spectrum/max(float(np.linalg.norm(spectrum)),1e-12)
+    flux=(float(np.linalg.norm(unit-previous_spectrum))
+          if previous_spectrum is not None and len(unit)==len(previous_spectrum) else None)
+    values.update({"spectralCentroidHz":round(centroid,3),
+                   "spectralFlatness":round(flatness,6),
+                   "spectralFlux":round(flux,6) if flux is not None else None,
+                   "lowBandFraction":round(low,6)})
+    return values,unit
+
+
 def audio_series(path: Path, *, sample_rate: int = 8000,
                  window_ms: int = 1000) -> list[dict]:
     if sample_rate != 8000 or window_ms != 1000:
@@ -50,14 +91,16 @@ def audio_series(path: Path, *, sample_rate: int = 8000,
     frame_bytes = sample_rate * 2
     out: list[dict] = []
     index = 0
+    previous_spectrum = None
     try:
         while True:
             data = proc.stdout.read(frame_bytes)
             if not data:
                 break
             rms, crossings = _rms(data)
+            metrics, previous_spectrum = acoustic_metrics(data,previous_spectrum)
             out.append({"t_ms": index * window_ms, "end_ms": (index+1) * window_ms,
-                        "rms": rms, "zeroCrossingRate": crossings,
+                        "rms": rms, "zeroCrossingRate": crossings, **metrics,
                         "unit": "normalized_pcm_amplitude",
                         "interpretation": "acoustic change only; no breathing assessment"})
             index += 1
