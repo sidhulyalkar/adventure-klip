@@ -25,7 +25,8 @@ function drawQueue(){
     const kind={promising:'Potential highlight',needs_review:'Needs your eye',likely_filler:'Likely filler'}[m.lane];
     card.innerHTML='<div class="queue-card-head"><span class="queue-lane '+m.lane+'">'+kind+'</span><span>'+String(i+1).padStart(2,'0')+'</span></div>'+
       '<button type="button" class="queue-card-media"><span class="queue-play">▶</span><span class="queue-range">'+t(m.startMs)+' – '+t(m.endMs)+'</span></button>'+
-      '<div class="queue-card-details"><h3>'+html(human(m.label))+'</h3><p>'+html(m.sourceName)+'</p><p class="queue-evidence">'+m.reasons.map(html).join(' · ')+'</p></div>'+
+      '<div class="queue-card-details"><h3>'+html(human(m.label))+'</h3><p>'+html(m.sourceName)+'</p><p class="queue-evidence">'+m.reasons.map(html).join(' · ')+'</p>'+
+      (m.similarSceneCount?'<p class="queue-similar">◈ '+m.similarSceneCount+' visually similar candidate(s) · unverified</p>':'')+'</div>'+
       '<div class="queue-card-buttons"><button type="button" class="queue-view">Preview</button><button type="button" class="queue-keep">✓ Keep</button><button type="button" class="queue-reject">✕ Reject</button></div>';
     const preview=()=>host().inspect(m.assetId,m.startMs,m.endMs,m.label).catch(warn);
     card.querySelector('.queue-view').addEventListener('click',preview);
