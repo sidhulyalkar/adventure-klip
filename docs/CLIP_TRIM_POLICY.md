@@ -186,3 +186,30 @@ Future work: compare reviewer-chosen boundary corrections with cached
 motion troughs, shot changes, semantic context, original PTS and measured
 rendered-frame PTS across distinct trips, before allowing any automatic
 boundary-shift recommendation.
+
+
+## Learning from corrections: revision-linked proposal provenance (v0.9)
+
+Each **new** review revision may now atomically store an optional reference to
+the candidate that was shown to the reviewer. The `review_proposal_links`
+table records source type, original candidate ID, label and in/out timestamps,
+trim-policy version, and the suggested cut when there was an applicable
+suggestion. The already-existing `example_revisions` row independently stores
+the **actual human-chosen cut**, editorial Keep/Later/Skip and label accuracy.
+
+This enables evaluation of edit distance, human-selected context before/after
+the candidate, and whether the deterministic trim proposal was accepted or
+changed. It does **not** establish ground truth for action classification:
+a human Keep with uncertain label is still an unverified action.
+
+Validation occurs before writing either record, and both inserts share a
+single SQLite transaction. Invalid provenance rolls back the review. Older
+and CLI-created reviews remain supported without a link. Duplicate unchanged
+revisions do not generate new provenance. No original recording paths or
+decoded frames are included in the table.
+
+**Known limitation:** the current reviewed-example identity incorporates the
+final start/end and label, so editing the bounds can create a new example
+identity. The proposal ID now connects successive edits to the same candidate
+for future metrics, but we have deliberately not changed the historic
+revision/identity semantics during the large ingestion run.
