@@ -128,17 +128,51 @@ def enrich_candidates(db, workspace, candidates: list[dict], *,
     reviews=_latest_review_features(db,workspace,provider,examples,cache)
     enriched=[]
     by_asset={}
+    owl_by_asset={}
+    context_by_asset={}
     for c in candidates:
         aid=c["sourceAssetId"]
         if aid not in cache:
             cache[aid]=frames_for_asset(db,workspace,aid,provider)
         frames,model_key=cache[aid]
         features=clip_feature(frames,model_key,c["startMs"],c["endMs"])
-        # Distinct detected labels, not a certified species or object count.
-        object_labels=sorted({str(obj.get("label")) for f in frames
-                              if c["startMs"]<=f.get("tMs",-1)<c["endMs"]
-                              for obj in f.get("objects",[])
-                              if isinstance(obj,dict) and obj.get("label")})
+        if aid not in owl_by_asset:
+            owl_by_asset[aid]=frames_for_asset(db,workspace,aid,"owlv2")[0]
+        if aid not in context_by_asset:
+            context_by_asset[aid]=frames_for_asset(db,workspace,aid,"context")[0]
+        objects={}
+        for f in owl_by_asset[aid] + frames:
+            t=f.get("decodedPtsMs")
+            if not isinstance(t,int) or t<0:
+                t=f.get("tMs",-1)
+            if not isinstance(t,int) or not c["startMs"]<=t<c["endMs"]:
+                continue
+            for obj in f.get("objects",[]):
+                if not isinstance(obj,dict) or not isinstance(obj.get("label"),str):
+                    continue
+                label=obj["label"]
+                objects[label]=objects.get(label,0)+1
+        object_labels=sorted(objects)
+        # Context prompts are comparisons of video frames, NOT measured
+        # probabilities. A scene may contain several nonexclusive concepts.
+        scores=[]
+        for f in context_by_asset[aid]:
+            t=f.get("decodedPtsMs")
+            if not isinstance(t,int) or t<0:
+                t=f.get("tMs",-1)
+            if isinstance(t,int) and c["startMs"]<=t<c["endMs"]:
+                scene=f.get("sceneScores") or {}
+                if scene.get("method")=="siglip2_image_text_cosine":
+                    scores.append(scene.get("similarities",{}))
+        scene_labels=[]
+        if scores:
+            keys=set.intersection(*(set(v) for v in scores))
+            for key in keys:
+                values=[float(v[key]) for v in scores if
+                        isinstance(v.get(key),(float,int)) and math.isfinite(v[key])]
+                if len(values)==len(scores):
+                    scene_labels.append((sum(values)/len(values),key))
+        scene_labels.sort(reverse=True)
         if aid not in by_asset:
             doc=read_artifact(db,workspace,aid,AUDIO_VERSION)
             by_asset[aid]=doc["series"] if doc else None
@@ -163,7 +197,10 @@ def enrich_candidates(db, workspace, candidates: list[dict], *,
                 "sampleCount":features.get("sampleCount",0),
                 "method":features.get("method"),
                 "objectProposals":object_labels,
-                "warning":"Cosine similarity is not scene identity or label certainty",
+                "objectDetectionObservations":objects,
+                "sceneHypotheses":[{"label":label,"relativeSimilarity":round(value,5)}
+                                   for value,label in scene_labels[:3]],
+                "warning":"Cosine similarity / object detections are not verified species or actions",
             },
             "nearestReviewedExamples":nearest[:3],
             "_vector":features.get("vector"),
