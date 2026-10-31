@@ -30,6 +30,14 @@ Monitor independently:
 
 Do not run a second process, scenes, or acoustics writer against the same workspace while processing. The baseline first pass gathers relatively inexpensive motion, audio, histogram and timeline metadata. It does not establish species or athletic-action accuracy. Times vary with video duration, codec and SSD throughput.
 
+## UI palette and preserved advanced tools
+
+The default UI is intentionally minimal and uses a unified navy / light-grey / salmon / white palette. Review prioritizes one large playing clip, with three decisions. Library organizes days, indexed recordings, corrected activity, user-authored regions and collections. Sequence retains the source-safe approved-only drag-and-drop reel draft workflow.
+
+The previous detailed multi-card analysis and A/B comparison interface remains available at `http://127.0.0.1:<port>/classic` on the **same local studio server**. This is an optional advanced route; the homepage opens the focused interface.
+
+**Do not switch Git branches, reinstall packages or run another Klip writer while the current 90%-complete whole-SSD processing pass is still active.** Finish it first. Once complete, install the v0.6 branch and launch the UI against the same `~/AdventureAI` workspace. There is no need to rerun the current extraction just to view new UI colors or navigation.
+
 ## Launch the new interface after processing
 
     cd "$HOME/Documents/Projects/adventure-klip"
