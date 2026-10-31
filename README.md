@@ -1,3 +1,7 @@
+## Klip 0.7 · Edge-aware object metadata and selective joins
+
+The Review Details panel now offers optional, cached-only entrance/exit object and scene evidence, explicitly marking unverified labels and sparse sample coverage. Sequence joins compare compatible edge embeddings, source chronology, audio-change cues and sampled object queries before suggesting a natural cut or soft break. Exported plans can be rendered with `--transition smart` for selective fades through black. No new model inference or original-video edits occur in the UI. See [Semantic Edge Transitions](docs/SEMANTIC_EDGE_TRANSITIONS.md).
+
 ## Klip 0.6.1 · Cinematic Focus
 
 The calm one-clip screening room now has a delicately framed, video-first stage, a minimal batch progress rule, one-key Replay, an optional Cinema layout, and discreet shortcut help. The navy / soft-grey / salmon / white palette remains consistent across Review, Library and Sequence. See [Cinematic Focus](docs/CINEMATIC_FOCUS.md). Source videos, processing caches, and reviewed edit history are unchanged.
