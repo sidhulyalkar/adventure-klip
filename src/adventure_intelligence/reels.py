@@ -146,8 +146,8 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
             # This is a fade-through-black, not an overlapping cross dissolve.
             # Cap fades for short reviewed clips so in/out never overlap.
             soft=min(fade_seconds,duration/3)
-            fade_in=i>0 and styles[i-1]=="fade"
-            fade_out=i<len(styles) and styles[i]=="fade"
+            fade_in=transition=="fade" or (i>0 and styles[i-1]=="fade")
+            fade_out=transition=="fade" or (i<len(styles) and styles[i]=="fade")
             video_fades=[]
             audio_fades=[]
             if fade_in:
