@@ -1,0 +1,59 @@
+/* Optional advanced workspace: consistent with Klip Focus palette.
+   Keeps the older controls accessible while the minimal UI remains default. */
+:root{--bg:#0d1728;--panel:#152237;--panel2:#1b2c43;--panel3:#23364e;
+ --line:#304158;--line-soft:#28384e;--text:#f6f8fb;--muted:#b5c1d0;
+ --subtle:#8494a9;--mint:#f4aa9b;--mint2:#df988f;--amber:#f8c7bb;--danger:#d99087}
+html,body{background:var(--bg);color:var(--text)}
+body{background:radial-gradient(ellipse 70% 50% at 45% -20%,#283a5270,transparent),var(--bg)}
+.topbar{background:#101d30e8;border-color:var(--line-soft)}
+.rail,.inspector{background:#142237;border-color:var(--line-soft)}
+.main{background:transparent}
+.brand-period{color:var(--mint);background:transparent}
+.mark span{background:var(--mint)}
+.local-tag{color:var(--mint2)}
+.live-dot,.small-indicator{background:var(--mint2);box-shadow:0 0 0 4px #f4aa9b18}
+.local-tag{background:transparent}
+.top-progress,.icon-btn,.filter-pill.is-active{background:#293950;border-color:#45576c;color:var(--text)}
+.library-row:hover,.library-row.selected{background:#263952;border-color:#485a70}
+.library-row .rec-marker{background:#48516a;color:#f8c7bb}
+.library-row .thumb-line,.thumb-line,.track,.timeline-track{background:#263850}
+.library-row .thumb-line span,.track-segment{background:var(--mint2)}
+.activity-tag,.evidence-pill{background:#24374d;border-color:#55667c;color:var(--mint)}
+.video-card,.timeline-card,.moment,.comparison-card,.comparison-decision{background:#142237;border-color:#33455e}
+.video-card .viewer,.viewer{background:radial-gradient(circle at center,#182943,#070e1a 70%)}
+.video-bottomline{background:#101e31}
+.filter-pill,.mode-btn{color:var(--muted)}
+.mode{background:#162740;border-color:#3c4e66}
+.mode-btn.active,.option-button.selected,.vote.active{background:#42516a;color:var(--text);border-color:var(--mint)}
+.track-segment.warning{background:#f8c7bb}
+.moment:hover,.moment.active{background:#20364d;border-color:var(--mint)}
+.focus-card{background:linear-gradient(145deg,#273a53,#15253b);border-color:#53647a}
+.secondary-btn,.option-button,.vote{background:#25374e;border-color:#435773;color:var(--text)}
+.primary-btn,.queue-card-buttons .queue-keep{background:var(--mint);border-color:var(--mint);color:#152237}
+.primary-btn:hover:not(:disabled){background:#ffd0c6;border-color:#ffd0c6}
+.evidence-pill.uncertain,.moment-warning{background:#362b38;color:#f8c7bb;border-color:#765962}
+.queue-card{background:linear-gradient(145deg,#1b2d43,#121f33);border-color:#3e506a}
+.queue-card:hover{border-color:#c18d8e}
+.queue-lane.promising{color:#ffd0c6;background:#4d3b4a}
+.queue-lane.needs_review{color:#f4d4ce;background:#424057}
+.queue-lane.likely_filler{color:#d3dce7;background:#293950}
+.queue-card-media{background:radial-gradient(ellipse at 45% 75%,#35465e,#101a2c 75%);border-color:#495b74}
+.queue-card-media .queue-play{background:var(--mint);color:#142237}
+.queue-card-details .queue-evidence{color:var(--muted)}
+.queue-card-buttons button,.shelf-actions button,.board-clip-actions button{background:#2b3b54;border-color:#56667e}
+.queue-card-buttons .queue-reject{background:#382c3c;color:#f8c7bb;border-color:#725563}
+.queue-empty,.sequence-bank,.sequence-board,.sequence-preview{background:#142237;border-color:#394960}
+.shelf-clip{background:#24354c;border-color:#445670}
+.shelf-actions button:last-child{background:var(--mint);color:#152237}
+.sequence-board-list{background:#111e32;border-color:#53637b}
+.board-clip{background:#293a52;border-color:#56677e}
+.board-clip.drop-target{background:#3c4b63;border-color:var(--mint)}
+.join-row button{background:#23364e;border-color:#50617a;color:var(--muted)}
+.join-evidence,.queue-similar{color:#f4c0b5!important}
+input,select,textarea{background:#16273c;color:var(--text);border-color:#44566e}
+input:focus,select:focus,textarea:focus{border-color:var(--mint)}
+.rail-note,.caption,.footer{color:var(--subtle)}
+.footer{background:#0b1526;border-color:var(--line-soft)}
+.help-dialog{background:#17283f;color:var(--text);border-color:#56677e}
+.toast{background:#283c53;border-color:#6d7d91;color:var(--text)}
+.toast.error{background:#4a303e;border-color:#b2777d}

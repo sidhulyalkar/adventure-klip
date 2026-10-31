@@ -30,9 +30,11 @@ jobs:
         run: |
           node --check src/adventure_intelligence/studio_assets/studio.js
           node --check src/adventure_intelligence/studio_assets/studio_editor.js
+          node --check src/adventure_intelligence/studio_assets/focus.js
+          node --check src/adventure_intelligence/studio_assets/focus_sequence.js
       - name: Verify packaged studio assets
         run: |
-          python -c "import glob,zipfile; p=glob.glob('dist/*.whl')[0]; z=zipfile.ZipFile(p); a=z.namelist(); assert all(any(x.endswith('/studio_assets/'+n) for x in a) for n in ('index.html','studio.css','editor.css','studio.js','studio_editor.js')), a"
+          python -c "import glob,zipfile; p=glob.glob('dist/*.whl')[0]; z=zipfile.ZipFile(p); a=z.namelist(); assert all(any(x.endswith('/studio_assets/'+n) for x in a) for n in ('index.html','studio.css','editor.css','studio.js','studio_editor.js','focus.html','focus.css','focus.js','focus_sequence.js','classic_theme.css')), a"
       - name: Tests
         run: python -m pytest -q
       - name: Compile Python

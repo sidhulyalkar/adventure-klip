@@ -27,6 +27,7 @@ from .locking import lock_workspace
 from .sources import resolve_source
 from .sequence_editor import sequence_state, save_sequence, review_combination, export_sequence
 from .curation_queue import review_queue
+from .library_index import library_index, organize_asset
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -35,6 +36,10 @@ _RESOURCE={
     "/studio.js":("studio.js","text/javascript; charset=utf-8"),
     "/studio_editor.js":("studio_editor.js","text/javascript; charset=utf-8"),
     "/editor.css":("editor.css","text/css; charset=utf-8"),
+    "/focus.css":("focus.css","text/css; charset=utf-8"),
+    "/classic_theme.css":("classic_theme.css","text/css; charset=utf-8"),
+    "/focus.js":("focus.js","text/javascript; charset=utf-8"),
+    "/focus_sequence.js":("focus_sequence.js","text/javascript; charset=utf-8"),
 }
 
 
@@ -256,8 +261,11 @@ def make_handler(workspace:Path,token:str):
             if not self._origin_safe():
                 self._json(403,{"error":"Local host required"})
                 return
-            if path=="/":
-                html=paths.joinpath("index.html").read_text(encoding="utf-8")
+            if path=="/" or path=="/classic":
+                # Focus is the default. Classic keeps the older analysis and
+                # A/B comparison panels available without cluttering Review.
+                name="focus.html" if path=="/" else "index.html"
+                html=paths.joinpath(name).read_text(encoding="utf-8")
                 html=html.replace("KLIP_SESSION_TOKEN",token)
                 self._send(200,html.encode(),"text/html; charset=utf-8")
                 return
@@ -273,6 +281,8 @@ def make_handler(workspace:Path,token:str):
                     self._json(200,studio_overview(workspace))
                 elif path=="/api/sequence":
                     self._json(200,sequence_state(workspace))
+                elif path=="/api/library":
+                    self._json(200,library_index(workspace))
                 elif path=="/api/queue":
                     raw_page=q.get("page",["0"])[0]
                     if not raw_page.isdigit() or len(raw_page)>6:
@@ -319,6 +329,12 @@ def make_handler(workspace:Path,token:str):
                             end_seconds=body["endSeconds"],label=body["label"],
                             decision=body["decision"],highlight=body.get("highlight","neutral"),
                             note=body.get("note",""))
+                elif parsed.path=="/api/library/organize":
+                    with lock_workspace(workspace):
+                        result=organize_asset(workspace,asset_id=body["assetId"],
+                            region=body.get("region"),place=body.get("place"),
+                            collection=body.get("collection"),
+                            activity=body.get("activity"),note=body.get("note"))
                 elif parsed.path=="/api/sequence":
                     with lock_workspace(workspace):
                         result=save_sequence(workspace,entries=body["entries"],

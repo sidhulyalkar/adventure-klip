@@ -141,6 +141,16 @@ CREATE TABLE IF NOT EXISTS sequence_combination_feedback (
 );
 CREATE INDEX IF NOT EXISTS sequence_feedback_revision
  ON sequence_combination_feedback(sequence_revision_id);
+CREATE TABLE IF NOT EXISTS asset_organization (
+ asset_id TEXT PRIMARY KEY REFERENCES assets(id),
+ region TEXT NOT NULL DEFAULT '',
+ place TEXT NOT NULL DEFAULT '',
+ collection TEXT NOT NULL DEFAULT '',
+ activity_override TEXT NOT NULL DEFAULT '' CHECK(activity_override IN ('','unknown','ski','bike','snorkeling')),
+ note TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 
 """
 
