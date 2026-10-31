@@ -8,8 +8,10 @@ body{background:radial-gradient(ellipse 70% 50% at 45% -20%,#283a5270,transparen
 .topbar{background:#101d30e8;border-color:var(--line-soft)}
 .rail,.inspector{background:#142237;border-color:var(--line-soft)}
 .main{background:transparent}
-.brand-period,.mark span{color:var(--mint);background:var(--mint)}
-.local-tag,.live-dot,.small-indicator{color:var(--mint2)}
+.brand-period{color:var(--mint);background:transparent}
+.mark span{background:var(--mint)}
+.local-tag{color:var(--mint2)}
+.live-dot,.small-indicator{background:var(--mint2);box-shadow:0 0 0 4px #f4aa9b18}
 .local-tag{background:transparent}
 .top-progress,.icon-btn,.filter-pill.is-active{background:#293950;border-color:#45576c;color:var(--text)}
 .library-row:hover,.library-row.selected{background:#263952;border-color:#485a70}
