@@ -183,3 +183,42 @@ def test_calibration_is_conditional_and_preserves_unreviewed_pool():
     assert out["pools"]["random"]["unreviewed"]==1
     assert out["pools"]["random"]["modelEvaluated"]==0
     assert out["pools"]["random"]["recallAmongReviewed"] is None
+
+
+def test_jury_checkpoint_skips_completed_model_calls_after_restart(approved_images,tmp_path):
+    frames,manifest=approved_images
+    ledger=tmp_path/"jury.jsonl"
+    seen=[]
+    def call(payload,**kwargs):
+        seen.append(payload["model"])
+        return completion(answer())
+    first=evaluate_manifest(manifest,frames_dir=frames,models=["model/a","model/b"],
+                            api_key="testing",allow_external_upload=True,
+                            transport=call,checkpoint_file=ledger)
+    assert seen==["model/a","model/b"]
+    assert first["results"][0]["jury"]["nonAbstaining"]==2
+    assert len(ledger.read_text().splitlines())==2
+    again=evaluate_manifest(manifest,frames_dir=frames,models=["model/a","model/b"],
+                            api_key="testing",allow_external_upload=True,
+                            transport=lambda *a,**k: (_ for _ in ()).throw(
+                                AssertionError("Duplicate billed request")),
+                            checkpoint_file=ledger)
+    assert again["results"][0]["jury"]["nonAbstaining"]==2
+    assert all(x["resumed"] for x in again["results"][0]["judges"])
+    assert len(ledger.read_text().splitlines())==2
+
+
+def test_checkpoint_invalidates_when_image_bytes_change(approved_images,tmp_path):
+    frames,manifest=approved_images
+    ledger=tmp_path/"jury.jsonl"
+    seen=[]
+    def callback(payload,**kwargs):
+        seen.append(payload["model"])
+        return completion(answer())
+    kw=dict(manifest=manifest,frames_dir=frames,models=["model/a","model/b"],
+            api_key="testing",allow_external_upload=True,transport=callback,
+            checkpoint_file=ledger)
+    evaluate_manifest(**kw)
+    (frames/"frame-0.jpg").write_bytes(b"\xff\xd8\xffNew approved contents")
+    evaluate_manifest(**kw)
+    assert len(seen)==4  # changed evidence => new request fingerprints
