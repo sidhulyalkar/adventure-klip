@@ -21,10 +21,13 @@ output, or automatically save a review.
    plus explicit human-guard checks. Never confused with human truth.
 4. **Preview**: an opt-in player seek using proposed source-relative bounds.
    The annotation fields update for inspection; nothing is saved at this stage.
-5. **Review**: the user independently judges (a) whether the **scene label** is
+5. **Manual preview**: change in/out seconds or use [ / ] to set source
+   positions, then click **Preview my cut** to see those precise entered bounds
+   in the native player. This is still a preview and writes nothing.
+6. **Review**: the user independently judges (a) whether the **scene label** is
    correct and (b) whether the **footage** should be kept. They adjust start/end
    and save. Revision history preserves their choices.
-6. **Export**: only human-kept clips can be assembled in the existing Sequence
+7. **Export**: only human-kept clips can be assembled in the existing Sequence
    editor. Unconfirmed action labels export as `unverified_moment`.
 
 ## Deterministic policy table
