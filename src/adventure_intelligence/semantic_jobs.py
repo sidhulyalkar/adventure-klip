@@ -122,7 +122,9 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                            (aid,config_id)).fetchone()
             path=None
             try:
-                path=resolve_source(db,asset)
+                if progress is not None:
+                    progress.note('semantics', f'[{asset_number}/{len(assets)}] checking source {aid[:12]}')
+                path=resolve_source(db,asset,progress=progress)
                 source_stat=path.stat()
                 duration=int((asset['duration'] or 0)*1000)
                 if duration<=0:
@@ -187,7 +189,9 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                     frames.append(frame)
                     if progress is not None:
                         progress.frames(stage_name, len(frames), expected, path.name)
-                if verified_digest(path)!=aid:
+                source_check=(lambda done,total: progress.bytes(
+                    'source-check',done,total,path.name) if progress is not None else None)
+                if verified_digest(path,progress=source_check)!=aid:
                     # Observations from a changing source must never be reused.
                     db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
                     db.commit()
