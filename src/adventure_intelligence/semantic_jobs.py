@@ -109,11 +109,22 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                 continue
             if limit is not None and result['processed']>=limit:
                 break
+            # A legacy catalog can contain AppleDouble metadata or damaged
+            # footage indexed before duration checks. Skip without touching
+            # the SSD or hashing source bytes; this is not a model failure.
+            if not asset['duration'] or asset['duration']<=0:
+                result['missing']+=1
+                if progress is not None:
+                    progress.item('semantics', asset_number, len(assets),
+                                  f'{aid[:12]} skipped: no valid video duration')
+                continue
             job=db.execute('SELECT * FROM semantic_jobs WHERE asset_id=? AND config_id=?',
                            (aid,config_id)).fetchone()
             path=None
             try:
-                path=resolve_source(db,asset)
+                if progress is not None:
+                    progress.note('semantics', f'[{asset_number}/{len(assets)}] checking source {aid[:12]}')
+                path=resolve_source(db,asset,progress=progress)
                 source_stat=path.stat()
                 duration=int((asset['duration'] or 0)*1000)
                 if duration<=0:
@@ -178,7 +189,9 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                     frames.append(frame)
                     if progress is not None:
                         progress.frames(stage_name, len(frames), expected, path.name)
-                if verified_digest(path)!=aid:
+                source_check=(lambda done,total: progress.bytes(
+                    'source-check',done,total,path.name) if progress is not None else None)
+                if verified_digest(path,progress=source_check)!=aid:
                     # Observations from a changing source must never be reused.
                     db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
                     db.commit()
