@@ -70,13 +70,16 @@ def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
                         db.execute('UPDATE assets SET stored_path=? WHERE id=?',(str(p),digest))
                     if not found['duration'] or found['duration']<=0:
                         meta=probe(p)
+                        if not meta.get('duration') or meta['duration']<=0:
+                            raise ValueError('Video metadata has no positive duration')
                         db.execute('UPDATE assets SET duration=?,capture_time=?,metadata_json=? WHERE id=?',
                                    (meta.get('duration'),meta.get('capture_time'),json.dumps(meta),digest))
                 else:
-                    try:
-                        meta=probe(p)
-                    except Exception as exc:
-                        meta={'duration':0,'capture_time':None,'probe_error':str(exc)}
+                    # Report unprobeable files rather than register a fake video
+                    # with duration=0 that will fail every later pipeline stage.
+                    meta=probe(p)
+                    if not meta.get('duration') or meta['duration']<=0:
+                        raise ValueError('Video metadata has no positive duration')
                     db.execute('''INSERT INTO assets
                         (id,sha256,stored_path,size_bytes,suffix,duration,capture_time,activity,metadata_json)
                         VALUES (?,?,?,?,?,?,?,?,?)''',
