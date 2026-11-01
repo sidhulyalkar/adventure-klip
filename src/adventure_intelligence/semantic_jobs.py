@@ -109,6 +109,15 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                 continue
             if limit is not None and result['processed']>=limit:
                 break
+            # A legacy catalog can contain AppleDouble metadata or damaged
+            # footage indexed before duration checks. Skip without touching
+            # the SSD or hashing source bytes; this is not a model failure.
+            if not asset['duration'] or asset['duration']<=0:
+                result['missing']+=1
+                if progress is not None:
+                    progress.item('semantics', asset_number, len(assets),
+                                  f'{aid[:12]} skipped: no valid video duration')
+                continue
             job=db.execute('SELECT * FROM semantic_jobs WHERE asset_id=? AND config_id=?',
                            (aid,config_id)).fetchone()
             path=None
