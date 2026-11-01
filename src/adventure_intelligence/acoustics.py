@@ -140,7 +140,7 @@ def analyze_audio(workspace: Path, *, asset_ids: set[str] | None = None,
                   limit: int | None = None, progress=None) -> dict:
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive")
-    result = {"processed": 0, "cached": 0, "silent": 0, "failed": []}
+    result = {"processed": 0, "cached": 0, "silent": 0, "skipped_invalid": 0, "failed": []}
     with connect(workspace) as db:
         assets = [a for a in db.execute("SELECT * FROM assets ORDER BY created_at,id")
                   if asset_ids is None or a["id"] in asset_ids]
@@ -150,6 +150,12 @@ def analyze_audio(workspace: Path, *, asset_ids: set[str] | None = None,
             progress.start("acoustics", len(assets))
         for i, asset in enumerate(assets, 1):
             aid = asset["id"]
+            if not asset["duration"] or asset["duration"]<=0:
+                result["skipped_invalid"]+=1
+                if progress:
+                    progress.item("acoustics", i, len(assets),
+                                  f"{aid[:12]} skipped: no valid video duration")
+                continue
             try:
                 if read_artifact(db, workspace, aid, AUDIO_VERSION) is not None:
                     result["cached"] += 1
