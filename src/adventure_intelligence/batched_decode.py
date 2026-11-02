@@ -10,6 +10,7 @@ from fractions import Fraction
 from pathlib import Path
 import re
 import subprocess
+import zlib
 
 from .frame_timing import extract_frame_png
 from .media import require_tool
@@ -54,6 +55,11 @@ def _png_stream(data: bytes) -> list[bytes]:
             kind = data[pos + 4:pos + 8]
             if length > _MAX_PNG_BYTES or pos + length + 12 > len(data):
                 raise ValueError("Oversized or truncated PNG chunk")
+            crc_at = pos + 8 + length
+            expected_crc = int.from_bytes(data[crc_at:crc_at + 4], "big")
+            actual_crc = zlib.crc32(data[pos + 4:crc_at]) & 0xffffffff
+            if actual_crc != expected_crc:
+                raise ValueError("Corrupt PNG chunk checksum")
             pos += 12 + length
             if pos - start > _MAX_PNG_BYTES:
                 raise ValueError("Oversized decoded frame")
