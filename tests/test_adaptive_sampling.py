@@ -216,3 +216,16 @@ def test_unverified_marine_objects_prioritize_inspection_without_species_claim(f
                for x in plan["assets"][0]["frames"])
     assert "verifiedSpecies" not in plan["assets"][0]
     assert movie.read_bytes() == payload
+
+
+def test_missing_ssd_preflight_fails_fast_without_hashing(footage, monkeypatch):
+    from adventure_intelligence.adaptive_sampling import source_preflight
+    workspace, movie, payload, aid = footage
+    before = source_preflight(workspace, {aid})
+    assert before["possiblyAvailable"] == 1
+    # Simulate an SSD being unplugged by moving only this temporary fixture.
+    movie.rename(movie.with_suffix(".unmounted"))
+    after = source_preflight(workspace, {aid})
+    assert after["possiblyAvailable"] == 0
+    assert after["unavailable"][0]["reason"] == "no_accessible_source_path"
+    assert movie.with_suffix(".unmounted").read_bytes() == payload
