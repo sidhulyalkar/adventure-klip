@@ -61,6 +61,34 @@ def plan_reel(workspace: Path, recipe: str, max_seconds: int=75) -> dict:
             "status":"draft","disclaimer":"Unreviewed camera motion is not a confirmed athletic maneuver"}
 
 
+
+def transition_styles(plan: dict, mode: str) -> list[str]:
+    """Validate per-adjacency edit intentions without trusting model metadata."""
+    segments=plan.get("segments") or []
+    joins=max(0,len(segments)-1)
+    if mode=="cut":
+        return ["cut"]*joins
+    if mode=="fade":
+        return ["fade"]*joins
+    if mode!="smart":
+        raise ValueError("Unsupported transition")
+    proposed=plan.get("transitions")
+    if not isinstance(proposed,list) or len(proposed)!=joins:
+        raise ValueError("Smart transitions require one explicit suggestion per join")
+    choices=[]
+    for i,entry in enumerate(proposed):
+        if not isinstance(entry,dict) or entry.get("style") not in {"cut","fade"}:
+            raise ValueError("Invalid smart transition")
+        left=segments[i].get("episodeId")
+        right=segments[i+1].get("episodeId")
+        if (not isinstance(left,str) or not isinstance(right,str) or
+            left!="review-"+str(entry.get("leftExampleId")) or
+            right!="review-"+str(entry.get("rightExampleId"))):
+            raise ValueError("Smart transition does not match the reviewed clips")
+        choices.append(entry["style"])
+    return choices
+
+
 def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
                 transition: str="cut", fade_seconds: float=0.35) -> dict:
     if not plan.get("segments"):
@@ -69,10 +97,11 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
         raise ValueError("Unsupported plan schemaVersion")
     if height not in {480,720,1080}:
         raise ValueError("height must be 480, 720 or 1080")
-    if transition not in {"cut", "fade"}:
+    if transition not in {"cut", "fade", "smart"}:
         raise ValueError("Unsupported transition")
     if not 0.1 <= fade_seconds <= 1.0:
         raise ValueError("fade_seconds must be between 0.1 and 1.0")
+    styles=transition_styles(plan,transition)
     ffmpeg=require_tool("ffmpeg")
     output=output.expanduser().resolve()
     with connect(workspace) as db:
@@ -113,12 +142,22 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
             cmd=[ffmpeg,"-hide_banner","-loglevel","error","-y", "-ss",f"{start/1000:.3f}","-i",str(source)]
             if not has_audio:
                 cmd.extend(["-f","lavfi","-i","anullsrc=channel_layout=stereo:sample_rate=48000"])
-            fade_filter = (f",fade=t=in:st=0:d={fade_seconds:.3f},"
-                           f"fade=t=out:st={max(0.,duration-fade_seconds):.3f}:d={fade_seconds:.3f}"
-                           if transition=="fade" else "")
-            audio_filter = (f"afade=t=in:st=0:d={fade_seconds:.3f},"
-                            f"afade=t=out:st={max(0.,duration-fade_seconds):.3f}:d={fade_seconds:.3f}"
-                            if transition=="fade" else "anull")
+            # Fade *only* at joins requested by the reviewed transition plan.
+            # This is a fade-through-black, not an overlapping cross dissolve.
+            # Cap fades for short reviewed clips so in/out never overlap.
+            soft=min(fade_seconds,duration/3)
+            fade_in=transition=="fade" or (i>0 and styles[i-1]=="fade")
+            fade_out=transition=="fade" or (i<len(styles) and styles[i]=="fade")
+            video_fades=[]
+            audio_fades=[]
+            if fade_in:
+                video_fades.append(f"fade=t=in:st=0:d={soft:.3f}")
+                audio_fades.append(f"afade=t=in:st=0:d={soft:.3f}")
+            if fade_out:
+                video_fades.append(f"fade=t=out:st={max(0.,duration-soft):.3f}:d={soft:.3f}")
+                audio_fades.append(f"afade=t=out:st={max(0.,duration-soft):.3f}:d={soft:.3f}")
+            fade_filter="".join(","+f for f in video_fades)
+            audio_filter=",".join(audio_fades) if audio_fades else "anull"
             cmd.extend(["-t",f"{duration:.3f}","-map","0:v:0","-map","0:a:0" if has_audio else "1:a:0",
                 "-vf",f"scale=-2:{height}:flags=lanczos,pad=ceil(iw/2)*2:ceil(ih/2)*2{fade_filter}","-af",audio_filter,
                 "-r","30","-c:v","libx264","-preset","veryfast","-crf","21",
@@ -141,4 +180,6 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
         import shutil
         shutil.copy2(temp_out,output)
     return {"path":str(output),"segments":len(clips),"transition":transition,
-            "transitionStyle":"fade-through-black" if transition=="fade" else "hard-cut"}
+            "transitionStyle":("selective-fade-through-black" if transition=="smart"
+                else "fade-through-black" if transition=="fade" else "hard-cut"),
+            "joinStyles":styles,"fadedJoins":styles.count("fade")}

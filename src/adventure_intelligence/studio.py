@@ -29,6 +29,7 @@ from .sequence_editor import sequence_state, save_sequence, review_combination, 
 from .curation_queue import review_queue
 from .clip_rules import suggest_trim, exclusion_spans
 from .boundary_inspector import boundary_evidence
+from .transition_evidence import EdgeEvidence, VERSION as EDGE_VERSION
 from .examples import latest_examples
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
@@ -139,6 +140,31 @@ def set_asset_region(workspace: Path, asset_id: str, region: str) -> dict:
           ON CONFLICT(asset_id) DO UPDATE SET region=excluded.region,
           updated_at=CURRENT_TIMESTAMP""",(asset_id,region))
     return {"assetId":asset_id,"region":region}
+
+
+def studio_clip_metadata(workspace:Path, asset_id:str, start_ms:int, end_ms:int) -> dict:
+    """Only cached semantic evidence. No source video I/O or model inference."""
+    if not isinstance(asset_id,str) or not SHA_RE.fullmatch(asset_id):
+        raise ValueError("Invalid asset ID")
+    if (type(start_ms) is not int or type(end_ms) is not int or
+            start_ms<0 or end_ms<=start_ms):
+        raise ValueError("Invalid clip interval")
+    with connect(workspace) as db:
+        asset=db.execute("SELECT id,duration FROM assets WHERE id=?",(asset_id,)).fetchone()
+        if asset is None:
+            raise ValueError("Asset is not indexed")
+        if end_ms>round(float(asset["duration"] or 0)*1000):
+            raise ValueError("Clip exceeds indexed duration")
+        cache=EdgeEvidence(db,workspace)
+        segment={"sourceAssetId":asset_id,"startMs":start_ms,"endMs":end_ms}
+        beginning=cache.snapshot(segment,"head")
+        ending=cache.snapshot(segment,"tail")
+    return {"schemaVersion":1,"version":EDGE_VERSION,"assetId":asset_id,
+            "interval":{"startMs":start_ms,"endMs":end_ms},
+            "head":{k:v for k,v in beginning.items() if not k.startswith("_")},
+            "tail":{k:v for k,v in ending.items() if not k.startswith("_")},
+            "status":"unverified_model_evidence",
+            "note":"Query labels and similarities are not verified identities or species"}
 
 
 class SourceStream:
@@ -309,6 +335,14 @@ def make_handler(workspace:Path,token:str):
                     self._json(200,studio_overview(workspace))
                 elif path=="/api/sequence":
                     self._json(200,sequence_state(workspace))
+                elif path=="/api/clip-metadata":
+                    aid=q.get("asset",[""])[0]
+                    raw_start=q.get("startMs",[""])[0]
+                    raw_end=q.get("endMs",[""])[0]
+                    if (not raw_start.isdecimal() or not raw_end.isdecimal()
+                            or len(raw_start)>10 or len(raw_end)>10):
+                        raise ValueError("Expected integer millisecond boundaries")
+                    self._json(200,studio_clip_metadata(workspace,aid,int(raw_start),int(raw_end)))
                 elif path=="/api/queue":
                     raw_page=q.get("page",["0"])[0]
                     if not raw_page.isdigit() or len(raw_page)>6:
