@@ -10,7 +10,7 @@ The local Studio now compares the **exit of one scene** with the **entrance of t
 - Optional audio-change cues, which may signal a jarring sound cut but never prove breathing, crashes, or animal sounds.
 - Separate entrance/exit sampling counts. A sparse sample interval cannot detect every short event.
 
-Open **Details** on a Review clip to see these evidence layers. No annotations obstruct the video itself.
+The authenticated `/api/clip-metadata` endpoint exposes these cached evidence layers for an explicitly selected interval. The focused Review UI currently remains minimal; a dedicated metadata inspector is not yet wired into that UI. No automatic inference or frame extraction is triggered by this API.
 
 ## Sequence editing
 
@@ -34,13 +34,14 @@ Replace REVISION-ID with the actual exported filename. Output is a separate new 
 ~~~bash
 cd "$HOME/Documents/Projects/adventure-klip"
 git fetch origin
-git switch --track origin/feat/semantic-edge-transition-evidence
+git switch main
+git pull --ff-only origin main
 source .venv/bin/activate
 python -m pip install -e '.[dev,vision,images]'
 klip --workspace "$HOME/AdventureAI" studio
 ~~~
 
-If the branch already exists, switch to it and pull fast-forward. Preserve any local uncommitted changes before branch switching. No new extraction is required to show the updated interface.
+Only do this after stopping the existing processing command and preserving local uncommitted changes. Do not switch branches or reinstall packages in a checkout that is actively processing video. Cached edge-evidence endpoints require no new extraction, but empty caches remain unknown.
 
 ### Targeted semantic processing after the cheap whole-SSD inventory
 
