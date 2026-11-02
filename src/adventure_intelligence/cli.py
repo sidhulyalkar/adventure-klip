@@ -28,6 +28,7 @@ from .nim_calibration import calibrate_workspace
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
+from .adaptive_sampling import build_plan, validate_plan, source_preflight
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -86,6 +87,21 @@ def main(argv: list[str] | None = None) -> int:
     timeline=sub.add_parser("timeline",help="Produce calibrated per-video event timelines")
     timeline.add_argument("--source",choices=["pixel-change","optical-flow"],default="pixel-change")
     timeline.add_argument("--bin-ms",type=int,default=2000)
+    adaptive=sub.add_parser("adaptive-plan",
+        help="Plan budgeted POV sampling from cached evidence without decoding")
+    adaptive.add_argument("--output",type=Path,required=True,
+        help="New JSON plan inside workspace exports/ or reports/")
+    adaptive.add_argument("--limit",type=int,default=8,
+        help="Pilot size; use --limit 0 only if you explicitly want the full library")
+    adaptive.add_argument("--activity",choices=["all","unknown","ski","bike","snorkeling"],default="all")
+    adaptive.add_argument("--coverage-seconds",type=float,default=45)
+    adaptive.add_argument("--interest-seconds",type=float,default=2)
+    adaptive.add_argument("--max-frames",type=int,default=128)
+    adaptive_run=sub.add_parser("adaptive-scenes",
+        help="Run opt-in semantic inference for a verified adaptive plan")
+    adaptive_run.add_argument("--plan",type=Path,required=True)
+    adaptive_run.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],
+                              default="histogram")
     scene=sub.add_parser("scenes",help="Extract optional sparse image embeddings / detections")
     scene.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],default="histogram")
     scene.add_argument("--every",type=float,default=4.0)
@@ -267,6 +283,45 @@ def main(argv: list[str] | None = None) -> int:
                 _print(generate_timelines(root,source=args.source,bin_ms=args.bin_ms))
         elif args.command=='history':
             _print(event_history(root,args.asset_id))
+        elif args.command=="adaptive-plan":
+            destination=args.output.expanduser().resolve()
+            if not destination.is_relative_to(root) or destination.exists():
+                raise ValueError("Plan must be a NEW file inside the workspace")
+            if destination.relative_to(root).parts[0] not in {"exports","reports"}:
+                raise ValueError("Adaptive plans belong in workspace exports/ or reports/")
+            pilot_limit=None if args.limit==0 else args.limit
+            plan=build_plan(root,coverage_seconds=args.coverage_seconds,
+                interest_seconds=args.interest_seconds,max_frames=args.max_frames,
+                limit=pilot_limit,activity=args.activity)
+            if not plan["assets"]:
+                raise ValueError("No valid-duration assets matched the activity")
+            with connect(root) as db:
+                protect_source_output(db,destination)
+            destination.parent.mkdir(parents=True,exist_ok=True)
+            with destination.open("x",encoding="utf-8") as handle:
+                handle.write(json.dumps(plan,sort_keys=True,indent=2,allow_nan=False)+"\n")
+            _print({"plan":str(destination),"planId":plan["planId"],
+                    "totals":plan["totals"],"limitations":plan["limitations"]})
+        elif args.command=="adaptive-scenes":
+            plan=json.loads(args.plan.expanduser().read_text(encoding="utf-8"))
+            schedule=validate_plan(plan)
+            with connect(root) as db:
+                catalog={row["id"]:int((row["duration"] or 0)*1000)
+                         for row in db.execute("SELECT id,duration FROM assets")}
+            if any(catalog.get(a["assetId"])!=a["durationMs"] for a in plan["assets"]):
+                raise ValueError("Adaptive plan durations differ from the current workspace")
+            preflight=source_preflight(root,set(schedule))
+            if preflight["unavailable"]:
+                raise ValueError("Adaptive source preflight failed for "
+                                 f"{len(preflight['unavailable'])} asset(s); "
+                                 "reconnect the external SSD and restore its original mount path")
+            with lock_workspace(root):
+                result=generate_semantics(root,backend=args.backend,
+                    asset_ids=set(schedule),sample_schedule=schedule,
+                    schedule_id=plan["planId"],progress=Progress())
+            _print(result)
+            if result["errors"]:
+                return 1
         elif args.command=="scenes":
             with lock_workspace(root):
                 result=generate_semantics(root,backend=args.backend,sample_seconds=args.every,

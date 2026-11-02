@@ -2,6 +2,7 @@
 import hashlib
 import json
 import math
+import time
 from pathlib import Path
 from .catalog import connect
 from .sources import resolve_source, verified_digest
@@ -79,10 +80,18 @@ def activate(db,aid,provider,config_id):
 
 
 def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
-                  limit=None, asset_ids=None, progress=None):
+                  limit=None, asset_ids=None, progress=None,
+                  sample_schedule=None, schedule_id=None):
     from .semantic import frame_png, VERSION
     if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
         raise ValueError('Sample interval and frame bound must be positive and finite')
+    if sample_schedule is not None:
+        if not isinstance(schedule_id,str) or len(schedule_id)!=64 or not isinstance(sample_schedule,dict):
+            raise ValueError('Adaptive schedules require a verified plan ID')
+        if asset_ids is None or set(sample_schedule)!=set(asset_ids):
+            raise ValueError('Adaptive schedule assets must exactly match the selected assets')
+    elif schedule_id is not None:
+        raise ValueError('A plan ID requires an adaptive schedule')
     config={'sampler':VERSION,'provider':provider.name,'modelVersion':provider.version,
             'providerConfig':getattr(provider,'cache_config',{}),
             'sampleSeconds':sample_seconds,'maxFrames':max_frames,'width':384,
@@ -94,10 +103,16 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
             config['runtimeVersions'][package]=version(package)
         except PackageNotFoundError:
             pass
+    if sample_schedule is not None:
+        config['adaptiveScheduleId']=schedule_id
+        config['samplingStrategy']='cached_interest_with_periodic_coverage_v1'
     config_json=encoded(config)
     config_id=digest(config_json)
     result={'processed':0,'cached':0,'missing':0,'errors':[],
-            'frames_computed':0,'frames_cached':0,'configId':config_id}
+            'frames_computed':0,'frames_cached':0,'configId':config_id,
+            'timingSeconds':{'sourceVerification':0.,'frameDecoding':0.,
+                             'modelInference':0.,'finalVerification':0.},
+            'scheduleId':schedule_id}
     with connect(workspace) as db:
         assets=[asset for asset in db.execute('SELECT * FROM assets ORDER BY created_at,id').fetchall()
                 if asset_ids is None or asset['id'] in asset_ids]
@@ -124,7 +139,9 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
             try:
                 if progress is not None:
                     progress.note('semantics', f'[{asset_number}/{len(assets)}] checking source {aid[:12]}')
+                tick=time.perf_counter()
                 path=resolve_source(db,asset,progress=progress)
+                result['timingSeconds']['sourceVerification']+=time.perf_counter()-tick
                 source_stat=path.stat()
                 duration=int((asset['duration'] or 0)*1000)
                 if duration<=0:
@@ -141,13 +158,23 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                     DO UPDATE SET status='running',error=NULL''',(aid,config_id,config_json))
                 activate(db,aid,provider.name,config_id)
                 db.commit()
-                step=max(1,int(sample_seconds*1000),math.ceil(duration/max_frames))
+                if sample_schedule is None:
+                    step=max(1,int(sample_seconds*1000),math.ceil(duration/max_frames))
+                    requested_times=range(0,duration,step)
+                else:
+                    step=None
+                    requested_times=sample_schedule.get(aid)
+                    if (not isinstance(requested_times,list) or not requested_times
+                            or len(requested_times)>512 or requested_times!=sorted(set(requested_times))
+                            or any(not isinstance(t,int) or isinstance(t,bool)
+                                   or not 0<=t<duration for t in requested_times)):
+                        raise ValueError('Adaptive plan timestamps do not match catalog duration')
                 frames=[]
-                expected=len(range(0,duration,step))
+                expected=len(requested_times)
                 stage_name=f'semantics:{path.name}'
                 if progress is not None:
                     progress.start(stage_name,expected)
-                for t in range(0,duration,step):
+                for t in requested_times:
                     saved=db.execute('''SELECT payload,sha256 FROM semantic_frames
                         WHERE asset_id=? AND config_id=? AND t_ms=?''',(aid,config_id,t)).fetchone()
                     frame=None
@@ -165,13 +192,17 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                             db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
                             db.commit()
                             raise OSError('Source changed during semantic extraction')
+                        tick=time.perf_counter()
                         decoded=frame_png(path,t,384,True)
+                        result['timingSeconds']['frameDecoding']+=time.perf_counter()-tick
                         if isinstance(decoded,tuple) and len(decoded)==2:
                             raw_png,timing=decoded
                         else:
                             # Compatibility with legacy bytes-only inference providers.
                             raw_png,timing=decoded,None
+                        tick=time.perf_counter()
                         frame=frame_descriptor(provider,raw_png,t,timing)
+                        result['timingSeconds']['modelInference']+=time.perf_counter()-tick
                         after=path.stat()
                         if any(getattr(before,f)!=getattr(after,f) for f in fields):
                             db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
@@ -191,7 +222,10 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                         progress.frames(stage_name, len(frames), expected, path.name)
                 source_check=(lambda done,total: progress.bytes(
                     'source-check',done,total,path.name) if progress is not None else None)
-                if verified_digest(path,progress=source_check)!=aid:
+                tick=time.perf_counter()
+                matches=verified_digest(path,progress=source_check)==aid
+                result['timingSeconds']['finalVerification']+=time.perf_counter()-tick
+                if not matches:
                     # Observations from a changing source must never be reused.
                     db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
                     db.commit()
@@ -238,4 +272,5 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                 result['errors'].append({'asset':aid,'error':str(exc)})
                 if progress is not None:
                     progress.item('semantics', asset_number, len(assets), f'{aid[:12]} failed: {exc}')
+    result['timingSeconds']={k:round(v,3) for k,v in result['timingSeconds'].items()}
     return result
