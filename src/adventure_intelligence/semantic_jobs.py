@@ -69,7 +69,7 @@ def activate(db,aid,provider,config_id):
 
 
 def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
-                  limit=None, asset_ids=None):
+                  limit=None, asset_ids=None, progress=None):
     from .semantic import frame_png, VERSION
     if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
         raise ValueError('Sample interval and frame bound must be positive and finite')
@@ -89,7 +89,11 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
     result={'processed':0,'cached':0,'missing':0,'errors':[],
             'frames_computed':0,'frames_cached':0,'configId':config_id}
     with connect(workspace) as db:
-        for asset in db.execute('SELECT * FROM assets ORDER BY created_at,id').fetchall():
+        assets=[asset for asset in db.execute('SELECT * FROM assets ORDER BY created_at,id').fetchall()
+                if asset_ids is None or asset['id'] in asset_ids]
+        if progress is not None:
+            progress.start('semantics', len(assets))
+        for asset_number, asset in enumerate(assets, 1):
             aid=asset['id']
             if asset_ids is not None and aid not in asset_ids:
                 continue
@@ -108,6 +112,8 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                     activate(db,aid,provider.name,config_id)
                     db.commit()
                     result['cached']+=1
+                    if progress is not None:
+                        progress.item('semantics', asset_number, len(assets), f'{path.name} cached')
                     continue
                 db.execute('''INSERT INTO semantic_jobs(asset_id,config_id,config_json,status)
                     VALUES (?,?,?,'running') ON CONFLICT(asset_id,config_id)
@@ -116,6 +122,10 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                 db.commit()
                 step=max(1,int(sample_seconds*1000),math.ceil(duration/max_frames))
                 frames=[]
+                expected=len(range(0,duration,step))
+                stage_name=f'semantics:{path.name}'
+                if progress is not None:
+                    progress.start(stage_name,expected)
                 for t in range(0,duration,step):
                     saved=db.execute('''SELECT payload,sha256 FROM semantic_frames
                         WHERE asset_id=? AND config_id=? AND t_ms=?''',(aid,config_id,t)).fetchone()
@@ -156,6 +166,8 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                     else:
                         result['frames_cached']+=1
                     frames.append(frame)
+                    if progress is not None:
+                        progress.frames(stage_name, len(frames), expected, path.name)
                 if verified_digest(path)!=aid:
                     # Observations from a changing source must never be reused.
                     db.execute('DELETE FROM semantic_frames WHERE asset_id=? AND config_id=?',(aid,config_id))
@@ -184,6 +196,8 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                     (filename,digest(raw),aid,config_id))
                 db.commit()
                 result['processed']+=1
+                if progress is not None:
+                    progress.item('semantics', asset_number, len(assets), f'{path.name} analyzed')
             except Exception as exc:
                 db.rollback()
                 # If source verification fails, discard potentially contaminated checkpoints.
@@ -199,4 +213,6 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                 activate(db,aid,provider.name,config_id)
                 db.commit()
                 result['errors'].append({'asset':aid,'error':str(exc)})
+                if progress is not None:
+                    progress.item('semantics', asset_number, len(assets), f'{aid[:12]} failed: {exc}')
     return result
