@@ -6,8 +6,10 @@ import pytest
 
 @pytest.fixture
 def fake_probe(monkeypatch):
-    monkeypatch.setattr(ingestion,"probe",lambda p: {"duration":10.0,"capture_time":None,
-                            "width":1920,"height":1080,"audio":True})
+    fake=lambda p: {"duration":10.0,"capture_time":None,
+                    "width":1920,"height":1080,"audio":True}
+    monkeypatch.setattr(ingestion,"probe",fake)
+    monkeypatch.setattr("adventure_intelligence.indexing.probe",fake)
 
 
 def test_safe_idempotent_import_and_sidecars(tmp_path, fake_probe):
