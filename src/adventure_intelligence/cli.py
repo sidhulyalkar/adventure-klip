@@ -102,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     adaptive_run.add_argument("--plan",type=Path,required=True)
     adaptive_run.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],
                               default="histogram")
+    adaptive_run.add_argument("--decode-mode",choices=["single","batched"],default="single",
+        help="Opt-in grouped FFmpeg seeks for nearby frames; falls back to single seeks")
     scene=sub.add_parser("scenes",help="Extract optional sparse image embeddings / detections")
     scene.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],default="histogram")
     scene.add_argument("--every",type=float,default=4.0)
@@ -318,7 +320,8 @@ def main(argv: list[str] | None = None) -> int:
             with lock_workspace(root):
                 result=generate_semantics(root,backend=args.backend,
                     asset_ids=set(schedule),sample_schedule=schedule,
-                    schedule_id=plan["planId"],progress=Progress())
+                    schedule_id=plan["planId"],progress=Progress(),
+                     decode_mode=args.decode_mode)
             _print(result)
             if result["errors"]:
                 return 1

@@ -81,8 +81,10 @@ def activate(db,aid,provider,config_id):
 
 def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                   limit=None, asset_ids=None, progress=None,
-                  sample_schedule=None, schedule_id=None):
+                  sample_schedule=None, schedule_id=None, decode_mode='single'):
     from .semantic import frame_png, VERSION
+    if decode_mode not in {'single', 'batched'}:
+        raise ValueError('Unknown decoder mode')
     if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
         raise ValueError('Sample interval and frame bound must be positive and finite')
     if sample_schedule is not None:
@@ -106,6 +108,9 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
     if sample_schedule is not None:
         config['adaptiveScheduleId']=schedule_id
         config['samplingStrategy']='cached_interest_with_periodic_coverage_v1'
+    if decode_mode == 'batched':
+        # Different decoder behavior must never masquerade as an old cache hit.
+        config['frameDecoder']='select-pts-png-v1-fail-closed'
     config_json=encoded(config)
     config_id=digest(config_json)
     result={'processed':0,'cached':0,'missing':0,'errors':[],
@@ -113,6 +118,9 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
             'timingSeconds':{'sourceVerification':0.,'frameDecoding':0.,
                              'modelInference':0.,'finalVerification':0.},
             'scheduleId':schedule_id}
+    if decode_mode == 'batched':
+        result['decodeDiagnostics']={'batchAttempts':0,'batchSucceeded':0,
+            'batchFallbacks':0,'singleSeekFrames':0,'batchedFrames':0}
     with connect(workspace) as db:
         assets=[asset for asset in db.execute('SELECT * FROM assets ORDER BY created_at,id').fetchall()
                 if asset_ids is None or asset['id'] in asset_ids]
@@ -170,6 +178,25 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                                    or not 0<=t<duration for t in requested_times)):
                         raise ValueError('Adaptive plan timestamps do not match catalog duration')
                 frames=[]
+                if decode_mode == 'batched':
+                    from .batched_decode import decode_scheduled
+                    # Do not waste batched decoding on checkpoints already verified.
+                    # Use the same digest + timestamp checks as the processing loop.
+                    missing_times=[]
+                    for sample_t in requested_times:
+                        saved=db.execute('''SELECT payload,sha256 FROM semantic_frames
+                            WHERE asset_id=? AND config_id=? AND t_ms=?''',
+                            (aid,config_id,sample_t)).fetchone()
+                        valid=False
+                        if saved and digest(saved['payload'])==saved['sha256']:
+                            try:
+                                valid=json.loads(saved['payload'])['tMs']==sample_t
+                            except (ValueError,KeyError,TypeError):
+                                pass
+                        if not valid:
+                            missing_times.append(sample_t)
+                    decoded_iter=iter(decode_scheduled(path,missing_times,width=384,
+                        mode='batched',counters=result['decodeDiagnostics']))
                 expected=len(requested_times)
                 stage_name=f'semantics:{path.name}'
                 if progress is not None:
@@ -193,7 +220,13 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                             db.commit()
                             raise OSError('Source changed during semantic extraction')
                         tick=time.perf_counter()
-                        decoded=frame_png(path,t,384,True)
+                        if decode_mode == 'batched':
+                            decoded_t, raw_png, timing = next(decoded_iter)
+                            if decoded_t != t:
+                                raise RuntimeError('Batch decoder timestamp order mismatch')
+                            decoded=(raw_png,timing)
+                        else:
+                            decoded=frame_png(path,t,384,True)
                         result['timingSeconds']['frameDecoding']+=time.perf_counter()-tick
                         if isinstance(decoded,tuple) and len(decoded)==2:
                             raw_png,timing=decoded

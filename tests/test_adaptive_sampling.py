@@ -229,3 +229,53 @@ def test_missing_ssd_preflight_fails_fast_without_hashing(footage, monkeypatch):
     assert after["possiblyAvailable"] == 0
     assert after["unavailable"][0]["reason"] == "no_accessible_source_path"
     assert movie.with_suffix(".unmounted").read_bytes() == payload
+
+
+def test_batched_semantic_resume_and_cache_provenance(footage, monkeypatch):
+    workspace, movie, payload, aid = footage
+    plan = build_plan(workspace, max_frames=16)
+    schedule = validate_plan(plan)
+    calls = []
+
+    def fake_scheduled(path, times, *, width, mode, counters):
+        assert path == movie and mode == "batched" and width == 384
+        calls.append(list(times))
+        counters["batchAttempts"] += 1
+        counters["batchSucceeded"] += 1
+        counters["batchedFrames"] += len(times)
+        for t in times:
+            yield t, b"synthetic", {"decodedPts": t, "ptsTimeBase": "1/1000",
+                                    "decodedPtsMs": t, "timestampBasis": "decoded_frame_pts"}
+    monkeypatch.setattr("adventure_intelligence.batched_decode.decode_scheduled",
+                        fake_scheduled)
+
+    class Provider:
+        name = "synthetic-batch"
+        version = "v1"
+        cache_config = {}
+        def describe(self, _):
+            return {"embedding": [1.0, 0.0], "objects": [], "keypoints": []}
+
+    first = run_semantics(workspace, Provider(), sample_schedule=schedule,
+                          schedule_id=plan["planId"], asset_ids={aid},
+                          decode_mode="batched")
+    assert first["errors"] == []
+    assert first["frames_computed"] == len(schedule[aid])
+    assert calls == [schedule[aid]]
+    assert first["decodeDiagnostics"]["batchedFrames"] == len(schedule[aid])
+
+    second = run_semantics(workspace, Provider(), sample_schedule=schedule,
+                           schedule_id=plan["planId"], asset_ids={aid},
+                           decode_mode="batched")
+    assert second["cached"] == 1 and second["frames_computed"] == 0
+    assert len(calls) == 1
+    assert first["configId"] == second["configId"]
+
+    # Decoder version is part of provenance, not silently reused.
+    monkeypatch.setattr('adventure_intelligence.semantic.frame_png',
+                        lambda *args: (b'synthetic', None))
+    single = run_semantics(workspace, Provider(), sample_schedule=schedule,
+                           schedule_id=plan["planId"], asset_ids={aid},
+                           decode_mode="single")
+    assert single["configId"] != first["configId"]
+    assert movie.read_bytes() == payload
