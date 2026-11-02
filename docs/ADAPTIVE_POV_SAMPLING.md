@@ -1,7 +1,7 @@
 # Adaptive POV sampling: first experimental implementation
 
 This is an **opt-in, local-only, read-only source** alternative to fixed-interval
-semantic frame extraction. The standard \`klip process\` and \`klip scenes\` commands
+semantic frame extraction. The standard `klip process` and `klip scenes` commands
 are unchanged.
 
 ## Why this exists
@@ -21,39 +21,39 @@ hashing, and it does not convert weak motion cues into verified sport skills.
 
 From a clean working tree:
 
-\`\`\`bash
+```bash
 cd "$HOME/Documents/Projects/adventure-klip"
 git fetch origin
 git switch --track origin/feat/adaptive-pov-sampling-v1
 source .venv/bin/activate
 python -m pip install -e '.[dev,vision,images]'
-\`\`\`
+```
 
 Set the **exact workspace directory** used for the recent clean run. Do not use
 a newly created empty workspace. The video SSD must be mounted and stable
 before extraction. Use the same read-only indexed originals, never a copy over
 the old source.
 
-\`\`\`bash
+```bash
 export WS="$HOME/AdventureAI-clean.REPLACE_WITH_ACTUAL_SUFFIX"
 test -f "$WS/catalog.sqlite3"
-\`\`\`
+```
 
 ## Phase A: Plan without video decoding
 
 Start with a maximum of eight catalog recordings:
 
-\`\`\`bash
+```bash
 klip --workspace "$WS" adaptive-plan \
   --limit 8 \
   --coverage-seconds 45 \
   --interest-seconds 2 \
   --max-frames 128 \
   --output "$WS/exports/pov-pilot-01.json"
-\`\`\`
+```
 
-Use \`--activity snorkeling\`, \`ski\`, or \`bike\` to restrict to recordings
-explicitly labeled with that activity. If your old catalog has \`unknown\`
+Use `--activity snorkeling`, `ski`, or `bike` to restrict to recordings
+explicitly labeled with that activity. If your old catalog has `unknown`
 activities, the planner must not guess them. Use the Studio's classification
 workflow first if you want sport-specific evidence.
 
@@ -67,39 +67,39 @@ The plan is a deterministic, checksum-protected JSON artifact with:
 The plan is **not a verified event list**, and neither a blank gap nor a weak
 object detection is proof that nothing interesting happened.
 
-Use \`--limit 0\` only to explicitly create a full-library plan. Never run full
+Use `--limit 0` only to explicitly create a full-library plan. Never run full
 heavy semantic inference before comparing against a small benchmark.
 
 ## Phase B: Extract only scheduled semantic frames
 
 For a cheap operational smoke test (color histogram, **not** object semantics):
 
-\`\`\`bash
+```bash
 caffeinate -i klip --workspace "$WS" adaptive-scenes \
   --plan "$WS/exports/pov-pilot-01.json" \
   --backend histogram
-\`\`\`
+```
 
 For **actual** image semantics, install the larger optional dependencies and
 use the same plan with separate cache provenance. Perform the first pilot on
 your M1 Mac with a small asset count, or run CUDA inference on the 3070 Ti once
 you have your workspace accessible from the desktop:
 
-\`\`\`bash
+```bash
 python -m pip install -e '.[semantic]'
 caffeinate -i klip --workspace "$WS" adaptive-scenes \
   --plan "$WS/exports/pov-pilot-01.json" \
   --backend siglip2
-\`\`\`
+```
 
-For unverified open-vocabulary object queries, use \`--backend owlv2\`.
+For unverified open-vocabulary object queries, use `--backend owlv2`.
 Existing queries include fish, ray, shark, sea turtle, coral, tree, skis and
 bicycles. These are **detection prompts**, not validated species or difficulty
 levels. No automatic uploads or cloud model calls occur.
 
 The semantic result contains measured cumulative seconds spent on:
-\`sourceVerification\`, \`frameDecoding\`, \`modelInference\`, and
-\`finalVerification\`. The same exact versioned plan/provider can reuse
+`sourceVerification`, `frameDecoding`, `modelInference`, and
+`finalVerification`. The same exact versioned plan/provider can reuse
 completed artifacts and per-frame checkpoints. Changing plans intentionally
 creates a different config, preserving older completed results.
 
@@ -122,7 +122,7 @@ adaptive sampler at equal total frame/model budgets. Report:
 - absent or unverified evidence as **unknown**, not a negative.
 
 No model behavior may be tuned using held-out test labels. The project already
-has a \`prepare-nim-benchmark\` human+optional external judge workflow; using
+has a `prepare-nim-benchmark` human+optional external judge workflow; using
 external judges entails an **explicit** upload opt-in and is not required for
 this adaptive pilot.
 
@@ -159,12 +159,12 @@ commands.
 The original single-seek decoder is still the default. Test the optional
 grouped decoder on the **same frozen plan**, in a new cache namespace:
 
-\`\`\`bash
+```bash
 caffeinate -i klip --workspace "$WS" adaptive-scenes \
   --plan "$WS/exports/pov-pilot-01.json" \
   --backend histogram \
   --decode-mode batched
-\`\`\`
+```
 
 Nearby requested samples (within 3.5 seconds, up to 12 samples or 30 seconds
 per batch) share one FFmpeg seek and decoder process. Distant sparse coverage
@@ -178,10 +178,10 @@ the requested seek window. Otherwise it **falls back to individually timestamped
 seeks**. On some sources, including unusual start-time offsets or low-frame-rate
 footage, fallback is expected. Mixed batch/fallback output is explicitly counted.
 
-The result contains \`decodeDiagnostics\`:
-- \`batchAttempts\` and \`batchSucceeded\`;
-- \`batchFallbacks\`;
-- \`batchedFrames\` and \`singleSeekFrames\`.
+The result contains `decodeDiagnostics`:
+- `batchAttempts` and `batchSucceeded`;
+- `batchFallbacks`;
+- `batchedFrames` and `singleSeekFrames`.
 
 Both decoding modes use the same source identity/immutability checks and
 per-frame checkpoint semantics. The decoder version is included in the semantic
