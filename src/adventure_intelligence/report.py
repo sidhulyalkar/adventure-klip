@@ -5,6 +5,7 @@ from html import escape
 from pathlib import Path
 import os
 from .catalog import connect
+from .safety import protect_source_output
 
 CSS="""
 :root{color-scheme:dark}body{font-family:system-ui,-apple-system,sans-serif;background:#0a111c;color:#ecf4ff;max-width:1050px;margin:40px auto;padding:0 20px}
@@ -17,6 +18,7 @@ a{color:#85cee9;text-decoration:none}a:hover{text-decoration:underline}.tag{bord
 
 def write_report(workspace: Path, output: Path) -> dict:
     with connect(workspace) as db:
+        protect_source_output(db, output)
         assets=[dict(x) for x in db.execute("SELECT * FROM assets ORDER BY created_at,id")]
         eps=[dict(x) for x in db.execute("SELECT * FROM episodes ORDER BY score DESC,start_ms")]
         ev_counts=dict(db.execute("SELECT asset_id,COUNT(*) FROM events GROUP BY asset_id").fetchall())
