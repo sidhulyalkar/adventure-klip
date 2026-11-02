@@ -152,3 +152,45 @@ this adaptive pilot.
 **Source immutability:** originals are only read. Plans and feature caches are
 stored in the workspace, and no clips are exported or destroyed by these
 commands.
+
+
+## Experimental grouped FFmpeg decoder (stacked follow-up)
+
+The original single-seek decoder is still the default. Test the optional
+grouped decoder on the **same frozen plan**, in a new cache namespace:
+
+\`\`\`bash
+caffeinate -i klip --workspace "$WS" adaptive-scenes \
+  --plan "$WS/exports/pov-pilot-01.json" \
+  --backend histogram \
+  --decode-mode batched
+\`\`\`
+
+Nearby requested samples (within 3.5 seconds, up to 12 samples or 30 seconds
+per batch) share one FFmpeg seek and decoder process. Distant sparse coverage
+probes still use the original one-frame seek, avoiding expensive decoding across
+uninformative footage. This only optimizes scheduled semantic frame extraction,
+not the initial motion scan, full-source hash checks, or model inference.
+
+A batch is accepted only with the expected number of PNGs, sequential FFmpeg
+showinfo records, a valid PTS timebase, and decoded source timestamps within
+the requested seek window. Otherwise it **falls back to individually timestamped
+seeks**. On some sources, including unusual start-time offsets or low-frame-rate
+footage, fallback is expected. Mixed batch/fallback output is explicitly counted.
+
+The result contains \`decodeDiagnostics\`:
+- \`batchAttempts\` and \`batchSucceeded\`;
+- \`batchFallbacks\`;
+- \`batchedFrames\` and \`singleSeekFrames\`.
+
+Both decoding modes use the same source identity/immutability checks and
+per-frame checkpoint semantics. The decoder version is included in the semantic
+configuration ID to prevent silently treating batched output as an old result.
+
+**Performance qualification:** Compare two fresh, uncached runs on a small
+representative pilot with the same plan/provider, measuring the decoding stage,
+total execution time, fallback frequency and verified highlight recall. Keep
+the source SSD mounted for both runs. Do not claim a speedup from frame counts
+alone. For VFR, nonzero source start-times, GoPro/DJI footage, and macOS/Ubuntu,
+check extracted PTS parity against single seeks before promoting this decoder
+to the default. A successful synthetic FFmpeg test is not that qualification.
