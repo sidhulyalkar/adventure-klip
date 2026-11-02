@@ -103,6 +103,25 @@ CREATE INDEX IF NOT EXISTS example_reviews_by_example
  ON example_revisions(example_id,created_at);
 CREATE INDEX IF NOT EXISTS example_reviews_by_asset
  ON example_revisions(asset_id,start_ms,end_ms);
+CREATE TABLE IF NOT EXISTS pairwise_revisions (
+ revision_id TEXT PRIMARY KEY,
+ comparison_id TEXT NOT NULL,
+ previous_revision_id TEXT,
+ left_asset_id TEXT NOT NULL REFERENCES assets(id),
+ right_asset_id TEXT NOT NULL REFERENCES assets(id),
+ left_start_ms INTEGER NOT NULL,
+ left_end_ms INTEGER NOT NULL,
+ right_start_ms INTEGER NOT NULL,
+ right_end_ms INTEGER NOT NULL,
+ preference TEXT NOT NULL CHECK(preference IN ('left','right','tie','uncertain')),
+ reason TEXT NOT NULL,
+ reviewer_note TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK(left_end_ms > left_start_ms),
+ CHECK(right_end_ms > right_start_ms),
+ FOREIGN KEY(previous_revision_id) REFERENCES pairwise_revisions(revision_id)
+);
+CREATE INDEX IF NOT EXISTS pairwise_reviews ON pairwise_revisions(comparison_id);
 """
 
 
