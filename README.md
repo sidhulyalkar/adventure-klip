@@ -1,3 +1,20 @@
+# Klip experimental: Adaptive POV sampling (opt-in)
+
+Use `klip adaptive-plan` to create a cached-evidence-driven, bounded frame
+schedule without opening original footage or downloading model weights. Then
+use `klip adaptive-scenes --plan ... --backend histogram|siglip2|owlv2` to
+extract only the scheduled frames with full source SHA-256 verification,
+checkpoint reuse, and separate hashing/decoding/inference timing. Periodic
+coverage remains even in presumed boring footage; animal/object labels and
+athletic maneuvers are unverified hypotheses. Start with a small pilot, compare
+against a held-out human Keep/Skip benchmark, and do not assume a measured
+speedup or rare-event recall before testing on real DJI recordings.
+
+See [Adaptive POV Sampling](docs/ADAPTIVE_POV_SAMPLING.md) for exact commands,
+limits, source-safety guarantees and follow-up decoder optimizations.
+
+---
+
 # Klip experimental: NVIDIA NIM clip-judge benchmark
 
 Optional and **off by default**: sample candidate plus independently
