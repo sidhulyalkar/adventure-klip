@@ -10,7 +10,7 @@ from .catalog import connect
 from .locking import lock_workspace
 from .ingest import ingest, looks_like_dji_card
 from .analyze import analyze
-from .curation import import_labels, bind_event
+from .curation import import_labels, bind_event, append_review_label
 from .export import export_manifest
 from .reels import RECIPES, plan_reel, render_reel
 from .report import write_report
@@ -25,6 +25,7 @@ from .safety import protect_source_output
 from .progress import Progress
 from .acoustics import analyze_audio
 from .submersion import continuity_report
+from .diagnostics import write_diagnostics
 
 
 def _print(data):
@@ -82,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     audio=sub.add_parser('acoustics',help='Extract acoustic-change evidence from indexed videos')
     audio.add_argument('--limit',type=int)
     sub.add_parser('continuity',help='Review proposed continuous underwater filming intervals')
+    diagnosis=sub.add_parser('diagnose',help='Create local activity/incident review JSON and timed VTT overlays')
+    diagnosis.add_argument('--asset',help='Exact catalog SHA-256 asset ID; omit for all videos')
     proc=sub.add_parser("analyze",help="Compute low-resolution motion proposals (baseline or optical flow)")
     proc.add_argument("--limit",type=int)
     proc.add_argument("--force",action="store_true")
@@ -91,6 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     sessions.add_argument("--gap-minutes",type=float,default=15.0)
     review=sub.add_parser("review",help="Create a local HTML report for video/event review")
     review.add_argument("--output",type=Path)
+    mark=sub.add_parser('mark',help='Append one human-reviewed activity/incident label')
+    mark.add_argument('asset',help='Complete content SHA-256 ID')
+    mark.add_argument('--kind',required=True,help='ski_lift, slow_flat_skiing, crash, fall, near_miss, etc.')
+    mark.add_argument('--start',type=float,required=True,help='Start in source-video seconds')
+    mark.add_argument('--end',type=float,required=True,help='End in source-video seconds')
+    mark.add_argument('--note',default='',help='Short factual reviewer annotation')
     lab=sub.add_parser("labels",help="Replace manual labels for one asset from JSON")
     lab.add_argument("file",type=Path)
     binding=sub.add_parser("bind",help="Propose or manually approve a WorldLink association")
@@ -174,12 +183,19 @@ def main(argv: list[str] | None = None) -> int:
                     return 1
         elif args.command=='continuity':
             _print(continuity_report(root))
+        elif args.command=='diagnose':
+            with lock_workspace(root):
+                _print(write_diagnostics(root,asset_id=args.asset))
         elif args.command=="analyze":
             with lock_workspace(root):
                 result=analyze(root,args.limit,args.force,args.detector)
                 _print(result)
                 if result["failed"]:
                     return 1
+        elif args.command=='mark':
+            with lock_workspace(root):
+                _print(append_review_label(root,args.asset,args.kind,args.start,
+                                           args.end,note=args.note))
         elif args.command=="labels":
             with lock_workspace(root):
                 _print(import_labels(root,args.file))

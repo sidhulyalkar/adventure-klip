@@ -79,8 +79,11 @@ SCENE_PROMPTS = {
     "at_surface": "First-person snorkeling camera at the ocean surface, waterline, breaking waves, splashes and air visible.",
     "ski_downhill": "First-person action camera descending a snowy ski slope, traveling downhill between snow-covered trees.",
     "ski_lift": "First-person video riding on a chairlift or gondola above the ski slope, seated looking at mountains.",
+    "ski_flat": "First-person skier traveling slowly across a broad flat snow-covered traverse, with little downhill descent.",
+    "ski_stopped": "First-person ski video standing still beside a trail with skis on snow, stationary waiting in the mountains.",
     "bike_riding": "First-person action camera riding a mountain bike on a dirt trail through a forest.",
-    "bike_stopped": "First-person mountain biking camera stopped beside a trail, standing still with a bike."
+    "bike_stopped": "First-person mountain biking camera stopped beside a trail, standing still with a bike.",
+    "bike_flat": "First-person mountain biking slowly along a broad smooth flat dirt trail, no technical riding.",
 }
 
 

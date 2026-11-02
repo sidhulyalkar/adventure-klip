@@ -14,12 +14,15 @@ from .artifacts import read_artifact
 from .semantic_jobs import completed_document
 from .acoustics import AUDIO_VERSION, acoustic_changes
 from .submersion import submersion_samples, continuous_underwater_intervals
+from .review_signals import context_intervals, disturbance_proposals
 
 VERSION = "editorial-context-v1"
 NEGATIVE_LABELS = {
     "ski": {"ski_lift", "chairlift", "lift", "rest", "stopped", "non_action",
-            "camera_adjustment", "walking", "waiting", "flat_traverse"},
-    "bike": {"rest", "stopped", "non_action", "camera_adjustment", "waiting"},
+            "camera_adjustment", "walking", "waiting", "flat_traverse",
+            "slow_flat_skiing", "easy_ski", "boring"},
+    "bike": {"rest", "stopped", "non_action", "camera_adjustment", "waiting",
+             "easy_traverse", "slow_flat_riding", "boring"},
     "snorkeling": {"surface_break", "surface_transition", "out_of_water",
                    "breathing_break", "camera_adjustment", "non_action"},
 }
@@ -170,6 +173,8 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
     scenes_by_asset = {}
     acoustic_by_asset = {}
     submerged_by_asset = {}
+    contexts_by_asset = {}
+    disturbances_by_asset = {}
     for aid in {ep["asset_id"] for ep in episode_rows}:
         events_by_asset[aid] = [dict(x) for x in db.execute(
             "SELECT * FROM events WHERE asset_id=?", (aid,))]
@@ -178,6 +183,12 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
         wave = read_artifact(db, workspace, aid, AUDIO_VERSION)
         acoustic_by_asset[aid] = acoustic_changes(wave["series"]) if wave else []
         asset = assets.get(aid)
+        if asset is not None:
+            duration = int((asset["duration"] or 0) * 1000)
+            contexts_by_asset[aid] = context_intervals(
+                scenes_by_asset[aid], asset["activity"], duration)
+            disturbances_by_asset[aid] = disturbance_proposals(
+                series_by_asset[aid], duration)
         if asset is not None and asset["activity"] == "snorkeling":
             submerged_by_asset[aid] = continuous_underwater_intervals(
                 submersion_samples(scenes_by_asset[aid]),
@@ -222,6 +233,22 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                                    if x["state"] == "surface"] if activity == "snorkeling" else []
                 coincident = sum(any(abs(e["startMs"] - t) < 2000
                                      for t in surface_samples) for e in audio_events)
+                context_overlap = [
+                    {"label": st["label"], "overlapMs": _overlap(
+                        wstart, wend, st["startMs"], st["endMs"])}
+                    for st in contexts_by_asset.get(aid, [])
+                    if _overlap(wstart, wend, st["startMs"], st["endMs"]) > 0
+                ]
+                # A predicted lift/flat interval is only a ranking penalty;
+                # human-reviewed exclusions remain the only hard default gate.
+                low_value_fraction = min(1, sum(
+                    x["overlapMs"] for x in context_overlap) / max(1, wend-wstart))
+                camera_disturbances = [
+                    {"label": d["label"], "startMs": d["startMs"],
+                     "endMs": d["endMs"]}
+                    for d in disturbances_by_asset.get(aid, [])
+                    if _overlap(wstart, wend, d["startMs"], d["endMs"]) > 0
+                ]
                 sound = {"method": "rms_outlier", "status": "unverified",
                          "available": aid in acoustic_by_asset and
                                       bool(read_artifact(db, workspace, aid, AUDIO_VERSION)),
@@ -260,6 +287,10 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                 # trigger a breathing or interruption classification.
                 if activity == "snorkeling" and coincident:
                     score *= .80
+                if activity in {"ski", "bike"} and low_value_fraction:
+                    score *= max(.2, 1 - .7 * low_value_fraction)
+                # A possible crash is a dedicated private review finding.
+                # Never score it as athletic quality, skill or injury.
                 candidate = {
                     "episodeId": ep["id"], "sourceAssetId": aid, "kind": ep["kind"],
                     "startMs": wstart, "endMs": wend,
@@ -267,6 +298,10 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                     "score": round(score, 4), "originalEpisodeScore": base,
                     "motionEvidence": motion, "sceneEvidence": scene,
                     "acousticEvidence": sound,
+                    "lowValueContext": {"status": "unverified",
+                        "supportedFraction": round(low_value_fraction, 3),
+                        "intervals": context_overlap},
+                    "incidentReviewFlags": camera_disturbances,
                     "underwaterContinuity": {"status": "unverified",
                         "supportedFraction": round(continuity_fraction, 3),
                         "intervalCount": len(continuous),
@@ -279,6 +314,10 @@ def editorial_candidates(db, workspace, episode_rows: list[dict], *,
                                       if activity == "snorkeling" and continuity_fraction >= .75 else [])
                                    + (["visual_surface_and_acoustic_disturbance"]
                                       if coincident else [])
+                                   + (["low_value_scene_hypothesis"]
+                                      if low_value_fraction > .25 else [])
+                                   + (["camera_disturbance_requires_review"]
+                                      if camera_disturbances else [])
                                    + (["unverified_camera_motion"] if not is_action else []),
                     "requiresReview": True,
                     "rankingVersion": VERSION,
