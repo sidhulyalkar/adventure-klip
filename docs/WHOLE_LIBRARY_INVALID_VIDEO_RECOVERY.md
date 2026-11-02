@@ -29,7 +29,8 @@ Old invalid rows are deliberately **not deleted automatically**, because asset I
 cd "$HOME/Documents/Projects/adventure-klip"
 git status --short
 git fetch origin
-git switch --track origin/fix/whole-library-invalid-video-fast-skip
+git switch main
+git pull --ff-only origin main
 source .venv/bin/activate
 python -m pip install -e '.[dev,vision,images]'
 klip --workspace "$HOME/AdventureAI" process \
