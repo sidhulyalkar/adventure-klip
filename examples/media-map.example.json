@@ -1,0 +1,6 @@
+{
+  "REPLACE_WITH_SOURCE_ASSET_SHA256": {
+    "src": "https://your-approved-media-origin.example/videos/approved-video.mp4",
+    "poster": "https://your-approved-media-origin.example/posters/approved-video.webp"
+  }
+}

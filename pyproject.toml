@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adventure-klip"
+version = "0.3.0"
+description = "Read-only video indexing, calibrated temporal event graphs, and intelligent adventure highlights"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{name = "Sidharth Hulyalkar"}]
+keywords = ["video", "action-camera", "highlight-reels", "temporal-events", "adventure"]
+classifiers = ["Programming Language :: Python :: 3", "Operating System :: MacOS :: MacOS X", "Operating System :: POSIX :: Linux", "Topic :: Multimedia :: Video"]
+dependencies = []
+
+[project.optional-dependencies]
+vision = ["numpy>=1.26,<3", "opencv-python-headless>=4.9,<5"]
+semantic = ["torch>=2.3", "transformers>=4.52", "pillow>=10", "numpy>=1.26"]
+pose = ["mediapipe>=0.10", "pillow>=10", "numpy>=1.26"]
+images = ["pillow>=10"]
+dev = ["pytest>=8", "build>=1", "ruff>=0.8"]
+
+[project.scripts]
+klip = "adventure_intelligence.cli:main"
+adventure = "adventure_intelligence.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]
