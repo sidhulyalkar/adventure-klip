@@ -272,6 +272,8 @@ def test_batched_semantic_resume_and_cache_provenance(footage, monkeypatch):
     assert first["configId"] == second["configId"]
 
     # Decoder version is part of provenance, not silently reused.
+    monkeypatch.setattr('adventure_intelligence.semantic.frame_png',
+                        lambda *args: (b'synthetic', None))
     single = run_semantics(workspace, Provider(), sample_schedule=schedule,
                            schedule_id=plan["planId"], asset_ids={aid},
                            decode_mode="single")
