@@ -27,6 +27,7 @@ def test_png_pipe_rejects_truncated_and_untrusted_chunks():
     png = bd._SIGNATURE + b"\x00\x00\x00\x00IEND\xae\x42\x60\x82"
     assert bd._png_stream(png + png) == [png, png]
     for invalid in (png[:-3], b"x" + png, png + b"trailing",
+                    png[:-1] + b"x",  # invalid PNG chunk CRC
                     bd._SIGNATURE + b"\xff\xff\xff\xffIDAT" + b"nope"):
         with pytest.raises(ValueError):
             bd._png_stream(invalid)
