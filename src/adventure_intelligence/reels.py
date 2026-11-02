@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from .catalog import connect
 from .media import require_tool
+from .sources import resolve_source, verified_digest
 
 RECIPES={
     "motion-review":{"activity":None,"kinds":{"camera_rhythm_candidate":1.0,"sustained_motion_candidate":0.7,"active_sequence":0.4}},
@@ -75,6 +76,19 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
     output.parent.mkdir(parents=True,exist_ok=True)
     with connect(workspace) as db:
         sources={row["id"]:dict(row) for row in db.execute("SELECT * FROM assets")}
+        verified = {}
+        for segment in plan['segments']:
+            aid = segment['sourceAssetId']
+            if aid not in sources:
+                raise ValueError(f'Unknown asset {aid}')
+            if aid not in verified:
+                verified[aid] = resolve_source(db,sources[aid])
+        protected = [Path(row['stored_path']) for row in sources.values()]
+        protected.extend(Path(row[0]) for row in db.execute('SELECT original_path FROM imports'))
+        if any(output == path.resolve() or
+               (output.exists() and path.exists() and output.samefile(path))
+               for path in protected):
+            raise ValueError('Output cannot overwrite a source video')
     with tempfile.TemporaryDirectory(prefix="adventure-reel-") as tmp:
         folder=Path(tmp)
         clips=[]
@@ -86,9 +100,9 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
             start=int(s["startMs"])
             end=int(s["endMs"])
             duration=(end-start)/1000
-            if start<0 or duration<=0 or end>int((asset["duration"] or 0)*1000)+1500:
+            if start<0 or duration<=0 or end>int((asset["duration"] or 0)*1000):
                 raise ValueError("Invalid segment boundaries")
-            source=Path(asset["stored_path"])
+            source=verified[asset["id"]]
             if not source.is_file():
                 raise FileNotFoundError(source)
             has_audio=json.loads(asset["metadata_json"]).get("audio",False)
@@ -118,6 +132,9 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
         subprocess.run([ffmpeg,"-hide_banner","-loglevel","error","-y","-safe","0",
                         "-f","concat","-i",str(concat),"-c","copy", "-movflags","+faststart",
                         str(temp_out)],check=True)
+        for aid,path in verified.items():
+            if verified_digest(path) != aid:
+                raise OSError('Source changed during rendering')
         import shutil
         shutil.copy2(temp_out,output)
     return {"path":str(output),"segments":len(clips),"transition":transition,

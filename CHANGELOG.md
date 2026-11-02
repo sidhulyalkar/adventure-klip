@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+- Added folder-scoped `klip process` with restartable baseline analysis and timelines.
+- Verify source content before cache hits/rendering; recover matching duplicate paths.
+- Added checksum-verified extraction artifacts and persistent running/failed states.
+- Reuse extraction across detector-only updates and retry damaged cache artifacts.
+- Fixed semantic timeline attachment and enforced known source duration bounds.
+- See `docs/PROCESSING.md` for migration cost, single-writer semantics and limitations.
+
 ## 0.3.0 (October 2026)
 - Renamed distribution and primary CLI to `adventure-klip` / `klip` (`adventure` remains available).
 - Added read-only `klip index` for stable folders without moving original videos.
