@@ -321,3 +321,37 @@ def validate_plan(plan: dict) -> dict[str, list[int]]:
             raise ValueError("Invalid adaptive timestamps")
         result[aid] = times
     return result
+
+
+def source_preflight(workspace: Path, asset_ids: set[str]) -> dict:
+    """Cheap mount/path check before attempting expensive model execution.
+
+    Path existence is NOT content verification: the semantic runner always
+    verifies source SHA-256 before trusting decoded frames.
+    """
+    if not asset_ids:
+        raise ValueError("Preflight requires indexed asset IDs")
+    failures = []
+    with connect(Path(workspace).expanduser().resolve()) as db:
+        for aid in sorted(asset_ids):
+            row = db.execute("SELECT stored_path FROM assets WHERE id=?", (aid,)).fetchone()
+            if row is None:
+                failures.append({"assetId": aid, "reason": "not_in_catalog"})
+                continue
+            paths = [row["stored_path"]]
+            paths += [r[0] for r in db.execute(
+                "SELECT original_path FROM imports WHERE asset_id=?", (aid,))]
+            possible = False
+            for source in dict.fromkeys(paths):
+                try:
+                    p = Path(source)
+                    if p.is_file() and p.stat().st_size > 0:
+                        possible = True
+                        break
+                except OSError:
+                    pass
+            if not possible:
+                failures.append({"assetId": aid, "reason": "no_accessible_source_path"})
+    return {"checked": len(asset_ids), "possiblyAvailable": len(asset_ids)-len(failures),
+            "unavailable": failures,
+            "note": "Presence only; full SHA-256 verification happens during extraction"}
