@@ -9,8 +9,9 @@ klip --workspace ~/AdventureAI process ~/Movies/DJI --activity ski
 
 The command recursively indexes that folder, analyzes its successfully indexed
 content identities, and writes timelines under `~/AdventureAI/timelines`.
-It does not process unrelated catalog assets, run semantic models, create reels,
-or publish footage. Use `--detector flow` with the optional `[vision]` extra for
+It does not process unrelated catalog assets, create reels, or publish footage.
+Semantic inference is opt-in through `--semantic-backend`; see
+[review history and semantic checkpoints](REVIEW_AND_SEMANTICS.md). Use `--detector flow` with the optional `[vision]` extra for
 the existing optical-flow baseline. External SSD paths under `/Volumes` require
 `--allow-removable`; removable camera cards should use `klip ingest` instead.
 
@@ -60,13 +61,12 @@ No snapshot is taken of externally writable media: concurrent writes are detecte
 by hashes and filesystem metadata where observable, but this is not protection
 against an adversary changing and restoring bytes during decoding.
 
-Timelines are currently regenerated cheaply on each run. Semantic-model inference,
-review/report consumers, publication, power-aware scheduling and general dependency
-graphs still need the same lifecycle treatment. Existing files are not automatically
-deleted when a later attempt fails; use the current result/status, not the presence
-of an older timeline file, as evidence of successful processing. Recomputing events
-referenced by WorldLink bindings can still fail under the existing foreign-key guard;
-versioned event revisions and preserved review history are the next needed migration.
+Timelines are currently regenerated cheaply on each run. Semantic inference now
+has per-frame checkpoints and active configuration selection; event revision and
+review history are preserved (see REVIEW_AND_SEMANTICS.md). Power-aware scheduling,
+general dependency graphs and interactive review still remain. Existing files are
+not automatically deleted when a later attempt fails; use the current result/status,
+not the presence of an older timeline file, as evidence of successful processing.
 
 ## Validation
 

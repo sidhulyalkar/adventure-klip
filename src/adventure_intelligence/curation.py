@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 from .catalog import connect, add_events, all_events, put_episodes
 from .episodes import build_episodes
+from .history import record_review
 
 ALLOWED_ACTIVITIES={"unknown","ski","bike","snorkeling"}
 
@@ -31,7 +32,7 @@ def import_labels(workspace: Path, label_path: Path) -> dict:
         normalized=[]
         for i, e in enumerate(events):
             start,end=int(e["start_ms"]),int(e["end_ms"])
-            if start<0 or end<=start or duration_ms and end>duration_ms+1500:
+            if start<0 or end<=start or duration_ms and end>duration_ms:
                 raise ValueError(f"Invalid range for event {i}: {start}..{end} (duration {duration_ms})")
             kind=str(e["kind"])
             if not kind or len(kind)>100:
@@ -46,13 +47,11 @@ def import_labels(workspace: Path, label_path: Path) -> dict:
             eid="cur-"+sha256(f"{asset_id}|{kind}|{start}|{end}|{i}".encode()).hexdigest()[:20]
             normalized.append({"id":eid,"kind":kind,"start_ms":start,"end_ms":end,
                                "score":score,"confidence":confidence,"evidence":evidence})
-        # Explicitly revoke old bindings that reference replaced manual event ids.
-        db.execute("DELETE FROM bindings WHERE event_id IN (SELECT id FROM events WHERE asset_id=? AND origin='manual')",(asset_id,))
         add_events(db,asset_id,normalized,"manual","manual-v1")
         db.execute("UPDATE assets SET activity=? WHERE id=?",(activity,asset_id))
         put_episodes(db,asset_id,build_episodes(asset_id,all_events(db,asset_id),duration_ms))
     return {"asset_id":asset_id,"manual_events":len(normalized),
-            "warning":"Previous bindings for this asset's manual events were revoked"}
+            "warning":"Changed or removed event approvals were archived; identical events retain approvals"}
 
 
 def bind_event(workspace: Path, event_id: str, world_entity_id: str,
@@ -70,7 +69,12 @@ def bind_event(workspace: Path, event_id: str, world_entity_id: str,
             raise ValueError("WorldLink bindings require manually reviewed events in v0.1")
         state="approved" if approve else "proposed"
         bid="binding-"+sha256(f"{event_id}|{world_entity_id}|{match_type}".encode()).hexdigest()[:20]
+        previous=db.execute('SELECT * FROM bindings WHERE id=?',(bid,)).fetchone()
+        if previous is not None and previous['review_state']!=state:
+            record_review(db,previous,event,'superseded_by_explicit_review')
         db.execute("""INSERT INTO bindings(id,event_id,world_entity_id,match_type,review_state)
            VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET review_state=excluded.review_state""",
            (bid,event_id,world_entity_id,match_type,state))
+        binding=db.execute('SELECT * FROM bindings WHERE id=?',(bid,)).fetchone()
+        record_review(db,binding,event,'explicit_review')
     return {"id":bid,"state":state,"world_entity_id":world_entity_id}

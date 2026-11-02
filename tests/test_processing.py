@@ -147,13 +147,20 @@ def test_process_rejects_overlapping_workspace_before_writing(tmp_path):
     assert not (tmp_path/'unsafe').exists()
 
 
-def test_timeline_attaches_semantics_and_rejects_stale_features(footage):
+def test_timeline_attaches_semantics_and_rejects_stale_features(footage, monkeypatch):
     _, _, workspace, aid, _ = footage
     analysis.analyze(workspace)
     semantics = workspace/'semantics'; semantics.mkdir()
     (semantics/f'{aid}-stub.json').write_text(json.dumps({'frames': [
         {'tMs': 1000, 'objects': [{'label': 'tree'}], 'embedding': [.1]},
         {'tMs': 9000, 'objects': [{'label': 'out of bounds'}]}]}))
+    from adventure_intelligence.semantic_jobs import run_semantics
+    monkeypatch.setattr('adventure_intelligence.semantic.frame_png',lambda *args: b'frame')
+    class Provider:
+        name='stub'; version='1'
+        def describe(self, raw):
+            return {'objects':[{'label':'tree'}],'embedding':[.1]}
+    run_semantics(workspace,Provider(),sample_seconds=1)
     result = generate_timelines(workspace)
     doc = json.loads(Path(result['paths'][0]).read_text())
     assert doc['bins'][0]['objects'][0]['label'] == 'tree'
@@ -231,3 +238,21 @@ def test_index_retries_failed_probe_without_changing_identity(footage, monkeypat
     assert result['asset_ids'] == [aid]
     with connect(workspace) as db:
         assert db.execute('SELECT duration FROM assets').fetchone()[0] == 3
+
+
+def test_process_with_real_histogram_semantics(tmp_path):
+    import shutil
+    import subprocess
+    pytest.importorskip('PIL')
+    if not shutil.which('ffmpeg'):
+        pytest.skip('ffmpeg unavailable')
+    folder=tmp_path/'DJI'; folder.mkdir()
+    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i',
+        'testsrc2=size=160x90:rate=12','-t','2','-c:v','libx264',str(folder/'sample.mp4')],check=True)
+    work=tmp_path/'work'
+    first=process_folder(folder,work,semantic_backend='histogram',sample_seconds=1)
+    assert first['status']=='completed' and first['semantics']['frames_computed']==2
+    doc=json.loads(Path(first['timelines']['paths'][0]).read_text())
+    assert len(doc['bins'][0]['embeddingFrames'])==2
+    second=process_folder(folder,work,semantic_backend='histogram',sample_seconds=1)
+    assert second['semantics']['cached']==1 and second['analysis']['cached']==1
