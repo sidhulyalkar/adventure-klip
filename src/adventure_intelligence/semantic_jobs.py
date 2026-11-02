@@ -70,7 +70,6 @@ def frame_descriptor(provider, raw, t, timing=None):
             'keypoints':[{**point,'reviewed':False} for point in keypoints],
             'notes':description.get('notes',[])}
     encoded(result)  # Reject NaN/Infinity or non-JSON model outputs before committing.
-    result['timingSeconds']={k:round(v,3) for k,v in result['timingSeconds'].items()}
     return result
 
 
@@ -273,4 +272,5 @@ def run_semantics(workspace, provider, *, sample_seconds=4.0, max_frames=300,
                 result['errors'].append({'asset':aid,'error':str(exc)})
                 if progress is not None:
                     progress.item('semantics', asset_number, len(assets), f'{aid[:12]} failed: {exc}')
+    result['timingSeconds']={k:round(v,3) for k,v in result['timingSeconds'].items()}
     return result
