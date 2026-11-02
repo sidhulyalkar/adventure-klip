@@ -1,3 +1,12 @@
+# Adventure Klip changes
+
+## 0.3.3
+
+- Capture original decoded frame PTS/time base separately from requested seek timestamps via FFmpeg showinfo and copyts.
+- Add conservative same-label mutual-IoU object track hypotheses with gap and ambiguity gating.
+- Expose timestamp evidence, object `trackId`, and unverified track summaries in completed semantic artifacts and timelines.
+- Invalidate semantic caches for the timestamp extraction and tracker revision; add real FFmpeg PTS regression tests.
+
 # Changelog
 
 ## 0.3.2

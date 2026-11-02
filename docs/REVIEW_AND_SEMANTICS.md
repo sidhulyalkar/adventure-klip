@@ -67,10 +67,24 @@ JSON files are preserved on disk but ignored by timelines until recomputed.
 Semantic JSON includes content identity, model/configuration provenance, embedding
 dimension and norm, and sampled timestamps. It omits private source paths. Model
 objects/keypoints are always marked unreviewed; scores are not calibrated species
-probabilities. Current sample times are **requested seek times**, not decoded frame
-presentation timestamps, and are labeled accordingly. The pipeline still needs
-PTS-aware frame extraction, temporal tracking, retrieval evaluation and a real-data
-qualification before action/species accuracy claims are appropriate.
+probabilities. New semantic sampling records **both** requested seek milliseconds and the decoded
+frame's original integer PTS and rational time base from FFmpeg showinfo. The
+source-stream `decodedPtsMs` is not silently normalized to wall-clock time or a
+potentially different stream start. Timelines attach the measured PTS when it falls
+inside the video-local duration, and explicitly mark any fallback to requested seek.
+
+Completed semantic artifacts also contain deterministic, unreviewed `trackId`
+associations for same-label bounding boxes. The tracker requires mutual spatial
+IoU with unambiguous score margins, consistent coordinate spaces, and bounded
+inter-frame gaps. Crossing or overlapping animals can still produce fragmented
+tracks; no track ID confirms identity or species. Checkpointed per-frame raw
+inference remains separate from derived track hypotheses. Semantic sampler and
+tracker configuration changes invalidate the appropriate cached artifact.
+
+**Limitations:** sparse sampling is not high-frame-rate tracking; video-only
+tracking cannot disambiguate all occlusions, precise wildlife identities, or
+camera-induced motion. Real DJI/Mac testing, track-label accuracy and retrieval
+evaluation are still required.
 
 Work remains single-writer under the CLI workspace lock. Full source verification
 adds disk I/O. The frame count defaults to at most 300 per asset; this is bounded
