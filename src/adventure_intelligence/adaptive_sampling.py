@@ -67,6 +67,9 @@ def _candidate_schedule(db, workspace: Path, asset, *, coverage_seconds: float,
                         interest_seconds: float, max_frames: int) -> dict:
     aid = asset["id"]
     duration = int(float(asset["duration"]) * 1000)
+    if duration < 1:
+        raise ValueError("Positive usable duration required")
+    flank = round(interest_seconds * 1000)
     activity = asset["activity"] if asset["activity"] in ALLOWED_ACTIVITIES else "unknown"
     # Do not falsely promise a fixed 30s floor when the user sets a restrictive
     # cap on a long recording. Explicitly report the achievable interval.
@@ -76,7 +79,8 @@ def _candidate_schedule(db, workspace: Path, asset, *, coverage_seconds: float,
     reserved = set(times)
     entries = {t: {"tMs": t, "priority": 0, "reasons": {"coverage_probe"}} for t in times}
     cache_inputs = {"motion": False, "events": 0, "reviewedKeeps": 0,
-                    "objectObservations": 0, "embeddingChanges": 0}
+                    "objectObservations": 0, "embeddingChanges": 0,
+                    "lowValueContextSamples": 0}
 
     def add(t, value, reason, offsets=(0,)):
         for offset in offsets:
@@ -120,7 +124,7 @@ def _candidate_schedule(db, workspace: Path, asset, *, coverage_seconds: float,
                 if all(abs(t - prev) >= 12000 for prev in spaced):
                     spaced.append(t)
                     add(t + 3000, 45 + 10 * min(1, strength / .3),
-                        "motion_change_unverified", (-2000, 0, 2000))
+                        "motion_change_unverified", (-flank, 0, flank))
                 if len(spaced) >= count:
                     break
 
@@ -134,13 +138,14 @@ def _candidate_schedule(db, workspace: Path, asset, *, coverage_seconds: float,
         mid = (int(ev["start_ms"]) + int(ev["end_ms"])) // 2
         confidence = float(ev["score"])
         priority = (95 if ev["origin"] == "manual" else 50) + 12 * confidence
-        add(mid, priority, "event_candidate_unverified", (-3000, 0, 3000))
+        add(mid, priority, "event_candidate_unverified", (-flank, 0, flank))
         cache_inputs["events"] += 1
 
     for ex in latest_examples(db, asset_id=aid):
         if ex["decision"] == "confirmed" and ex["highlight"] == "keep":
             mid = (int(ex["start_ms"]) + int(ex["end_ms"])) // 2
-            add(mid, 110, "human_reviewed_keep", (-4000, -2000, 0, 2000, 4000))
+            add(mid, 110, "human_reviewed_keep",
+                (-2 * flank, -flank, 0, flank, 2 * flank))
             cache_inputs["reviewedKeeps"] += 1
         # 'skip' does not erase coverage. A negative may still contain an
         # exceptional rare event the prior reviewer was not looking for.
@@ -154,14 +159,43 @@ def _candidate_schedule(db, workspace: Path, asset, *, coverage_seconds: float,
             labels = {obj.get("label", "").lower() for obj in frame.get("objects", [])
                       if isinstance(obj, dict)}
             if labels & WILDLIFE_QUERIES:
-                add(t, 85, "marine_object_query_unverified", (-3000, -1000, 1000, 3000))
+                add(t, 85, "marine_object_query_unverified",
+                    (-2 * flank, -flank, 0, flank, 2 * flank))
                 cache_inputs["objectObservations"] += 1
 
     frames, model_key = frames_for_asset(db, workspace, aid, "siglip2")
     for t, novelty in _novelty_points(frames, model_key):
         add(t, 62 + min(12, novelty * 20), "visual_novelty_unverified",
-            (-2000, 0, 2000))
+            (-flank, 0, flank))
         cache_inputs["embeddingChanges"] += 1
+
+    # Weak context-model evidence may DEPRIORITIZE extra investigation, but can
+    # never remove periodic coverage or a human-reviewed keep. These relative
+    # similarities are explicitly not calibrated ski/trail classifiers.
+    if activity in {"ski", "bike"}:
+        context_frames, _ = frames_for_asset(db, workspace, aid, "context")
+        negative = ("ski_lift", "ski_flat", "ski_stopped") if activity == "ski" else (
+            "bike_flat", "bike_stopped")
+        positive = "ski_downhill" if activity == "ski" else "bike_riding"
+        possible_negative = []
+        for frame in context_frames:
+            t = _time(frame)
+            scores = (frame.get("sceneScores") or {}).get("similarities") or {}
+            if t is None or positive not in scores or not all(x in scores for x in negative):
+                continue
+            if not all(isinstance(v, (int, float)) and math.isfinite(v)
+                       for v in [scores[positive], *(scores[x] for x in negative)]):
+                continue
+            if max(scores[k] for k in negative) - scores[positive] > .035:
+                possible_negative.append(t)
+        for item in entries.values():
+            if item["tMs"] in reserved or "human_reviewed_keep" in item["reasons"]:
+                continue
+            supports = sum(abs(item["tMs"] - t) <= 20000 for t in possible_negative)
+            if supports >= 2:
+                item["priority"] = max(0, item["priority"] - 25)
+                item["reasons"].add("low_value_context_unverified")
+                cache_inputs["lowValueContextSamples"] += 1
 
     # Deterministic exploration samples preserve discovery pressure even for
     # quiet regions or clips without any feature caches.
