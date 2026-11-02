@@ -1,4 +1,117 @@
+# Klip experimental: NVIDIA NIM clip-judge benchmark
+
+Optional and **off by default**: sample candidate plus independently
+random video intervals, extract small local preview frames only on request,
+then obtain independent NVIDIA NIM vision-language assessments after explicit
+approval to upload. Compare model assessments to held-out human Keep/Skip
+reviews; AI consensus is not ground truth.
+
+See [NVIDIA NIM Clip Benchmark](docs/NIM_CLIP_BENCHMARK.md) for safety,
+CLI commands, model constraints and evaluation design.
+
+## Prior release history
+
+# Klip 1.0 candidate · Auditable run performance
+
+`klip audit-log <log-file>` summarizes stage progress, sparse FFmpeg output
+throughput, source-verification heartbeats and restarts using only an existing
+append-only log. It does **not** read source footage, open the project catalog,
+run processing, acquire a workspace lock or estimate whole-library completion.
+
+While a library processing run is active, test the audit utility in a
+**separate checkout/environment** rather than changing the running one.
+See [run log audit](docs/PROCESSING.md#run-log-audit-and-performance-evaluation).
+
+## Earlier releases
+
+# Klip 0.9 · Preserve the original proposal when saving reviews
+
+Each new user review can record the shown candidate and suggested in/out
+alongside the final chosen interval, using an append-only linked SQLite record.
+This makes future boundary-quality evaluation possible without asserting
+that the candidate's scene label is correct or altering source media.
+See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md).
+
+## Previous: Cached boundary inspector (opt-in)
+
+Inspect local, cached motion evidence around an in/out range without
+reprocessing source files. A **Preview 5 local frames** button decodes at
+most five frames from one recording only when explicitly clicked.
+Neither feature modifies source clips or automatically applies edits.
+See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md).
+
+## Previous: Evidence-aware clip boundaries
+
+The focused review screen now offers an optional **Preview suggested trim**
+action. A deterministic, versioned trim policy protects complete multi-frame
+events, adds bounded context, respects human Skip/manual exclusion intervals,
+and **requires explicit review** before saving. It does not start any new
+processing or alter original DJI files.
+
+See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md) for rules, guardrails, failure
+modes and the human evaluation plan.
+
+## Prior UI: Quiet Review + Library
+
+The focused studio now uses a low-noise navy, grey, white and salmon palette. **Refresh catalog** reads newly indexed metadata during a long-running processing job without restarting analysis. A large clip viewer includes optional fullscreen, while the Library defaults to collapsed collections and renders 60 recording rows at a time. These are UI-only optimizations and do not change the source videos.
+
+See [Focused Review + Library](docs/FOCUS_REVIEW_LIBRARY.md) for the full interface and shortcuts.
+
+## Original Focused Review and Library
+
+**The default page is now Review:** one large clip at a time, with Keep / Later / Skip and optional annotations. Switch to **Library** for virtual folders by recording day, original folder, manually assigned region, activity, and review status. Search recordings and inspect suggested or previously reviewed intervals. The old multipanel editorial UI remains at `/classic`.
+
+See [Focused Review + Library](docs/FOCUS_REVIEW_LIBRARY.md) for shortcuts, workflow, data safety and limitations.
+
+## Previous studio: Inbox and Sequence Editor
+
+The local Field Studio now starts with a small, prioritized **editorial Inbox** instead of every raw motion proposal. Preview each moment, Keep it, or Reject with a note explaining a wrong label or boring scene. Approved moments appear on the **Sequence** tab, where you can drag them into order, review transitions, save revisioned drafts, and export a render-compatible JSON plan. The original DJI files remain untouched.
+
+```sh
+klip --workspace ~/AdventureAI studio
+```
+
+See [Curation Inbox and Sequence](docs/CURATION_INBOX_AND_SEQUENCE.md) for the workflow and limitations.
+
+## Klip Field Studio
+
+Review and compare your indexed adventure footage in a private, local web UI. The player opens originals read-only, while labels and A/B preferences are appended to the separate workspace database.
+
+~~~bash
+klip --workspace ~/AdventureAI studio
+~~~
+
+See [Field Studio guide](docs/FIELD_STUDIO.md) for setup, keyboard shortcuts, safety, and codec limitations.
+
+## Evidence-first scene atlas and reviewed clips
+
+Klip can now save append-only human-reviewed source intervals and compare already
+cached semantic embeddings without re-encoding original footage. Audio is an
+inexpensive **review-prioritization cue**, not a classifier for maneuvers,
+breathing, crashes or boring moments.
+
+See [Review-driven scene atlas](docs/REVIEW_DRIVEN_SCENE_ATLAS.md) for the staged
+local workflow and safety/evaluation limitations. Useful commands:
+
+```sh
+klip --workspace ~/AdventureAI acoustics
+klip --workspace ~/AdventureAI scout --recipe ski-highlights --top 20
+klip --workspace ~/AdventureAI examples audit
+klip --workspace ~/AdventureAI examples evaluate
+klip --workspace ~/AdventureAI plan --recipe ski-highlights --ranking context --diversity visual --provider siglip2 --seconds 90
+```
+
 # Adventure Klip 🏔️ 🐠 🚵
+
+Incrementally process a permanent DJI folder without moving footage:
+
+```sh
+klip --workspace ~/AdventureAI process ~/Movies/DJI --activity ski
+```
+
+See [folder processing](docs/PROCESSING.md) for restart behavior, source verification,
+cache migration and current limitations. This runs the lightweight baseline pipeline.
+
 
 **Local-first action-camera intelligence.** Index recordings from existing Mac folders without moving footage; import removable DJI media with verified copies; extract timestamped evidence, group confirmed maneuvers, draft reels, and publish approved Sid's iLand discovery bindings.
 

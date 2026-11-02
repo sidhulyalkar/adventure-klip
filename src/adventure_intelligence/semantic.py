@@ -4,18 +4,15 @@ No model downloads occur unless explicitly choosing an AI backend. Sparse frame 
 limits cost. Object labels are proposals, not verified species or athlete identification.
 """
 from __future__ import annotations
-import hashlib
-import json
 import math
 from pathlib import Path
 from typing import Protocol
-from .catalog import connect
 from .media import require_tool
 import subprocess
 
 DEFAULT_QUERIES=['person','skier','skis','bicycle','mountain bike','tree','rock',
                  'snow','fish','shark','ray','sea turtle','coral','underwater reef']
-VERSION='scene-sampling-v1'
+VERSION='scene-sampling-pts-v3'
 
 
 class SceneProvider(Protocol):
@@ -60,6 +57,8 @@ class SiglipProvider:
             self.device='cpu'
         self.model.to(self.device)
         self.version=model_id
+        self.cache_config={'resolvedRevision':getattr(self.model.config,'_commit_hash',None),
+                           'imageProcessor':self.processor.image_processor.to_dict()}
     def describe(self,image_bytes:bytes)->dict:
         from PIL import Image
         import io
@@ -74,6 +73,62 @@ class SiglipProvider:
                 'objects':[],'keypoints':[], 'notes':['Image-text embedding, not object recognition']}
 
 
+
+SCENE_PROMPTS = {
+    "submerged": "First-person action camera filming fully submerged underwater in a clear coral reef, fish and underwater scenery visible.",
+    "at_surface": "First-person snorkeling camera at the ocean surface, waterline, breaking waves, splashes and air visible.",
+    "ski_downhill": "First-person action camera descending a snowy ski slope, traveling downhill between snow-covered trees.",
+    "ski_lift": "First-person video riding on a chairlift or gondola above the ski slope, seated looking at mountains.",
+    "ski_flat": "First-person skier traveling slowly across a broad flat snow-covered traverse, with little downhill descent.",
+    "ski_stopped": "First-person ski video standing still beside a trail with skis on snow, stationary waiting in the mountains.",
+    "bike_riding": "First-person action camera riding a mountain bike on a dirt trail through a forest.",
+    "bike_stopped": "First-person mountain biking camera stopped beside a trail, standing still with a bike.",
+    "bike_flat": "First-person mountain biking slowly along a broad smooth flat dirt trail, no technical riding.",
+}
+
+
+class ContextProvider(SiglipProvider):
+    """Opt-in text-image scene-state *similarities*, not calibrated probabilities.
+
+    Suitable for provisional submersion / chairlift / stationary context. Image
+    and text embeddings share one frozen model, and prompts are versioned in the
+    cache config. Real DJI qualification is required before auto-rejecting shots.
+    """
+    name = 'context'
+
+    def __init__(self, model_id: str = 'google/siglip2-base-patch16-224'):
+        super().__init__(model_id)
+        self.cache_config = {**self.cache_config, 'prompts': SCENE_PROMPTS,
+                             'purpose': 'relative_scene_similarity_v1'}
+        prompts = list(SCENE_PROMPTS.values())
+        inputs = self.processor(text=prompts, padding='max_length',
+                                truncation=True, return_tensors='pt').to(self.device)
+        with self.torch.inference_mode():
+            vectors = self.model.get_text_features(**inputs)
+            if hasattr(vectors, 'pooler_output'):
+                vectors = vectors.pooler_output
+            self.text_vectors = self.torch.nn.functional.normalize(vectors, dim=-1)
+
+    def describe(self, image_bytes: bytes) -> dict:
+        from PIL import Image
+        import io
+        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        inputs = self.processor(images=image, return_tensors='pt').to(self.device)
+        with self.torch.inference_mode():
+            vector = self.model.get_image_features(**inputs)
+            if hasattr(vector, 'pooler_output'):
+                vector = vector.pooler_output
+            vector = self.torch.nn.functional.normalize(vector, dim=-1)
+            similarities = (vector @ self.text_vectors.T).squeeze(0).float().cpu().tolist()
+        return {'embedding': None, 'objects': [], 'keypoints': [],
+                'sceneScores': {
+                    'method': 'siglip2_image_text_cosine',
+                    'similarities': {name: round(float(value), 6)
+                                     for name, value in zip(SCENE_PROMPTS, similarities)},
+                    'status': 'uncalibrated_hypotheses',
+                },
+                'notes': ['Text-image similarity, not a validated scene classifier']}
+
 class OwlProvider:
     """Optional open-vocabulary detection on sampled frames; scores need validation."""
     name='owlv2'
@@ -82,91 +137,70 @@ class OwlProvider:
         from transformers import pipeline
         self.detector=pipeline('zero-shot-object-detection',model=self.version)
         self.threshold=threshold
+        self.cache_config={'threshold':threshold,'queries':list(DEFAULT_QUERIES),
+            'resolvedRevision':getattr(self.detector.model.config,'_commit_hash',None)}
     def describe(self,image_bytes:bytes)->dict:
         from PIL import Image
         import io
         image=Image.open(io.BytesIO(image_bytes)).convert('RGB')
         detections=self.detector(image,candidate_labels=DEFAULT_QUERIES)
         objects=[{'label':d['label'],'score':float(d['score']),
-                  'bbox':dict(d['box']),'reviewed':False} for d in detections
+                  'bbox':dict(d['box']),'bboxFormat':'xyxy','coordinateSpace':'sampled_image_pixels','reviewed':False} for d in detections
                  if float(d['score'])>=self.threshold]
         return {'embedding':None,'objects':objects,'keypoints':[],
                 'notes':['Zero-shot detection; labels are unverified']}
 
 
-def frame_png(path:Path, t_ms:int, width:int=384)->bytes:
-    command=[require_tool('ffmpeg'),'-v','error','-nostdin','-ss',f'{t_ms/1000:.3f}',
-             '-i',str(path),'-frames:v','1','-vf',f'scale={width}:-2',
-             '-f','image2pipe','-vcodec','png','pipe:1']
-    raw=subprocess.run(command,capture_output=True,timeout=90,check=True).stdout
-    if not raw:
-        raise RuntimeError(f'No frame at {t_ms}ms')
-    return raw
+def frame_png(path:Path, t_ms:int, width:int=384, include_timing:bool=False):
+    """Decode one PNG; optionally return the decoded source-PTS evidence.
+
+    The historical bytes-only function remains compatible with callers and
+    test fixtures. Semantic jobs request timing in the same decode pass.
+    """
+    from .frame_timing import extract_frame_png
+    raw, timing = extract_frame_png(path, t_ms, width)
+    return (raw, timing) if include_timing else raw
 
 
 def describe_asset(path:Path,duration_ms:int,provider:SceneProvider,
                    *,sample_seconds:float=4.0,max_frames:int=300)->dict:
-    if sample_seconds<=0 or max_frames<=0:
+    if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
         raise ValueError('Sample interval and frame bound must be positive')
     frames=[]
     step=max(1,int(sample_seconds*1000),math.ceil(max(0,duration_ms)/max_frames))
     for t in range(0,max(0,duration_ms),step):
         if len(frames)>=max_frames:
             break
-        desc=provider.describe(frame_png(path,t))
-        embedding=desc.get('embedding')
-        if embedding is not None and (len(embedding)>8192 or not all(
-             isinstance(v,(int,float)) and abs(v)<1e8 for v in embedding)):
-            raise ValueError('Invalid embedding')
-        frames.append({'tMs':t,'embedding':embedding,
-                       'objects':desc.get('objects',[]),
-                       'keypoints':desc.get('keypoints',[]),
-                       'notes':desc.get('notes',[])})
+        from .semantic_jobs import frame_descriptor
+        frames.append(frame_descriptor(provider,frame_png(path,t),t))
     return {'schemaVersion':1,'source':str(path),'provider':provider.name,
             'modelVersion':provider.version,'sampleIntervalMs':step,'frames':frames}
 
 
 def generate_semantics(workspace:Path,*,backend:str='histogram',
-                       sample_seconds:float=4.0,limit:int|None=None,pose_model:Path|None=None)->dict:
+                       sample_seconds:float=4.0,limit:int|None=None,pose_model:Path|None=None,
+                       max_frames:int=300,asset_ids:set[str]|None=None,
+                       progress=None)->dict:
+    if not math.isfinite(sample_seconds) or sample_seconds<=0 or max_frames<=0:
+        raise ValueError('Sample interval and frame bound must be positive and finite')
     if backend=='histogram':
         provider=HistogramProvider()
     elif backend=='siglip2':
         provider=SiglipProvider()
     elif backend=='owlv2':
         provider=OwlProvider()
+    elif backend=='context':
+        provider=ContextProvider()
     elif backend=='stack':
         stack=[SiglipProvider(),OwlProvider()]
         if pose_model is not None:
             stack.append(PoseProvider(pose_model))
         provider=SceneStack(stack)
     else:
-        raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, stack')
-    output={'processed':0,'cached':0,'missing':0,'errors':[]}
-    with connect(workspace) as db:
-        for a in db.execute('SELECT * FROM assets ORDER BY created_at,id').fetchall():
-            if limit is not None and output['processed']>=limit:
-                break
-            path=Path(a['stored_path'])
-            if not path.is_file():
-                output['missing']+=1
-                continue
-            namespace=hashlib.sha256(f'{provider.name}:{provider.version}:{sample_seconds}'.encode()).hexdigest()[:12]
-            target=workspace/'semantics'/f'{a["id"]}-{namespace}.json'
-            if target.is_file():
-                output['cached']+=1
-                continue
-            try:
-                result=describe_asset(path,int((a['duration'] or 0)*1000),provider,
-                                       sample_seconds=sample_seconds)
-                result['assetId']=a['id']
-                target.parent.mkdir(parents=True,exist_ok=True)
-                tmp=target.with_suffix('.tmp')
-                tmp.write_text(json.dumps(result,separators=(',',':')))
-                tmp.replace(target)
-                output['processed']+=1
-            except Exception as exc:
-                output['errors'].append({'asset':a['id'],'error':str(exc)})
-    return output
+        raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, context, stack')
+    from .semantic_jobs import run_semantics
+    return run_semantics(workspace,provider,sample_seconds=sample_seconds,limit=limit,
+                         max_frames=max_frames,asset_ids=asset_ids,progress=progress)
 
 class PoseProvider:
     """Optional MediaPipe human pose. Useful only when a person's body is visible."""
@@ -176,6 +210,8 @@ class PoseProvider:
         import mediapipe as mp
         if not model_path.is_file():
             raise ValueError('A locally downloaded .task human-pose model is required')
+        from .ingest import sha_file
+        self.cache_config={'modelSha256':sha_file(model_path),'mediapipeVersion':mp.__version__}
         self.mp=mp
         options=mp.tasks.vision.PoseLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
@@ -192,7 +228,7 @@ class PoseProvider:
         for person,points in enumerate(result.pose_landmarks):
             for idx,p in enumerate(points):
                 tracks.append({'person':person,'jointIndex':idx,'x':p.x,'y':p.y,
-                               'visibility':p.visibility,'reviewed':False})
+                               'visibility':p.visibility,'coordinateSpace':'normalized_image','reviewed':False})
         return {'embedding':None,'objects':[], 'keypoints':tracks,
                 'notes':['Human pose landmarks; not a first-person camera body pose']}
 
@@ -202,6 +238,8 @@ class SceneStack:
     name='stack'
     def __init__(self,providers:list[SceneProvider]):
         self.providers=providers
+        self.cache_config={'providers':[{'name':p.name,'version':p.version,
+            'config':getattr(p,'cache_config',{})} for p in providers]}
         self.version='+'.join(f'{p.name}:{p.version}' for p in providers)
     def describe(self,image_bytes:bytes)->dict:
         results=[p.describe(image_bytes) for p in self.providers]

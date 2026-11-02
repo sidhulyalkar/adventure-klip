@@ -6,12 +6,15 @@ import subprocess
 import tempfile
 from .catalog import connect
 from .media import require_tool
+from .sources import resolve_source, verified_digest
+from .safety import protect_source_output
 
 RECIPES={
     "motion-review":{"activity":None,"kinds":{"camera_rhythm_candidate":1.0,"sustained_motion_candidate":0.7,"active_sequence":0.4}},
     "ski-highlights":{"activity":"ski","kinds":{"jump_chain":1.0,"carving_flow":0.9,"tree_weaving":0.9,"technical_feature_chain":0.85,"active_sequence":0.25,"camera_rhythm_candidate":0.17,"sustained_motion_candidate":0.12}},
     "bike-highlights":{"activity":"bike","kinds":{"technical_feature_chain":1.0,"active_sequence":0.35,"camera_rhythm_candidate":0.17,"sustained_motion_candidate":0.12}},
     "snorkel-discoveries":{"activity":"snorkeling","kinds":{"wildlife_encounter":1.0,"active_sequence":0.2,"sustained_motion_candidate":0.10}},
+    "incident-review":{"activity":None,"kinds":{"incident_review":1.0}},
     "best-sequences":{"activity":None,"kinds":{"jump_chain":1.0,"carving_flow":1.0,"tree_weaving":1.0,"technical_feature_chain":1.0,"wildlife_encounter":1.0,"active_sequence":0.5,"camera_rhythm_candidate":0.18,"sustained_motion_candidate":0.12}},
 }
 
@@ -72,9 +75,23 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
         raise ValueError("fade_seconds must be between 0.1 and 1.0")
     ffmpeg=require_tool("ffmpeg")
     output=output.expanduser().resolve()
-    output.parent.mkdir(parents=True,exist_ok=True)
     with connect(workspace) as db:
+        protect_source_output(db, output)
         sources={row["id"]:dict(row) for row in db.execute("SELECT * FROM assets")}
+        verified = {}
+        for segment in plan['segments']:
+            aid = segment['sourceAssetId']
+            if aid not in sources:
+                raise ValueError(f'Unknown asset {aid}')
+            if aid not in verified:
+                verified[aid] = resolve_source(db,sources[aid])
+        protected = [Path(row['stored_path']) for row in sources.values()]
+        protected.extend(Path(row[0]) for row in db.execute('SELECT original_path FROM imports'))
+        if any(output == path.resolve() or
+               (output.exists() and path.exists() and output.samefile(path))
+               for path in protected):
+            raise ValueError('Output cannot overwrite a source video')
+    output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="adventure-reel-") as tmp:
         folder=Path(tmp)
         clips=[]
@@ -86,9 +103,9 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
             start=int(s["startMs"])
             end=int(s["endMs"])
             duration=(end-start)/1000
-            if start<0 or duration<=0 or end>int((asset["duration"] or 0)*1000)+1500:
+            if start<0 or duration<=0 or end>int((asset["duration"] or 0)*1000):
                 raise ValueError("Invalid segment boundaries")
-            source=Path(asset["stored_path"])
+            source=verified[asset["id"]]
             if not source.is_file():
                 raise FileNotFoundError(source)
             has_audio=json.loads(asset["metadata_json"]).get("audio",False)
@@ -118,6 +135,9 @@ def render_reel(workspace: Path, plan: dict, output: Path, height: int=720,
         subprocess.run([ffmpeg,"-hide_banner","-loglevel","error","-y","-safe","0",
                         "-f","concat","-i",str(concat),"-c","copy", "-movflags","+faststart",
                         str(temp_out)],check=True)
+        for aid,path in verified.items():
+            if verified_digest(path) != aid:
+                raise OSError('Source changed during rendering')
         import shutil
         shutil.copy2(temp_out,output)
     return {"path":str(output),"segments":len(clips),"transition":transition,

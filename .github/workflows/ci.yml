@@ -23,9 +23,18 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ffmpeg
       - name: Install package and test requirements
-        run: python -m pip install -e '.[dev,vision]'
+        run: python -m pip install -e '.[dev,vision,images]'
       - name: Check package
         run: python -m build --sdist --wheel
+      - name: Check browser JavaScript
+        run: |
+          node --check src/adventure_intelligence/studio_assets/studio.js
+          node --check src/adventure_intelligence/studio_assets/studio_editor.js
+          node --check src/adventure_intelligence/studio_assets/focus.js
+          node --check src/adventure_intelligence/studio_assets/boundary_review.js
+      - name: Verify packaged studio assets
+        run: |
+          python -c "import glob,zipfile; p=glob.glob('dist/*.whl')[0]; z=zipfile.ZipFile(p); a=z.namelist(); assert all(any(x.endswith('/studio_assets/'+n) for x in a) for n in ('index.html','studio.css','editor.css','studio.js','studio_editor.js','focus.html','focus.css','focus_refine.css','focus.js','boundary_review.js')), a"
       - name: Tests
         run: python -m pytest -q
       - name: Compile Python

@@ -25,7 +25,8 @@ def _vision_dependencies():
 
 
 def flow_series(path: Path, fps: int = 4, width: int = 160, height: int = 90,
-                max_seconds: float | None = None) -> list[dict]:
+                max_seconds: float | None = None, progress=None,
+                total_seconds: float | None = None) -> list[dict]:
     """Decode a bounded frame at a time; use median flow as a camera-motion proxy.
 
     Frames are sampled onto an FFmpeg constant-rate timeline. The timing is an
@@ -84,6 +85,10 @@ def flow_series(path: Path, fps: int = 4, width: int = 160, height: int = 90,
                 })
             previous = frame
             index += 1
+            if progress is not None:
+                seconds = max_seconds if max_seconds is not None else total_seconds
+                expected = max(index, math.ceil(seconds * fps)) if seconds is not None else index
+                progress(index, expected)
     finally:
         process.stdout.close()
         try:

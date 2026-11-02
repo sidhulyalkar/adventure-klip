@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS assets (
  capture_time TEXT, activity TEXT NOT NULL DEFAULT 'unknown',
  metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS asset_regions (
+ asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+ region TEXT NOT NULL DEFAULT '',
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS imports (
  source_key TEXT NOT NULL, asset_id TEXT NOT NULL REFERENCES assets(id),
  original_name TEXT NOT NULL, original_path TEXT NOT NULL, size_bytes INTEGER NOT NULL,
@@ -46,12 +51,120 @@ CREATE TABLE IF NOT EXISTS analyses (
  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
  PRIMARY KEY (asset_id, stage)
 );
+CREATE TABLE IF NOT EXISTS artifacts (
+ asset_id TEXT NOT NULL REFERENCES assets(id), version TEXT NOT NULL,
+ filename TEXT NOT NULL, sha256 TEXT NOT NULL,
+ PRIMARY KEY (asset_id, version)
+);
 CREATE TABLE IF NOT EXISTS bindings (
  id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id),
  world_entity_id TEXT NOT NULL, match_type TEXT NOT NULL,
  review_state TEXT NOT NULL CHECK(review_state IN ('proposed', 'approved', 'rejected')),
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS event_revisions (
+ revision_id TEXT PRIMARY KEY, event_id TEXT NOT NULL, asset_id TEXT NOT NULL REFERENCES assets(id),
+ payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS review_history (
+ id INTEGER PRIMARY KEY, binding_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL REFERENCES event_revisions(revision_id),
+ decision TEXT NOT NULL, payload TEXT NOT NULL, reason TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS semantic_jobs (
+ asset_id TEXT NOT NULL REFERENCES assets(id), config_id TEXT NOT NULL,
+ config_json TEXT NOT NULL, status TEXT NOT NULL, error TEXT,
+ filename TEXT, sha256 TEXT, PRIMARY KEY(asset_id,config_id)
+);
+CREATE TABLE IF NOT EXISTS semantic_frames (
+ asset_id TEXT NOT NULL, config_id TEXT NOT NULL, t_ms INTEGER NOT NULL,
+ payload TEXT NOT NULL, sha256 TEXT NOT NULL,
+ PRIMARY KEY(asset_id,config_id,t_ms),
+ FOREIGN KEY(asset_id,config_id) REFERENCES semantic_jobs(asset_id,config_id)
+);
+CREATE TABLE IF NOT EXISTS semantic_active (
+ asset_id TEXT NOT NULL, provider TEXT NOT NULL, config_id TEXT NOT NULL,
+ PRIMARY KEY(asset_id,provider),
+ FOREIGN KEY(asset_id,config_id) REFERENCES semantic_jobs(asset_id,config_id)
+);
+CREATE TABLE IF NOT EXISTS example_revisions (
+ revision_id TEXT PRIMARY KEY,
+ example_id TEXT NOT NULL,
+ previous_revision_id TEXT,
+ asset_id TEXT NOT NULL REFERENCES assets(id),
+ start_ms INTEGER NOT NULL,
+ end_ms INTEGER NOT NULL,
+ label TEXT NOT NULL,
+ decision TEXT NOT NULL CHECK(decision IN ('confirmed','rejected','uncertain')),
+ highlight TEXT NOT NULL CHECK(highlight IN ('keep','skip','neutral')),
+ reviewer_note TEXT NOT NULL DEFAULT '',
+ reviewer TEXT NOT NULL DEFAULT 'local_user',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK(end_ms > start_ms),
+ FOREIGN KEY(previous_revision_id) REFERENCES example_revisions(revision_id)
+);
+CREATE INDEX IF NOT EXISTS example_reviews_by_example
+ ON example_revisions(example_id,created_at);
+CREATE INDEX IF NOT EXISTS example_reviews_by_asset
+ ON example_revisions(asset_id,start_ms,end_ms);
+CREATE TABLE IF NOT EXISTS review_proposal_links (
+ revision_id TEXT PRIMARY KEY REFERENCES example_revisions(revision_id),
+ asset_id TEXT NOT NULL REFERENCES assets(id),
+ proposal_source TEXT NOT NULL CHECK(proposal_source IN ('queue','library','manual')),
+ proposal_id TEXT NOT NULL,
+ proposal_label TEXT NOT NULL,
+ proposed_start_ms INTEGER NOT NULL,
+ proposed_end_ms INTEGER NOT NULL,
+ trim_policy_version TEXT,
+ suggested_start_ms INTEGER,
+ suggested_end_ms INTEGER,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK (proposed_start_ms >= 0 AND proposed_end_ms > proposed_start_ms),
+ CHECK ((suggested_start_ms IS NULL AND suggested_end_ms IS NULL)
+     OR (suggested_start_ms >= 0 AND suggested_end_ms > suggested_start_ms))
+);
+CREATE INDEX IF NOT EXISTS review_proposal_asset
+ ON review_proposal_links(asset_id,proposal_id);
+CREATE TABLE IF NOT EXISTS pairwise_revisions (
+ revision_id TEXT PRIMARY KEY,
+ comparison_id TEXT NOT NULL,
+ previous_revision_id TEXT,
+ left_asset_id TEXT NOT NULL REFERENCES assets(id),
+ right_asset_id TEXT NOT NULL REFERENCES assets(id),
+ left_start_ms INTEGER NOT NULL,
+ left_end_ms INTEGER NOT NULL,
+ right_start_ms INTEGER NOT NULL,
+ right_end_ms INTEGER NOT NULL,
+ preference TEXT NOT NULL CHECK(preference IN ('left','right','tie','uncertain')),
+ reason TEXT NOT NULL,
+ reviewer_note TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK(left_end_ms > left_start_ms),
+ CHECK(right_end_ms > right_start_ms),
+ FOREIGN KEY(previous_revision_id) REFERENCES pairwise_revisions(revision_id)
+);
+CREATE INDEX IF NOT EXISTS pairwise_reviews ON pairwise_revisions(comparison_id);
+CREATE TABLE IF NOT EXISTS sequence_draft_revisions (
+ revision_id TEXT PRIMARY KEY,
+ previous_revision_id TEXT REFERENCES sequence_draft_revisions(revision_id),
+ name TEXT NOT NULL,
+ entries_json TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sequence_combination_feedback (
+ feedback_id TEXT PRIMARY KEY,
+ sequence_revision_id TEXT NOT NULL REFERENCES sequence_draft_revisions(revision_id),
+ left_example_id TEXT NOT NULL,
+ right_example_id TEXT NOT NULL,
+ verdict TEXT NOT NULL CHECK(verdict IN ('approve','reject')),
+ reason TEXT NOT NULL,
+ note TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS sequence_feedback_revision
+ ON sequence_combination_feedback(sequence_revision_id);
+
 """
 
 
@@ -80,17 +193,37 @@ def as_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 def add_events(db: sqlite3.Connection, asset_id: str, events: list[dict], origin: str,
                version: str) -> int:
-    # Preserve hand-curated labels when a model is updated.
-    db.execute("DELETE FROM episodes WHERE asset_id=? AND origin='derived'", (asset_id,))
-    db.execute("DELETE FROM events WHERE asset_id=? AND origin=?", (asset_id, origin))
+    from .history import snapshot_event, record_review
+    incoming = {}
     for ev in events:
+        if ev['id'] in incoming:
+            raise ValueError('Duplicate event ID')
+        incoming[ev['id']] = dict(id=ev['id'],asset_id=asset_id,kind=ev['kind'],
+            start_ms=ev['start_ms'],end_ms=ev['end_ms'],confidence=ev['confidence'],
+            score=ev['score'],origin=origin,version=version,
+            evidence_json=json.dumps(ev.get('evidence',{}),sort_keys=True,allow_nan=False))
+        existing = db.execute('SELECT asset_id,origin FROM events WHERE id=?',(ev['id'],)).fetchone()
+        if existing and (existing['asset_id']!=asset_id or existing['origin']!=origin):
+            raise ValueError('Event ID collides with another asset or origin')
+    previous = list(db.execute('SELECT * FROM events WHERE asset_id=? AND origin=?',(asset_id,origin)))
+    for old in previous:
+        snapshot_event(db,old)
+        if incoming.get(old['id']) == dict(old):
+            continue
+        for binding in db.execute('SELECT * FROM bindings WHERE event_id=?',(old['id'],)).fetchall():
+            record_review(db,binding,old,'invalidated_by_event_revision')
+        db.execute('DELETE FROM bindings WHERE event_id=?',(old['id'],))
+        db.execute('DELETE FROM events WHERE id=?',(old['id'],))
+    db.execute("DELETE FROM episodes WHERE asset_id=? AND origin='derived'", (asset_id,))
+    for ev in incoming.values():
         db.execute(
             """INSERT INTO events (id,asset_id,kind,start_ms,end_ms,confidence,score,
-               origin,version,evidence_json) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               origin,version,evidence_json) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING""",
             (ev["id"], asset_id, ev["kind"], ev["start_ms"], ev["end_ms"],
              ev["confidence"], ev["score"], origin, version,
-             json.dumps(ev.get("evidence", {}), sort_keys=True)),
+             ev["evidence_json"]),
         )
+        snapshot_event(db,db.execute('SELECT * FROM events WHERE id=?',(ev['id'],)).fetchone())
     return len(events)
 
 

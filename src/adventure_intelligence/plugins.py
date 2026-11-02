@@ -13,9 +13,9 @@ class FlowEvidence:
     name = "flow"
     version = "1"
 
-    def extract(self, path):
+    def extract(self, path, *, progress=None, total_seconds=None):
         from .vision import flow_series
-        return flow_series(path)
+        return flow_series(path, progress=progress, total_seconds=total_seconds)
 
     def detect(self, asset_id: str, series: list[dict], metadata: dict) -> list[dict]:
         from .vision import detect_flow_events

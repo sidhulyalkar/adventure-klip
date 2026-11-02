@@ -1,4 +1,44 @@
+## 0.5.0 · Editorial Inbox and Sequence Cutting Room
+
+- Paged, non-overlapping candidate review across recordings, with provisional low-value and promising lanes; no automatic deletion or unreviewed content rejection.
+- Keep/reject quick review with required explanation for skipped or incorrectly classified scenes; re-reviewable revisions remain in the local catalog.
+- Source-safe drag-and-drop reel board restricted to human-approved clips, keyboard-accessible order controls and timed source preview.
+- Per-join approval or rejection with reasons, revisioned draft edits, stale-write protection, and validated render-compatible JSON plan export.
+- Tests and CI check for source immutability, review semantics, queue deduplication, HTTP authorization, packaged static assets and both browser scripts.
+
+## 0.4.0 · Klip Field Studio
+
+- Introduce a professional, responsive, local-only review UI with video playback, time-aligned event timelines, selection, annotation, evidence inspection, A/B comparisons, and shortcuts.
+- Serve only indexed, source-hash-verified videos over loopback HTTP with tokenized byte-range requests; preserve original footage.
+- Append pairwise preference revisions to SQLite, with no automatic publication.
+- Package HTML/CSS/JS and test serving, security, source immutability, HTTP ranges, reviews, A/B writes, wheel contents, and JS syntax.
+
+# Adventure Klip changes
+
+## 0.3.3
+
+- Capture original decoded frame PTS/time base separately from requested seek timestamps via FFmpeg showinfo and copyts.
+- Add conservative same-label mutual-IoU object track hypotheses with gap and ambiguity gating.
+- Expose timestamp evidence, object `trackId`, and unverified track summaries in completed semantic artifacts and timelines.
+- Invalidate semantic caches for the timestamp extraction and tracker revision; add real FFmpeg PTS regression tests.
+
 # Changelog
+
+## 0.3.2
+- Preserve immutable event snapshots and review decisions when events change or disappear.
+- Identical event updates retain approvals; changed revisions require fresh approval.
+- Add `klip history ASSET_ID` for local audit inspection.
+- Add per-frame semantic checkpoints, checksum validation, and active configuration selection.
+- Add opt-in semantic processing to `klip process`; retain unreviewed prediction status.
+- Publication excludes unavailable or changed source assets.
+
+## 0.3.1
+- Added folder-scoped `klip process` with restartable baseline analysis and timelines.
+- Verify source content before cache hits/rendering; recover matching duplicate paths.
+- Added checksum-verified extraction artifacts and persistent running/failed states.
+- Reuse extraction across detector-only updates and retry damaged cache artifacts.
+- Fixed semantic timeline attachment and enforced known source duration bounds.
+- See `docs/PROCESSING.md` for migration cost, single-writer semantics and limitations.
 
 ## 0.3.0 (October 2026)
 - Renamed distribution and primary CLI to `adventure-klip` / `klip` (`adventure` remains available).
