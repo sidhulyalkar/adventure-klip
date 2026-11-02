@@ -185,3 +185,34 @@ def test_adapter_rejects_missing_and_wrong_source_id_without_writing_original(fo
     assert movie.read_bytes() == b"changed-source-content"
     # The original source payload is not restored or modified by the pipeline.
     assert payload != movie.read_bytes()
+
+
+def test_unverified_marine_objects_prioritize_inspection_without_species_claim(footage, monkeypatch):
+    workspace, movie, payload, aid = footage
+
+    def fake_frame(path, t, width=384, include_timing=False):
+        return (b"sample", None) if include_timing else b"sample"
+
+    monkeypatch.setattr("adventure_intelligence.semantic.frame_png", fake_frame)
+
+    class ProposedMarineObject:
+        name = "owlv2"
+        version = "synthetic-owlv2"
+        cache_config = {"queries": ["sea turtle"], "threshold": .2}
+        def describe(self, _):
+            return {"embedding": None, "objects": [
+                {"label": "sea turtle", "score": .8,
+                 "bbox": {"xmin": 10, "ymin": 10, "xmax": 30, "ymax": 30},
+                 "reviewed": False}], "keypoints": []}
+
+    result = run_semantics(workspace, ProposedMarineObject(),
+                           sample_schedule={aid: [70000]}, schedule_id="a" * 64,
+                           asset_ids={aid})
+    assert result["processed"] == 1
+    plan = build_plan(workspace, max_frames=32, coverage_seconds=45)
+    evidence = plan["assets"][0]["cacheEvidence"]
+    assert evidence["objectObservations"] == 1
+    assert any("marine_object_query_unverified" in x["reasons"]
+               for x in plan["assets"][0]["frames"])
+    assert "verifiedSpecies" not in plan["assets"][0]
+    assert movie.read_bytes() == payload
