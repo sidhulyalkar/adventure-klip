@@ -28,7 +28,7 @@ from .nim_calibration import calibrate_workspace
 from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
-from .adaptive_sampling import build_plan, validate_plan
+from .adaptive_sampling import build_plan, validate_plan, source_preflight
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -310,6 +310,11 @@ def main(argv: list[str] | None = None) -> int:
                          for row in db.execute("SELECT id,duration FROM assets")}
             if any(catalog.get(a["assetId"])!=a["durationMs"] for a in plan["assets"]):
                 raise ValueError("Adaptive plan durations differ from the current workspace")
+            preflight=source_preflight(root,set(schedule))
+            if preflight["unavailable"]:
+                raise ValueError("Adaptive source preflight failed for "
+                                 f"{len(preflight['unavailable'])} asset(s); "
+                                 "reconnect the external SSD and restore its original mount path")
             with lock_workspace(root):
                 result=generate_semantics(root,backend=args.backend,
                     asset_ids=set(schedule),sample_schedule=schedule,
