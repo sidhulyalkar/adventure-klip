@@ -216,7 +216,11 @@ def test_process_cli_real_media_incremental_and_failure(tmp_path, capsys):
     (folder/'corrupt.mp4').write_bytes(b'not a video')
     assert main(args) == 1
     failed = json.loads(capsys.readouterr().out)
-    assert failed['status'] == 'partial_failure' and len(failed['analysis']['failed']) == 1
+    # Corrupt input is rejected early during indexing, rather than inserted
+    # into the catalog only to fail again during every later stage.
+    assert failed['status'] == 'partial_failure'
+    assert len(failed['index']['errors']) == 1
+    assert failed['analysis']['failed'] == []
 
 
 def test_render_rejects_output_over_unselected_source(footage):

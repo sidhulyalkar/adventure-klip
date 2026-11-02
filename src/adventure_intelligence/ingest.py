@@ -69,6 +69,12 @@ def copy_verified(src: Path, dest: Path, staging: Path) -> str:
 
 def iter_videos(source: Path):
     for p in sorted(source.rglob("*")):
+        # AppleDouble resource forks can look like `._DJI_....MP4` but contain
+        # metadata, not video. Never register, hash or pass them to ffprobe.
+        # Ignore Finder/system metadata anywhere in the folder tree.
+        if (p.name.startswith("._") or p.name in {".DS_Store", "Thumbs.db"}
+            or "__MACOSX" in p.parts):
+            continue
         if not p.is_symlink() and p.is_file() and p.suffix.lower() in VIDEO_EXT:
             yield p
 

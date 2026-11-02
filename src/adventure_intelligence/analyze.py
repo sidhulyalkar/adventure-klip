@@ -77,9 +77,9 @@ def analyze(workspace: Path, limit: int | None = None, force: bool = False,
             try:
                 if progress is not None:
                     progress.note("analysis", f"[{file_number}/{len(assets)}] checking {asset_id[:12]}")
-                path=resolve_source(db, row, progress=progress)
                 if not row['duration'] or row['duration'] <= 0:
                     raise ValueError('A positive probed duration is required before analysis')
+                path=resolve_source(db, row, progress=progress)
                 document = None if force else read_artifact(db, workspace, asset_id, series_version)
                 if (document is not None and version and version["status"]=="completed"
                         and version["version"]==version_id):
