@@ -4,7 +4,7 @@ import pytest
 
 from adventure_intelligence.segment_intelligence import (
     PROMPTS,FAMILIES,score_segment_frame,build_segments,
-    coarse_timestamps,refinement_times,overlay_events,html_review,
+    coarse_timestamps,refinement_times,overlay_events,wildlife_priority_times,html_review,
 )
 from adventure_intelligence.segment_workflow import scan_segments
 from adventure_intelligence.activity_confirm import confirm_activity
@@ -235,3 +235,23 @@ def test_html_escapes_all_untrusted_label_text():
     assert "<script>" not in rendered
     assert "&lt;script&gt;" in rendered
     assert "<img src=x onerror" not in rendered
+
+
+
+def test_cached_marine_priority_times_include_approach_and_aftermath_only():
+    cached={
+        "ecology-owlv2":[
+            {"tMs":15000,"objects":[{"label":"ray","score":.92}]},
+            {"tMs":15000,"objects":[{"label":"ray","score":.7}]},
+            {"tMs":34000,"objects":[{"label":"kelp","score":.3}]},
+        ],
+        "owlv2":[{"tMs":15000,"objects":[{"label":"ray","score":.86}]}],
+    }
+    assert wildlife_priority_times(cached,60000,limit=3)==[13000,15000,17000]
+    assert wildlife_priority_times(cached,60000,limit=0)==[]
+    assert len(wildlife_priority_times(cached,60000,limit=6))<=6
+    # A blue object proposal or invalid score cannot become wildlife evidence.
+    assert wildlife_priority_times({
+        "owlv2":[{"tMs":1000,"objects":[{"label":"blue water","score":.8},
+                                         {"label":"fish","score":float("nan")}]}]
+    },60000,limit=6)==[]
