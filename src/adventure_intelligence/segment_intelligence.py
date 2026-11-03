@@ -361,12 +361,34 @@ def html_review(report:dict) ->str:
         family=escape(segment["family"])
         hints=", ".join(escape(h["group"]) for h in segment["independentEventHints"])
         rows.append(
-            '<article><div class="seghead"><strong>'+label+'</strong>'
+            f'<article id="segment-{len(rows)+1:04d}">'
+            '<div class="seghead"><strong>'+label+'</strong>'
             f'<span>{start:.1f}–{end:.1f}s · {duration:.1f}s</span></div>'
             f'<p>{family} · {escape(segment["status"])} · '
             f'{segment["evidenceFrameCount"]} frame(s)</p>'
             +(f'<small>Unverified object proposals: {hints}</small>' if hints else "")
             +'</article>')
+    # A true proportional timeline makes sparse evidence and unobserved gaps
+    # legible. Each segment is an anchor to its review card; no JavaScript,
+    # external requests, or implied verified video playback.
+    rail=[]
+    for idx,segment in enumerate(report["segments"],1):
+        start=max(0,min(100,100*segment["startMs"]/dur))
+        width=max(0,min(100-start,100*(segment["endMs"]-segment["startMs"])/dur))
+        if not width:
+            continue
+        family=segment["family"]
+        color=("wet" if family=="underwater" else
+               "action" if family in {"active_ski","riding"} else
+               "transition" if family in {"surface","traverse","transport","walking"} else
+               "unclear")
+        title=escape(
+            f'{segment["label"]} · {segment["startMs"]/1000:.1f} to '
+            f'{segment["endMs"]/1000:.1f}s · {segment["status"]}',quote=True)
+        rail.append(
+            f'<a href="#segment-{idx:04d}" class="range {color}" '
+            f'aria-label="{title}" title="{title}" '
+            f'style="left:{start:.4f}%;width:{width:.4f}%"></a>')
     preview=[]
     for frame in report.get("previewFrames",[]):
         src=_escape_photo_name(frame["image"])
@@ -390,6 +412,14 @@ def html_review(report:dict) ->str:
         '.photos div{flex:0 0 185px}.photos img{width:185px;height:124px;'
         'object-fit:contain;background:#09131b;border-radius:8px}'
         '.photos span{display:block;padding:6px 0;font-size:12px}'
+        '.rail{position:relative;height:42px;background:#293847;'
+        'border:1px solid #405161;border-radius:8px;overflow:hidden}'
+        '.range{position:absolute;top:0;bottom:0;border-right:1px solid #15202e}'
+        '.range:focus-visible{outline:3px solid #f2c4b9;outline-offset:-3px}'
+        '.range.wet{background:#327f87}.range.action{background:#c18170}'
+        '.range.transition{background:#667f9c}.range.unclear{background:#5a6471}'
+        '.axis{display:flex;justify-content:space-between;margin:5px 0 16px}'
+        'article:target{border-color:#f2c4b9}'
         '</style></head><body><h1>Scene segments · '+escape(activity)+'</h1>'
         '<p class="intro">Estimated temporal context from sparse, uncalibrated '
         'visual similarity. Segments are navigation proposals only. A wildlife '
@@ -398,5 +428,8 @@ def html_review(report:dict) ->str:
         f'<p>Coverage: {report["coverage"]["coveredFraction"]:.0%} · '
         f'{report["coverage"]["sampleCount"]} observations · '
         f'{report["durationMs"]/1000:.1f}s video</p>'
+        '<div class="rail" role="group" aria-label="Provisional scene timeline">'
+        +''.join(rail)+'</div><div class="axis"><span>0:00</span><span>'
+        +f'{report["durationMs"]/1000:.1f}s'+'</span></div>'
         '<section class="photos">'+''.join(preview)+'</section>'
         '<main class="grid">'+''.join(rows)+'</main></body></html>')
