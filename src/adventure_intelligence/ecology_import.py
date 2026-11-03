@@ -86,6 +86,11 @@ def normalize_export(raw: dict, provider: str, *, retrieved_at: str,
         if not isinstance(row, dict):
             skipped += 1
             continue
+        # GBIF marks many geospatial problems explicitly. Never treat those
+        # as nearby records even if coordinates are numeric.
+        if provider == "gbif" and row.get("hasGeospatialIssue") is True:
+            skipped += 1
+            continue
         if provider == "gbif":
             key = _get(row, "acceptedTaxonKey", "taxonKey")
             rank = GBIF_RANKS.get(str(_get(row, "taxonRank", "rank")).upper())
@@ -110,10 +115,11 @@ def normalize_export(raw: dict, provider: str, *, retrieved_at: str,
                 or dataset is None or latitude is None or longitude is None):
             skipped += 1
             continue
-        uncertainty = _number(row.get("coordinateUncertaintyInMeters", 0),
-                              0, 1_000_000)
+        raw_uncertainty = row.get("coordinateUncertaintyInMeters")
+        uncertainty = (_number(raw_uncertainty, 0, 1_000_000)
+                       if raw_uncertainty is not None else None)
         depth = _number(_get(row, "depth", "minimumDepthInMeters"), 0, 11000)
-        if uncertainty is None:
+        if raw_uncertainty is not None and uncertainty is None:
             skipped += 1
             continue
         survey = _get(row, "eventID")
