@@ -105,8 +105,9 @@ def normalize_export(raw: dict, provider: str, *, retrieved_at: str,
             skipped += 1
             continue
         status = _get(row, "occurrenceStatus")
-        if status is not None and str(status).strip().lower() in {
-                "absent", "absence", "not present", "false", "0"}:
+        if status is not None and str(status).strip().lower() not in {
+                "present", "presence", "true", "1"}:
+            # An unknown or doubtful explicit status is not a presence record.
             skipped += 1
             continue
         if provider == "gbif":
