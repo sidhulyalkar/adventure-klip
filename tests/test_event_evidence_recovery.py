@@ -34,7 +34,9 @@ def partial_job(tmp_path,monkeypatch):
     source.write_bytes(raw)
     ws=tmp_path/"workspace"
     monkeypatch.setattr("adventure_intelligence.indexing.probe",
-                        lambda path:{"duration":90.,"audio":False,"capture_time":None})
+                        # Sub-millisecond durations expose the historical
+                        # round-vs-truncate mismatch between planner and recovery.
+                        lambda path:{"duration":90.0009,"audio":False,"capture_time":None})
     aid=index_folder(camera,ws,activity="snorkeling")["asset_ids"][0]
     plan=build_plan(ws,activity="snorkeling",limit=1,
                     coverage_seconds=15,interest_seconds=4,max_frames=24)
