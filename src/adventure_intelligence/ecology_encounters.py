@@ -85,7 +85,12 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
                     continue
                 dedup.append(obj)
             if dedup:
+                pts = original.get("decodedPtsMs")
+                # Keep the decoded source PTS separately. Tracking works in
+                # requested (video-relative) time, not source stream PTS.
                 indexed.append({"tMs": requested, "decodedPtsMs": None,
+                                "sourceDecodedPtsMs": (pts if type(pts) is int
+                                                        else None),
                                 "objects": dedup})
         if not indexed:
             continue
@@ -98,20 +103,20 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
         for frame in indexed:
             for obj in frame["objects"]:
                 if "trackId" in obj:
-                    grouped[obj["trackId"]].append((frame["tMs"], obj))
+                    grouped[obj["trackId"]].append((frame["tMs"], frame["sourceDecodedPtsMs"], obj))
         for track in tracked["tracks"]:
             observations = sorted(grouped[track["id"]], key=lambda x: x[0])
             if not observations:
                 continue
             label = track["label"]
             group = OBJECT_GROUPS[label]
-            times = sorted({t for t, _ in observations})
+            times = sorted({t for t, _, _ in observations})
             first, last = times[0], times[-1]
             start = max(0, first - 3000)
             end = min(duration_ms, last + 5000)
             if end <= start:
                 continue
-            scores = [obj["score"] for _, obj in observations]
+            scores = [obj["score"] for _, _, obj in observations]
             # Prioritize stronger and temporally corroborated *proposals*.
             # This is not an object-detection or species probability.
             size_bonus = min(0.06, 0.015 * (len(times) - 1))
@@ -131,6 +136,16 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
                 "sampleCount": len(times), "proposalBoxCount": len(observations),
                 "peakUncalibratedDetectorScore": round(max(scores), 5),
                 "evidenceRequestedTimesMs": times[:40],
+                "sampledBoxEvidence": [{
+                    "requestedMs": t,
+                    "sourceDecodedPtsMs": pts,
+                    "label": obj["label"],
+                    "coordinateSpace": obj["coordinateSpace"],
+                    "bboxFormat": "xyxy",
+                    "bbox": list(_bbox(obj)),
+                    "uncalibratedDetectorScore": round(obj["score"], 5),
+                } for t, pts, obj in observations[:40]],
+                "referenceSampleWidthPx": 384,
                 "timingBasis": "requested_sample_timestamp",
                 "notes": ["A bounded review window, not a confirmed continuous sighting",
                           "Distinct animals and species cannot be counted from these tracks"],
