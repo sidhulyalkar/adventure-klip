@@ -163,29 +163,60 @@ def _decision(observations: list[dict], duration_ms: int) -> dict:
                            "This is a whole-recording label, not segment-level segmentation"]}
 
 
+def _revision_from_cached_config(path: str) -> str:
+    """Obtain an immutable HF commit from the *cache path*, not private model APIs.
+
+    hf_hub_download returns an unresolved snapshot filepath (often a symlink).
+    Never call Path.resolve(): that points at blobs and loses the revision.
+    """
+    import re
+    cached = Path(path)
+    repo_cache = "models--" + MODEL_ID.replace("/", "--")
+    revision = cached.parent.name
+    if (cached.name != "config.json"
+            or cached.parent.parent.name != "snapshots"
+            or cached.parent.parent.parent.name != repo_cache
+            or re.fullmatch(r"[0-9a-f]{40}", revision) is None):
+        raise RuntimeError("Cannot verify immutable SigLIP2 cache snapshot revision")
+    return revision
+
+
 class SiglipActivityClassifier:
     def __init__(self, *, allow_model_download: bool = False):
         try:
             import torch
             from transformers import AutoModel, AutoProcessor
+            from huggingface_hub import hf_hub_download
         except ImportError as exc:
             raise RuntimeError("Install dependencies with pip install -e '.[semantic,images]'") from exc
         self.torch=torch
+        # Resolve and pin a concrete Hub snapshot before instantiating either
+        # processor or model. Transformers may no longer populate the private
+        # config._commit_hash field, even when weights load successfully.
+        # Never treat an empty internal field as evidence of a bad model.
         try:
+            config_file=hf_hub_download(
+                MODEL_ID, filename="config.json",
+                local_files_only=not allow_model_download)
+            self.revision=_revision_from_cached_config(config_file)
             self.processor=AutoProcessor.from_pretrained(
-                MODEL_ID,local_files_only=not allow_model_download)
+                MODEL_ID,revision=self.revision,
+                local_files_only=not allow_model_download)
             self.model=AutoModel.from_pretrained(
-                MODEL_ID,local_files_only=not allow_model_download)
+                MODEL_ID,revision=self.revision,
+                local_files_only=not allow_model_download)
         except Exception as exc:
-            raise RuntimeError("Matching SigLIP2 weights unavailable; use --allow-model-download "
-                               "for explicit model setup") from exc
+            raise RuntimeError(
+                "Cannot load a pinned SigLIP2 snapshot. Verify the local HF cache "
+                "or opt in to model downloads with --allow-model-download. "
+                f"Underlying error: {str(exc)[:200]}") from exc
+        internal_revision=getattr(self.model.config,"_commit_hash",None)
+        if internal_revision is not None and internal_revision != self.revision:
+            raise RuntimeError("Pinned SigLIP2 model revision conflicts with loaded config")
         self.model.eval()
         self.device=("mps" if torch.backends.mps.is_available()
                      else "cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
-        self.revision=getattr(self.model.config,"_commit_hash",None)
-        if not self.revision:
-            raise RuntimeError("Cannot verify SigLIP2 model revision")
         self.processor_config=self.processor.image_processor.to_dict()
         self.text_vectors={}
         with torch.inference_mode():
