@@ -14,6 +14,7 @@ from io import BytesIO
 import json
 import math
 import os
+import sys
 from pathlib import Path
 from statistics import median
 
@@ -425,10 +426,11 @@ def run_activity_scan(workspace:Path,output_dir:Path,*,frames:int=5,
                 print(f"[activity] {i}/{len(todo)} {aid[:12]} "
                       f"{decision['proposedActivity']}: {decision['status']} "
                       f"({decision['winnerVotes']}/{decision['validSamples']})",
-                      flush=True)
+                      flush=True, file=sys.stderr)
             except Exception as exc:
                 errors.append({"assetId":aid,"reason":str(exc)[:240]})
-                print(f"[activity] {i}/{len(todo)} {aid[:12]} error: {exc}",flush=True)
+                print(f"[activity] {i}/{len(todo)} {aid[:12]} error: {exc}",
+                      flush=True, file=sys.stderr)
     counts=Counter((r["decision"]["proposedActivity"],r["decision"]["status"])
                    for r in records.values())
     report={
