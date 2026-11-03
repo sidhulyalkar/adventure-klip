@@ -8,13 +8,8 @@ start-time normalization.
 """
 from __future__ import annotations
 
-from collections import Counter
-from hashlib import sha256
 from html import escape
-from io import BytesIO
-import json
 import math
-from pathlib import Path
 
 from .scene_atlas import unit_vector
 from .activity_intelligence import SiglipActivityClassifier, _hash
