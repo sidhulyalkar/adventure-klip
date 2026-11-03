@@ -114,6 +114,15 @@ def reconcile_taxa(candidates: list[dict], nodes: dict) -> dict:
             canonical = tid
             resolution = "taxon_unresolved"
             unresolved += 1
+        # Never repair inconsistent source IDs by silently changing kingdom,
+        # functional group or taxonomic rank. These need manual investigation.
+        if record is not None and (
+                candidate.get("taxonRank", record["rank"]) != record["rank"]
+                or candidate.get("biologicalGroup", "other") not in
+                {"other", record["group"]}):
+            canonical = tid
+            resolution = "taxonomic_disagreement_requires_review"
+            unresolved += 1
         groups[canonical].append((candidate, resolution, record))
 
     resolved = []
@@ -123,19 +132,24 @@ def reconcile_taxa(candidates: list[dict], nodes: dict) -> dict:
         canon = nodes.get(canonical)
         # Preserve the best source-prior score, never add probabilities,
         # source records, or visual detections across possible synonyms.
+        conflicting = any(e[1] == "taxonomic_disagreement_requires_review"
+                          for e in entries)
+        verified = canon is not None and canon["status"] == "accepted" and not conflicting
         record = {
             **lead,
             "taxonId": canonical,
-            "scientificName": (canon["scientificName"]
-                               if canon is not None and canon["status"] == "accepted"
-                               else lead["scientificName"]),
+            "scientificName": canon["scientificName"] if verified else lead["scientificName"],
+            "biologicalGroup": (canon["group"] if verified and
+                                lead.get("biologicalGroup") == "other"
+                                else lead.get("biologicalGroup")),
             "taxonomy": {
-                "status": ("explicit_canonical_match"
-                           if canon is not None and canon["status"] == "accepted"
+                "status": ("explicit_canonical_match" if verified
+                           else "taxonomic_disagreement_requires_review" if conflicting
                            else "unresolved"),
                 "canonicalTaxonId": canonical,
                 "canonicalRank": canon["rank"] if canon else None,
                 "sourceTaxonIds": sorted({e[0]["taxonId"] for e in entries}),
+                "originalBiologicalGroup": lead.get("biologicalGroup"),
                 "sourceResolution": {e[0]["taxonId"]: e[1] for e in entries},
                 "source": "offline_curated_crosswalk",
                 "isVideoSpeciesIdentification": False,
