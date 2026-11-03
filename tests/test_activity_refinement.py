@@ -210,3 +210,21 @@ def test_cli_refine_and_confirm_dry_run(setup,monkeypatch,capsys):
                  "--asset",aid,"--activity","snorkeling"])==0
     data=json.loads(capsys.readouterr().out)
     assert data["applied"] is False
+
+
+
+def test_explicit_asset_adaptive_plan_after_reviewed_confirmation(setup):
+    from adventure_intelligence.adaptive_sampling import build_plan,validate_plan
+    ws,aid,file,raw,first,decoder=setup
+    with pytest.raises(ValueError,match="missing, invalid-duration, or mismatched"):
+        build_plan(ws,asset_ids=[aid],activity="snorkeling",limit=1,max_frames=8)
+    confirm_activity(ws,aid,"snorkeling",reviewed=True,apply=True)
+    plan=build_plan(ws,asset_ids=[aid],activity="snorkeling",limit=1,
+                    max_frames=8,coverage_seconds=30,interest_seconds=2)
+    assert len(plan["assets"])==1
+    assert plan["assets"][0]["assetId"]==aid
+    assert plan["parameters"]["selectedAssetIds"]==[aid]
+    assert set(validate_plan(plan))=={aid}
+    assert file.read_bytes()==raw
+    with pytest.raises(ValueError,match="Explicit asset selection exceeds"):
+        build_plan(ws,asset_ids=[aid],activity="snorkeling",limit=0,max_frames=8)
