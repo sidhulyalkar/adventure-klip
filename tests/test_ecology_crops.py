@@ -135,6 +135,7 @@ def test_source_mutation_invalidates_packet_before_manifest(sample, monkeypatch)
     with pytest.raises(RuntimeError, match="source bytes changed"):
         create_crop_packet(workspace, aid, dest, max_events=1)
     assert not (dest / "manifest.json").exists()
+    assert not list(dest.glob("crop-*.png"))
 
 
 def test_invalid_coordinates_and_bad_png_fail_closed():
