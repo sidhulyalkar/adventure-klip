@@ -43,7 +43,19 @@ def apply_activity_proposals(workspace:Path, report_dir:Path, *,
     summary=json.loads((report_dir/"summary.json").read_text())
     if summary.get("version")!=VERSION or summary.get("configHash")!=_hash(config):
         raise ValueError("Invalid or incompatible activity report")
+    lock_path=report_dir/"model-lock.json"
+    if not lock_path.is_file():
+        raise ValueError("Activity report lacks frozen model provenance")
+    model_lock=json.loads(lock_path.read_text())
+    if (model_lock.get("modelId")!=config.get("modelId")
+            or not isinstance(model_lock.get("modelRevision"),str)
+            or not isinstance(model_lock.get("processorHash"),str)):
+        raise ValueError("Invalid frozen model provenance")
     records=_load_records(report_dir/"records.jsonl",_hash(config))
+    if any(r.get("modelRevision")!=model_lock["modelRevision"]
+           or r.get("processorHash")!=model_lock["processorHash"]
+           for r in records.values()):
+        raise ValueError("Activity report mixes incompatible model revisions")
     choices=[]
     for record in records.values():
         dec=record["decision"]
