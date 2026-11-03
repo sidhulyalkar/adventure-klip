@@ -32,6 +32,7 @@ from .adaptive_sampling import build_plan, validate_plan, source_preflight
 from .ecology_context import build_ecology_context
 from .ecology_import import import_export
 from .ecology_encounters import build_encounter_report
+from .ecology_crops import create_crop_packet
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -137,6 +138,15 @@ def main(argv: list[str] | None = None) -> int:
     encounters.add_argument("--max-results",type=int,default=40)
     encounters.add_argument("--max-gap-ms",type=int,default=5000)
     encounters.add_argument("--output",type=Path,required=True)
+    crops=sub.add_parser("ecology-crops",
+        help="Opt-in re-decode a few exact PTS-backed object boxes into private crop evidence")
+    crops.add_argument("--asset",required=True)
+    crops.add_argument("--output-dir",type=Path,required=True,
+        help="NEW private folder under workspace reports/ or exports/")
+    crops.add_argument("--max-events",type=int,default=6)
+    crops.add_argument("--crops-per-event",type=int,default=3)
+    crops.add_argument("--width",type=int,choices=[768,1536,2048],default=1536)
+    crops.add_argument("--margin",type=float,default=.4)
     ecology.add_argument("--with-cached-siglip2",action="store_true",
         help="Optional local-only text retrieval over matching cached image embeddings")
     ecology.add_argument("--output",type=Path,required=True,
@@ -411,6 +421,11 @@ def main(argv: list[str] | None = None) -> int:
             _print({"report":str(destination),"assetId":report["assetId"],
                 "status":report["status"],"windowCount":len(report["candidateWindows"]),
                 "audit":report["audit"]})
+        elif args.command=="ecology-crops":
+            with lock_workspace(root):
+                _print(create_crop_packet(root,args.asset,args.output_dir,
+                    max_events=args.max_events,crops_per_event=args.crops_per_event,
+                    width=args.width,margin=args.margin))
         elif args.command=="scenes":
             with lock_workspace(root):
                 result=generate_semantics(root,backend=args.backend,sample_seconds=args.every,
