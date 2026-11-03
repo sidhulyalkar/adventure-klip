@@ -32,6 +32,21 @@ klip --workspace "$WS" semantic-recover \
   --max-missing 2 --min-fraction 0.80
 ```
 
+### Duration precision compatibility
+
+The adaptive planner and semantic job use `int(duration_seconds * 1000)`
+(truncation) to represent indexed duration in milliseconds. An earlier
+recovery version used `round(duration_seconds * 1000)`, which can reject
+an unchanged signed plan by one millisecond when the source duration has
+a fractional-millisecond component. That mismatch is fixed in the current
+PR without modifying the signed plan, stored SQLite duration, source file,
+or content checksums. Actual duration drift still fails closed.
+
+**An empty `ecology-encounters` report generated before successful recovery
+does not prove absence of wildlife.** Do not overwrite that report (new
+report filenames are required); rerun `ecology-encounters` under a new
+output path only after a verified recovery.
+
 The recovery operation:
 
 - validates the existing plan hash, exact asset ID, indexed duration, unique
@@ -56,7 +71,7 @@ original semantic job normally instead.
 ```bash
 klip --workspace "$WS" ecology-encounters \
   --asset "$ASSET" \
-  --output "$WS/reports/ray-encounters-partial-v1.json"
+  --output "$WS/reports/ray-encounters-recovered-v2.json"
 ```
 
 This cached-only report explicitly records
