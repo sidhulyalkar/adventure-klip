@@ -33,6 +33,8 @@ from .ecology_context import build_ecology_context
 from .ecology_import import import_export
 from .ecology_encounters import build_encounter_report
 from .ecology_crops import create_crop_packet
+from .activity_intelligence import run_activity_scan
+from .activity_apply import apply_activity_proposals
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -108,6 +110,26 @@ def main(argv: list[str] | None = None) -> int:
                               default="histogram")
     adaptive_run.add_argument("--decode-mode",choices=["single","batched"],default="single",
         help="Opt-in grouped FFmpeg seeks for nearby frames; falls back to single seeks")
+    activity_scan=sub.add_parser("activity-scan",
+        help="Sparse, cached-first activity proposals for mixed unknown POV recordings")
+    activity_scan.add_argument("--output-dir",required=True,type=Path,
+        help="Private resumable report directory inside workspace reports/ or exports/")
+    activity_scan.add_argument("--frames",type=int,default=5,
+        help="5..9 spatially distributed video samples")
+    activity_scan.add_argument("--limit",type=int,default=0,
+        help="Limit newly scanned records; 0 means all catalog assets")
+    activity_scan.add_argument("--allow-model-download",action="store_true",
+        help="Explicit permission to download SigLIP2 model weights if not cached")
+    activity_apply=sub.add_parser("activity-apply",
+        help="Preview or explicitly promote a few high-consensus activity proposals")
+    activity_apply.add_argument("--report-dir",required=True,type=Path)
+    activity_apply.add_argument("--activity",choices=["snorkeling","ski","bike"],
+                                default="snorkeling")
+    activity_apply.add_argument("--max-assets",type=int,default=2)
+    activity_apply.add_argument("--minimum-margin",type=float,default=.065)
+    activity_apply.add_argument("--minimum-votes",type=int,default=5)
+    activity_apply.add_argument("--apply",action="store_true",
+        help="Explicitly modify up to max-assets catalog labels with backup")
     ecology_import=sub.add_parser("ecology-import",
         help="Normalize a downloaded OBIS/GBIF occurrence JSON locally (no network)")
     ecology_import.add_argument("--provider",choices=["obis","gbif"],required=True)
@@ -372,6 +394,17 @@ def main(argv: list[str] | None = None) -> int:
             _print(result)
             if result["errors"]:
                 return 1
+        elif args.command=="activity-scan":
+            with lock_workspace(root):
+                _print(run_activity_scan(root,args.output_dir,
+                    frames=args.frames,limit=args.limit,
+                    allow_model_download=args.allow_model_download))
+        elif args.command=="activity-apply":
+            with lock_workspace(root):
+                _print(apply_activity_proposals(root,args.report_dir,
+                    activity=args.activity,max_assets=args.max_assets,
+                    minimum_margin=args.minimum_margin,
+                    minimum_votes=args.minimum_votes,apply=args.apply))
         elif args.command=="ecology-import":
             destination=args.output.expanduser().resolve()
             if not destination.is_relative_to(root) or destination.exists():
