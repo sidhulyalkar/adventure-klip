@@ -31,6 +31,7 @@ from .progress import Progress
 from .adaptive_sampling import build_plan, validate_plan, source_preflight
 from .ecology_context import build_ecology_context
 from .ecology_import import import_export
+from .ecology_encounters import build_encounter_report
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -126,6 +127,16 @@ def main(argv: list[str] | None = None) -> int:
                          help="Frozen normalized occurrence JSON (OBIS/GBIF exports)")
     ecology.add_argument("--radius-km",type=float,default=30)
     ecology.add_argument("--top",type=int,default=30)
+    ecology.add_argument("--taxonomy",type=Path,
+        help="Optional private, cited, local-only taxon/synonym crosswalk")
+    ecology.add_argument("--with-encounters",action="store_true",
+        help="Include unverified cached object-track review suggestions")
+    encounters=sub.add_parser("ecology-encounters",
+        help="Generate bounded marine encounter proposals from cached object boxes")
+    encounters.add_argument("--asset",required=True,help="Existing snorkeling SHA-256 asset")
+    encounters.add_argument("--max-results",type=int,default=40)
+    encounters.add_argument("--max-gap-ms",type=int,default=5000)
+    encounters.add_argument("--output",type=Path,required=True)
     ecology.add_argument("--with-cached-siglip2",action="store_true",
         help="Optional local-only text retrieval over matching cached image embeddings")
     ecology.add_argument("--output",type=Path,required=True,
@@ -373,7 +384,9 @@ def main(argv: list[str] | None = None) -> int:
                 protect_source_output(db,destination)
             report=build_ecology_context(root,args.asset,args.site.expanduser(),
                 args.snapshot.expanduser(),radius_km=args.radius_km,top=args.top,
-                with_cached_siglip2=args.with_cached_siglip2)
+                with_cached_siglip2=args.with_cached_siglip2,
+                taxonomy_file=args.taxonomy.expanduser() if args.taxonomy else None,
+                with_encounters=args.with_encounters)
             destination.parent.mkdir(parents=True,exist_ok=True)
             with destination.open("x",encoding="utf-8") as handle:
                 handle.write(json.dumps(report,sort_keys=True,indent=2,allow_nan=False)+"\n")
@@ -382,6 +395,22 @@ def main(argv: list[str] | None = None) -> int:
                     "snapshotRecordCount":report.get("inputRecordCount",0),
                     "visualProposalGroups":sorted(report["broadVisualProposals"]),
                     "limitations":report["limitations"]})
+        elif args.command=="ecology-encounters":
+            destination=args.output.expanduser().resolve()
+            if not destination.is_relative_to(root) or destination.exists():
+                raise ValueError("Encounter report must be a NEW file inside workspace")
+            if destination.relative_to(root).parts[0] not in {"exports","reports"}:
+                raise ValueError("Encounter report must live in exports/ or reports/")
+            with connect(root) as db:
+                protect_source_output(db,destination)
+            report=build_encounter_report(root,args.asset,
+                max_results=args.max_results,max_gap_ms=args.max_gap_ms)
+            destination.parent.mkdir(parents=True,exist_ok=True)
+            with destination.open("x",encoding="utf-8") as handle:
+                handle.write(json.dumps(report,sort_keys=True,indent=2,allow_nan=False)+"\n")
+            _print({"report":str(destination),"assetId":report["assetId"],
+                "status":report["status"],"windowCount":len(report["candidateWindows"]),
+                "audit":report["audit"]})
         elif args.command=="scenes":
             with lock_workspace(root):
                 result=generate_semantics(root,backend=args.backend,sample_seconds=args.every,

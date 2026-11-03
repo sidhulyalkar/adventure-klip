@@ -37,6 +37,13 @@ def _number(v, lower: float, upper: float):
     return n
 
 
+def _explicit_true(value) -> bool:
+    """Only explicit true-like values; missing and unknown are never true."""
+    return (value is True or (type(value) is int and value == 1)
+            or (isinstance(value, str)
+                and value.strip().lower() in {"true", "yes", "1"}))
+
+
 def _observed_month(row: dict):
     direct = _get(row, "month", "eventMonth")
     if type(direct) is int and 1 <= direct <= 12:
@@ -88,7 +95,19 @@ def normalize_export(raw: dict, provider: str, *, retrieved_at: str,
             continue
         # GBIF marks many geospatial problems explicitly. Never treat those
         # as nearby records even if coordinates are numeric.
-        if provider == "gbif" and row.get("hasGeospatialIssue") is True:
+        if provider == "gbif" and _explicit_true(row.get("hasGeospatialIssue")):
+            skipped += 1
+            continue
+        # OBIS exports contain explicit absences and QC-dropped occurrences.
+        # Do not convert these into positive evidence of local presence.
+        if provider == "obis" and (_explicit_true(row.get("absence"))
+                                   or _explicit_true(row.get("dropped"))):
+            skipped += 1
+            continue
+        status = _get(row, "occurrenceStatus")
+        if status is not None and str(status).strip().lower() not in {
+                "present", "presence", "true", "1"}:
+            # An unknown or doubtful explicit status is not a presence record.
             skipped += 1
             continue
         if provider == "gbif":
