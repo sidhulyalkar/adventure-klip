@@ -303,6 +303,49 @@ def build_segments(observations:list[dict], duration_ms:int, *,
             "method":"bounded_sample_voronoi_with_temporal_support_v1"}
 
 
+def wildlife_priority_times(detector_frames:dict,duration_ms:int,*,
+                           limit:int=6)->list[int]:
+    """Small local sampling targets from *cached* broad animal/plant proposals.
+
+    Provider detector scores are only a relative scheduling heuristic. Never
+    interpret them as calibrated detection certainty or verified biodiversity.
+    """
+    if type(duration_ms) is not int or duration_ms<=0 or type(limit) is not int or not 0<=limit<=12:
+        raise ValueError("Invalid wildlife scheduling budget")
+    if not limit:
+        return []
+    by_time={}
+    for frames in detector_frames.values():
+        for frame in frames[:512]:
+            t=frame.get("tMs")
+            if type(t) is not int or not 0<=t<duration_ms:
+                continue
+            objects=frame.get("objects")
+            if not isinstance(objects,list):
+                continue
+            for obj in objects[:100]:
+                if not isinstance(obj,dict):
+                    continue
+                label=obj.get("label")
+                score=obj.get("score")
+                if (not isinstance(label,str) or OBJECT_GROUPS.get(label.strip().lower()) is None
+                    or not isinstance(score,(int,float)) or isinstance(score,bool)
+                    or not math.isfinite(score) or not 0<=score<=1):
+                    continue
+                by_time[t]=max(float(score),by_time.get(t,0))
+    chosen=[]
+    for time,_ in sorted(by_time.items(),key=lambda entry:(-entry[1],entry[0])):
+        # Direct observation then approach/aftermath. Distinct source frames,
+        # never inferred animal tracks or extra count from duplicate providers.
+        for t in (time,time-2000,time+2000):
+            if not 0<=t<duration_ms or any(abs(t-old)<700 for old in chosen):
+                continue
+            chosen.append(t)
+            if len(chosen)>=limit:
+                return sorted(chosen)
+    return sorted(chosen)
+
+
 def overlay_events(segments:list[dict],detector_frames:dict) ->list[dict]:
     """Independent wildlife hints: overlapping cached object labels, not sightings."""
     for segment in segments:
