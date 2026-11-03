@@ -115,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
                          help="Frozen normalized occurrence JSON (OBIS/GBIF exports)")
     ecology.add_argument("--radius-km",type=float,default=30)
     ecology.add_argument("--top",type=int,default=30)
+    ecology.add_argument("--with-cached-siglip2",action="store_true",
+        help="Optional local-only text retrieval over matching cached image embeddings")
     ecology.add_argument("--output",type=Path,required=True,
                          help="NEW workspace exports/ or reports/ JSON")
     scene=sub.add_parser("scenes",help="Extract optional sparse image embeddings / detections")
@@ -347,7 +349,8 @@ def main(argv: list[str] | None = None) -> int:
             with connect(root) as db:
                 protect_source_output(db,destination)
             report=build_ecology_context(root,args.asset,args.site.expanduser(),
-                args.snapshot.expanduser(),radius_km=args.radius_km,top=args.top)
+                args.snapshot.expanduser(),radius_km=args.radius_km,top=args.top,
+                with_cached_siglip2=args.with_cached_siglip2)
             destination.parent.mkdir(parents=True,exist_ok=True)
             with destination.open("x",encoding="utf-8") as handle:
                 handle.write(json.dumps(report,sort_keys=True,indent=2,allow_nan=False)+"\n")
