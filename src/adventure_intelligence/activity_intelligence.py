@@ -308,13 +308,16 @@ def _review_html(records:list[dict]) -> str:
         basename=escape(item.get("basename",""))
         aid=escape(item["assetId"])
         thumbnail=f'thumbnails/{aid}.jpg'
+        cue=item.get("thumbnailBlueCue")
+        blue_text=(f' · lower-half blue pixels {cue["lowerHalfBlueFraction"]:.0%} '
+                   '(not used for classification)' if isinstance(cue,dict) else '')
         cards.append(
             f'<article><img loading="lazy" src="{escape(thumbnail,quote=True)}" '
             'alt="Sparse video sample or no available thumbnail">'
             f'<div><strong>{basename}</strong><p>{proposed} · '
             f'{escape(decision["status"])} · {decision["winnerVotes"]}/'
             f'{decision["validSamples"]} votes · median margin '
-            f'{decision["medianWinningMargin"]:.3f}</p>'
+            f'{decision["medianWinningMargin"]:.3f}{blue_text}</p>'
             f'<small>SHA-256 {aid[:16]} · uncalibrated proposal</small></div></article>')
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
