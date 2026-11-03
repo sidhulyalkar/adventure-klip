@@ -127,8 +127,9 @@ def validate_snapshot(snapshot: dict) -> tuple[dict, list[dict]]:
         dataset = _str(row.get("datasetId"), "datasetId")
         lat = _finite(row.get("latitude"), "record latitude", -90, 90)
         lon = _finite(row.get("longitude"), "record longitude", -180, 180)
-        uncertainty = _finite(row.get("coordinateUncertaintyMeters", 0),
-                              "coordinateUncertaintyMeters", 0, 1_000_000)
+        uncertainty = row.get("coordinateUncertaintyMeters")
+        if uncertainty is not None:
+            uncertainty = _finite(uncertainty, "coordinateUncertaintyMeters", 0, 1_000_000)
         month = _month(row.get("month"), "record month")
         depth = row.get("depthMeters")
         if depth is not None:
@@ -171,7 +172,8 @@ def _distance_km(lat_a, lon_a, lat_b, lon_b) -> float:
 def _weight(item: dict, site: dict, radius_km: float):
     distance = _distance_km(site["latitude"], site["longitude"],
                             item["latitude"], item["longitude"])
-    if distance > radius_km or item["coordinateUncertaintyMeters"] > 10_000:
+    if distance > radius_km or (item["coordinateUncertaintyMeters"] is not None
+                                and item["coordinateUncertaintyMeters"] > 10_000):
         return None
     # Relative search heuristic, not a probability or occupancy estimate.
     spatial = 0.25 + 0.75 * max(0., 1 - distance / radius_km)
@@ -185,7 +187,8 @@ def _weight(item: dict, site: dict, radius_km: float):
     depth = 1.
     if site["depthMeters"] is not None and item["depthMeters"] is not None:
         depth = max(.45, 1 - abs(site["depthMeters"] - item["depthMeters"]) / 100)
-    spatial_quality = max(.5, 1 - item["coordinateUncertaintyMeters"] / 20_000)
+    spatial_quality = (.6 if item["coordinateUncertaintyMeters"] is None else
+                       max(.5, 1 - item["coordinateUncertaintyMeters"] / 20_000))
     return round(spatial * seasonal * habitat * depth * spatial_quality, 6), distance
 
 
@@ -284,6 +287,8 @@ def build_ecology_context(workspace: Path, asset_id: str,
             "speciesIdentifiedInVideo": False,
             "ecologicalPriority": round(ranking, 5),
             "supportingRecords": len(rows),
+            "recordsWithUnknownCoordinateUncertainty": sum(
+                x[2]["coordinateUncertaintyMeters"] is None for x in rows),
             "independentDatasets": len(dataset_weights),
             # Public occurrence IDs plus precise distances could reconstruct
             # a private filming location; publish only a coarse proximity band.
