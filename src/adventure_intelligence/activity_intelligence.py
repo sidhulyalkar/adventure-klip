@@ -363,8 +363,21 @@ def run_activity_scan(workspace:Path,output_dir:Path,*,frames:int=5,
     processed=0
     # Abort immediately if the required semantic model cannot be loaded.
     # Per-video errors should be recoverable, but a missing model is global.
+    model_lock_path=target/"model-lock.json"
     if any(a.get("duration") and a["duration"]>0 for a in todo):
         model=SiglipActivityClassifier(allow_model_download=allow_model_download)
+        lock={"modelRevision":model.revision,
+              "processorHash":_hash(model.processor_config),
+              "modelId":MODEL_ID}
+        if model_lock_path.is_file():
+            if json.loads(model_lock_path.read_text())!=lock:
+                raise ValueError("Resumed activity scan uses a different model revision "
+                                 "or image preprocessing configuration")
+        else:
+            with model_lock_path.open("x",encoding="utf-8") as handle:
+                handle.write(_canonical(lock)+"\n")
+    elif records and not model_lock_path.is_file():
+        raise ValueError("Activity checkpoint missing required frozen model lock")
     with (target/"records.jsonl").open("a",encoding="utf-8") as checkpoint:
         for i,asset in enumerate(todo,1):
             aid=asset["id"]
@@ -443,7 +456,9 @@ def run_activity_scan(workspace:Path,output_dir:Path,*,frames:int=5,
         "errorsThisRun":errors,"summaries":[
             {"activity":a,"status":s,"count":n}
             for (a,s),n in sorted(counts.items())],
-        "modelRevision":model.revision if model else None,
+        "modelRevision":(model.revision if model else
+                         json.loads(model_lock_path.read_text())["modelRevision"]
+                         if model_lock_path.is_file() else None),
         "limitations":["Not validated on your DJI recordings",
                        "Uncalibrated zero-shot model agreement is not ground truth",
                        "Color fraction is review metadata only",
