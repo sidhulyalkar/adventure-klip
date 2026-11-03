@@ -52,8 +52,17 @@ def recover_semantic_frames(workspace: Path, asset_id: str, plan_file: Path,
             raise ValueError("Asset is not indexed")
         expected_duration=next(a["durationMs"] for a in plan["assets"]
                                if a["assetId"]==asset_id)
-        if round(float(asset["duration"])*1000)!=expected_duration:
-            raise ValueError("Video duration differs from original signed plan")
+        # The adaptive planner uses int(float(duration)*1000), not round().
+        # Rounding here can differ by 1 ms on genuine fractional-duration
+        # recordings, incorrectly rejecting an unchanged signed plan.
+        duration_seconds=float(asset["duration"])
+        if not math.isfinite(duration_seconds) or duration_seconds<=0:
+            raise ValueError("Invalid current indexed video duration")
+        actual_duration=int(duration_seconds*1000)
+        if actual_duration!=expected_duration:
+            raise ValueError(
+                "Video duration differs from original signed plan "
+                f"(catalog={actual_duration}ms, plan={expected_duration}ms)")
         # There can be multiple failed configurations. Require exact provider,
         # adaptive plan and a unique config instead of guessing which run.
         matches=[]
