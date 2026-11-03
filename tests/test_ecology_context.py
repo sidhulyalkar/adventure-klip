@@ -269,3 +269,22 @@ def test_visual_groups_collect_both_object_providers_without_species_claim(
     assert proposals["macroalgae"]["labels"] == ["kelp"]
     assert proposals["invertebrate"]["labels"] == ["sea urchin"]
     assert all(c["speciesIdentifiedInVideo"] is False for c in result["candidates"])
+
+
+def test_missing_coordinate_uncertainty_is_not_zero_and_flagged_records_excluded():
+    from adventure_intelligence.ecology_import import normalize_export
+    raw = {"results": [
+        {"gbifID": "1", "taxonKey": 21, "scientificName": "Synthetic taxon",
+         "taxonRank": "SPECIES", "datasetKey": "survey",
+         "decimalLatitude": 36.6, "decimalLongitude": -121.9},
+        {"gbifID": "2", "taxonKey": 22, "scientificName": "Flagged invalid",
+         "taxonRank": "SPECIES", "datasetKey": "survey",
+         "decimalLatitude": 36.6, "decimalLongitude": -121.9,
+         "hasGeospatialIssue": True},
+    ]}
+    doc = normalize_export(raw, "gbif", retrieved_at="2026-11-02",
+                           citation="Synthetic", license="CC0")
+    assert doc["importStatistics"]["retainedRecords"] == 1
+    assert doc["records"][0]["coordinateUncertaintyMeters"] is None
+    _, normalized = validate_snapshot(doc)
+    assert normalized[0]["coordinateUncertaintyMeters"] is None
