@@ -1,7 +1,4 @@
 """Qualification of sparse sport-specific segment hypotheses and safe execution."""
-from io import BytesIO
-import json
-from pathlib import Path
 
 import pytest
 
