@@ -226,5 +226,5 @@ def test_explicit_asset_adaptive_plan_after_reviewed_confirmation(setup):
     assert plan["parameters"]["selectedAssetIds"]==[aid]
     assert set(validate_plan(plan))=={aid}
     assert file.read_bytes()==raw
-    with pytest.raises(ValueError,match="Explicit asset selection exceeds"):
+    with pytest.raises(ValueError,match="limit must be positive"):
         build_plan(ws,asset_ids=[aid],activity="snorkeling",limit=0,max_frames=8)
