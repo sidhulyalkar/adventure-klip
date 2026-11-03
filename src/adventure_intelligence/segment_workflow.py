@@ -125,7 +125,7 @@ def scan_segments(workspace:Path,asset_id:str,output_dir:Path,*,
                           "timestampBasis":"decoded_frame_pts",
                           "stage":stage,"png":png,**result}
 
-    marine_budget=(min(6,max_frames-refine_frames-3)
+    marine_budget=(min(6,max(0,max_frames-refine_frames-6))
                    if object_frames and resolved_activity=="snorkeling" else 0)
     coarse=coarse_timestamps(duration_ms,step_ms=step_seconds*1000,
                              max_frames=max_frames-marine_budget,
