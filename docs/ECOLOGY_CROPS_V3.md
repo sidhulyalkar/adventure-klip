@@ -74,8 +74,10 @@ This width is the requested **decoded-frame width**, not a promise
 of additional optical resolution. If the original video was recorded at a
 lower resolution, FFmpeg can upscale it, and the manifest warns accordingly.
 
-The packet is `manifest.json` plus numbered PNGs. It may be inspected
-with a local image viewer; it is *not* a source for automatic species claims.
+The packet contains `manifest.json`, numbered PNGs and an **offline**
+`index.html` contact sheet. Open `index.html` directly in your browser to
+review the candidate organisms without a server or any remote requests.
+The contact sheet is *not* a source for automatic species claims.
 The packet folder must not already exist and must be under workspace
 `reports/` or `exports/`. It does not modify any camera file.
 If all cached boxes lack source PTS the command returns an explicit
