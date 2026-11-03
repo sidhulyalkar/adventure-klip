@@ -29,6 +29,7 @@ from .history import event_history
 from .safety import protect_source_output
 from .progress import Progress
 from .adaptive_sampling import build_plan, validate_plan, source_preflight
+from .ecology_context import build_ecology_context
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -104,6 +105,18 @@ def main(argv: list[str] | None = None) -> int:
                               default="histogram")
     adaptive_run.add_argument("--decode-mode",choices=["single","batched"],default="single",
         help="Opt-in grouped FFmpeg seeks for nearby frames; falls back to single seeks")
+    ecology=sub.add_parser("ecology-context",
+        help="Create a local, unverified marine taxa shortlist from a frozen occurrence snapshot")
+    ecology.add_argument("--asset",required=True,
+                         help="Exact indexed SHA-256 asset ID (snorkeling)")
+    ecology.add_argument("--site",type=Path,required=True,
+                         help="Explicit local site JSON; never uploaded")
+    ecology.add_argument("--snapshot",type=Path,required=True,
+                         help="Frozen normalized occurrence JSON (OBIS/GBIF exports)")
+    ecology.add_argument("--radius-km",type=float,default=30)
+    ecology.add_argument("--top",type=int,default=30)
+    ecology.add_argument("--output",type=Path,required=True,
+                         help="NEW workspace exports/ or reports/ JSON")
     scene=sub.add_parser("scenes",help="Extract optional sparse image embeddings / detections")
     scene.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],default="histogram")
     scene.add_argument("--every",type=float,default=4.0)
@@ -325,6 +338,24 @@ def main(argv: list[str] | None = None) -> int:
             _print(result)
             if result["errors"]:
                 return 1
+        elif args.command=="ecology-context":
+            destination=args.output.expanduser().resolve()
+            if not destination.is_relative_to(root) or destination.exists():
+                raise ValueError("Ecology report must be a NEW file inside the workspace")
+            if destination.relative_to(root).parts[0] not in {"exports","reports"}:
+                raise ValueError("Ecology report must be in exports/ or reports/")
+            with connect(root) as db:
+                protect_source_output(db,destination)
+            report=build_ecology_context(root,args.asset,args.site.expanduser(),
+                args.snapshot.expanduser(),radius_km=args.radius_km,top=args.top)
+            destination.parent.mkdir(parents=True,exist_ok=True)
+            with destination.open("x",encoding="utf-8") as handle:
+                handle.write(json.dumps(report,sort_keys=True,indent=2,allow_nan=False)+"\n")
+            _print({"report":str(destination),"assetId":report["assetId"],
+                    "status":report["status"],"candidateCount":len(report["candidates"]),
+                    "snapshotRecordCount":report.get("inputRecordCount",0),
+                    "visualProposalGroups":sorted(report["broadVisualProposals"]),
+                    "limitations":report["limitations"]})
         elif args.command=="scenes":
             with lock_workspace(root):
                 result=generate_semantics(root,backend=args.backend,sample_seconds=args.every,
