@@ -151,17 +151,25 @@ def _candidate_schedule(db, workspace: Path, asset, *, coverage_seconds: float,
         # exceptional rare event the prior reviewer was not looking for.
 
     if activity == "snorkeling":
-        owl, _ = frames_for_asset(db, workspace, aid, "owlv2")
-        for frame in owl:
-            t = _time(frame)
-            if t is None:
-                continue
-            labels = {obj.get("label", "").lower() for obj in frame.get("objects", [])
-                      if isinstance(obj, dict)}
-            if labels & WILDLIFE_QUERIES:
-                add(t, 85, "marine_object_query_unverified",
-                    (-2 * flank, -flank, 0, flank, 2 * flank))
-                cache_inputs["objectObservations"] += 1
+        # Reuse either marine-specific or standard cached detector results.
+        # A matching proposal at the same timestamp across providers does
+        # not add extra evidence or artificial event confidence.
+        detected=set()
+        for provider_name in ("ecology-owlv2","owlv2"):
+            owl, _ = frames_for_asset(db, workspace, aid, provider_name)
+            for frame in owl:
+                t = _time(frame)
+                if t is None:
+                    continue
+                labels = {obj.get("label", "").lower() for obj in frame.get("objects", [])
+                          if isinstance(obj, dict) and isinstance(obj.get("label"),str)}
+                if labels & WILDLIFE_QUERIES:
+                    if t in detected:
+                        continue
+                    detected.add(t)
+                    add(t, 85, "marine_object_query_unverified",
+                        (-2 * flank, -flank, 0, flank, 2 * flank))
+                    cache_inputs["objectObservations"] += 1
 
     frames, model_key = frames_for_asset(db, workspace, aid, "siglip2")
     for t, novelty in _novelty_points(frames, model_key):
