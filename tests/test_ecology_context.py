@@ -185,3 +185,54 @@ def test_opt_in_embeddings_abstain_without_cached_frame_features(site_and_snapsh
     assert result["embeddingRetrieval"]["status"] == "unavailable_no_cached_siglip2_frames"
     assert all("visualRetrieval" not in c for c in result["candidates"])
     assert footage.read_bytes() == raw
+
+
+def test_offline_gbif_normalization_group_map_and_replay(site_and_snapshot, tmp_path):
+    from adventure_intelligence.ecology_import import normalize_export, import_export
+    raw = {"results": [
+        {"gbifID": "10001", "acceptedTaxonKey": 99, "acceptedScientificName": "Synthetic kelp",
+         "taxonRank": "SPECIES", "datasetKey": "study-A",
+         "decimalLatitude": 36.6, "decimalLongitude": -121.9,
+         "eventDate": "2026-06-08", "coordinateUncertaintyInMeters": 50},
+        {"gbifID": "10002", "taxonKey": 11, "scientificName": "No coordinates",
+         "taxonRank": "SPECIES", "datasetKey": "study-A"},
+    ]}
+    doc = normalize_export(raw, "gbif", retrieved_at="2026-11-02",
+                           citation="Synthetic GBIF fixture",
+                           license="CC0", group_map={"gbif:99": "macroalgae"})
+    assert doc["importStatistics"]["retainedRecords"] == 1
+    assert doc["importStatistics"]["skippedRecords"] == 1
+    assert doc["records"][0]["taxonId"] == "gbif:99"
+    assert doc["records"][0]["month"] == 6
+    assert doc["records"][0]["group"] == "macroalgae"
+    raw_path = tmp_path / "source.json"
+    raw_path.write_text(json.dumps(raw))
+    out_path = tmp_path / "normalized.json"
+    saved = import_export(raw_path, "gbif", out_path,
+                          retrieved_at="2026-11-02",
+                          citation="Synthetic GBIF fixture", license="CC0")
+    assert saved["retainedRecords"] == 1
+    assert json.loads(out_path.read_text())["records"][0]["group"] == "other"
+    with pytest.raises(FileExistsError):
+        import_export(raw_path, "gbif", out_path,
+                      retrieved_at="2026-11-02",
+                      citation="Synthetic GBIF fixture", license="CC0")
+
+
+def test_offline_obis_normalization_does_not_invent_names_or_ranks():
+    from adventure_intelligence.ecology_import import normalize_export
+    raw = {"results": [
+        {"id": "obis-1", "aphiaID": 500, "scientificName": "Synthetic reef fish",
+         "taxonRank": 220, "datasetID": "survey-7",
+         "decimalLatitude": 36.6, "decimalLongitude": -121.9,
+         "eventDate": "2025-05-01", "eventID": "survey-evt-1"},
+        {"id": "obis-2", "aphiaID": None, "scientificName": "Unknown",
+         "taxonRank": None, "datasetID": "survey-7",
+         "decimalLatitude": 36.6, "decimalLongitude": -121.9},
+    ]}
+    doc = normalize_export(raw, "obis", retrieved_at="2026-11-02",
+                           citation="Synthetic OBIS export", license="CC-BY")
+    assert doc["importStatistics"]["retainedRecords"] == 1
+    assert doc["records"][0]["taxonId"] == "worms:500"
+    assert doc["records"][0]["surveyId"] == "survey-evt-1"
+    assert doc["records"][0]["group"] == "other"
