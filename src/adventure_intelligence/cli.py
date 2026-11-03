@@ -35,6 +35,7 @@ from .ecology_encounters import build_encounter_report
 from .ecology_crops import create_crop_packet
 from .activity_intelligence import run_activity_scan
 from .activity_apply import apply_activity_proposals
+from .activity_refinement import refine_activities
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -120,6 +121,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Limit newly scanned records; 0 means all catalog assets")
     activity_scan.add_argument("--allow-model-download",action="store_true",
         help="Explicit permission to download SigLIP2 model weights if not cached")
+    activity_refine=sub.add_parser("activity-refine",
+        help="Targeted sandy-seabed and surface-water rescoring; NEVER changes catalog labels")
+    activity_refine.add_argument("--input-dir",type=Path,required=True,
+        help="Existing completed first-pass activity report directory")
+    activity_refine.add_argument("--output-dir",type=Path,required=True,
+        help="Separate resumable report directory in workspace reports/ or exports/")
+    activity_refine.add_argument("--mode",choices=["sampled","thumbnail"],default="sampled",
+        help="Resample source frames or use only the cached single preview thumbnail")
+    activity_refine.add_argument("--frames",type=int,default=5)
+    activity_refine.add_argument("--limit",type=int,default=0)
+    activity_refine.add_argument("--include-snorkeling-ambiguous",action="store_true")
+    activity_refine.add_argument("--include-other-ambiguous",action="store_true")
+    activity_refine.add_argument("--exclude-failed",action="store_true")
+    activity_refine.add_argument("--allow-model-download",action="store_true")
     activity_apply=sub.add_parser("activity-apply",
         help="Preview or explicitly promote a few high-consensus activity proposals")
     activity_apply.add_argument("--report-dir",required=True,type=Path)
@@ -398,6 +413,14 @@ def main(argv: list[str] | None = None) -> int:
             with lock_workspace(root):
                 _print(run_activity_scan(root,args.output_dir,
                     frames=args.frames,limit=args.limit,
+                    allow_model_download=args.allow_model_download))
+        elif args.command=="activity-refine":
+            with lock_workspace(root):
+                _print(refine_activities(root,args.input_dir,args.output_dir,
+                    mode=args.mode,frames=args.frames,limit=args.limit,
+                    include_snorkeling_ambiguous=args.include_snorkeling_ambiguous,
+                    include_other_ambiguous=args.include_other_ambiguous,
+                    include_failed=not args.exclude_failed,
                     allow_model_download=args.allow_model_download))
         elif args.command=="activity-apply":
             with lock_workspace(root):
