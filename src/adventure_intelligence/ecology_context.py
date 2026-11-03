@@ -228,7 +228,9 @@ def _visual_groups(db, workspace: Path, asset_id: str) -> dict:
 def build_ecology_context(workspace: Path, asset_id: str,
                           site_file: Path, snapshot_file: Path, *,
                           radius_km: float = 30., top: int = 30,
-                          with_cached_siglip2: bool = False) -> dict:
+                          with_cached_siglip2: bool = False,
+                          taxonomy_file: Path | None = None,
+                          with_encounters: bool = False) -> dict:
     """Return local-only context, with locations omitted from output by default."""
     if not isinstance(asset_id, str) or len(asset_id) != 64 or any(
             c not in "0123456789abcdef" for c in asset_id):
@@ -348,6 +350,22 @@ def build_ecology_context(workspace: Path, asset_id: str,
             "Taxa absent from this snapshot are unknown, not absent from the environment.",
         ],
     }
+    if taxonomy_file is not None:
+        from .ecology_taxonomy import load_taxonomy, reconcile_taxa
+        source, digest, nodes = load_taxonomy(taxonomy_file)
+        reconciled = reconcile_taxa(report["candidates"], nodes)
+        report["candidates"] = reconciled["candidates"]
+        report["taxonomyCrosswalk"] = {
+            "version": reconciled["version"], "source": source,
+            "snapshotSha256": digest,
+            "sourceCandidateCount": reconciled["sourceCandidateCount"],
+            "canonicalCandidateCount": reconciled["canonicalCandidateCount"],
+            "unresolvedSourceCandidates": reconciled["unresolvedSourceCandidates"],
+            "limitations": reconciled["limitations"],
+        }
+    if with_encounters:
+        from .ecology_encounters import build_encounter_report
+        report["encounterReview"] = build_encounter_report(workspace, asset_id)
     if with_cached_siglip2:
         from .ecology_embeddings import cached_siglip2_retrieval
         retrieval = cached_siglip2_retrieval(workspace, asset_id, report["candidates"])
