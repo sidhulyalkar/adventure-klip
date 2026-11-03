@@ -85,6 +85,8 @@ def test_crop_packet_source_immutable_with_pts_and_provenance(sample, monkeypatc
                for c in manifest["crops"])
     assert all((dest / c["image"]).read_bytes().startswith(b"\x89PNG")
                for c in manifest["crops"])
+    assert (dest / "index.html").exists()
+    assert "Unverified object proposal" in (dest / "index.html").read_text()
     assert movie.read_bytes() == original
     with pytest.raises(ValueError, match="new folder"):
         create_crop_packet(workspace, aid, dest)
@@ -180,3 +182,16 @@ def test_sample_selection_spreads_start_middle_end():
     }]
     chosen = _select_samples(proposals, max_events=1, crops_per_event=3)
     assert [s["evidence"]["requestedMs"] for s in chosen] == [1000, 5000, 9000]
+
+
+
+def test_offline_contact_sheet_escapes_untrusted_object_label():
+    from adventure_intelligence.ecology_crops import _contact_sheet
+    html = _contact_sheet({"crops": [{
+        "image": "crop-001.png", "label": '<script>alert(1)</script>',
+        "biologicalGroup": 'fish&coral', "requestedMs": 5000,
+    }]})
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "fish&amp;coral" in html
+    assert 'src="crop-001.png"' in html
