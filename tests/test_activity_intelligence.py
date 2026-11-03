@@ -193,3 +193,48 @@ def test_cli_smoke_offline(videos,monkeypatch,capsys):
                  "--max-assets","1","--apply"])==0
     result=json.loads(capsys.readouterr().out)
     assert len(result["applied"])==1
+
+
+
+def test_resumed_model_revision_mismatch_refused(videos,monkeypatch):
+    ws,ids,originals=videos
+    monkeypatch.setattr("adventure_intelligence.activity_intelligence.SiglipActivityClassifier",
+                        FakeActivityModel)
+    monkeypatch.setattr("adventure_intelligence.activity_intelligence.extract_frame_png",
+                        lambda path,t,width=384:(_png(),{
+                            "decodedPtsMs":t+12,"timestampBasis":"decoded_frame_pts"}))
+    report=ws/"reports"/"revision-locked"
+    first=run_activity_scan(ws,report,frames=5,limit=1)
+    assert first["processedThisRun"]==1
+
+    class ChangedModel(FakeActivityModel):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.revision="different-unsafe-model-revision"
+
+    monkeypatch.setattr("adventure_intelligence.activity_intelligence.SiglipActivityClassifier",
+                        ChangedModel)
+    with pytest.raises(ValueError,match="different model revision"):
+        run_activity_scan(ws,report,frames=5,limit=1)
+    assert len((report/"records.jsonl").read_text().splitlines())==1
+
+
+def test_tampered_model_provenance_not_accepted_for_catalog_promotion(
+        videos,monkeypatch):
+    ws,ids,originals=videos
+    monkeypatch.setattr("adventure_intelligence.activity_intelligence.SiglipActivityClassifier",
+                        FakeActivityModel)
+    monkeypatch.setattr("adventure_intelligence.activity_intelligence.extract_frame_png",
+                        lambda path,t,width=384:(_png(),{
+                            "decodedPtsMs":t+12,"timestampBasis":"decoded_frame_pts"}))
+    report=ws/"reports"/"tamper-model-lock"
+    run_activity_scan(ws,report,limit=1)
+    file=report/"model-lock.json"
+    data=json.loads(file.read_text())
+    data["processorHash"]="tampered"
+    file.write_text(json.dumps(data))
+    with pytest.raises(ValueError,match="incompatible model revisions"):
+        apply_activity_proposals(ws,report,apply=True)
+    with connect(ws) as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM assets WHERE activity='unknown'").fetchone()[0]==2
