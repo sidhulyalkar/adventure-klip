@@ -241,7 +241,8 @@ def _candidate_schedule(db, workspace: Path, asset, *, coverage_seconds: float,
 
 
 def build_plan(workspace: Path, *, coverage_seconds=45, interest_seconds=2,
-               max_frames=128, limit=None, activity="all") -> dict:
+               max_frames=128, limit=None, activity="all",
+               asset_ids=None) -> dict:
     if (not math.isfinite(coverage_seconds) or not 5 <= coverage_seconds <= 3600
             or not math.isfinite(interest_seconds) or not .25 <= interest_seconds <= 30
             or interest_seconds > coverage_seconds):
@@ -252,6 +253,17 @@ def build_plan(workspace: Path, *, coverage_seconds=45, interest_seconds=2,
         raise ValueError("limit must be positive")
     if activity not in ALLOWED_ACTIVITIES | {"all"}:
         raise ValueError("Unknown activity")
+    requested=None
+    if asset_ids is not None:
+        if (not isinstance(asset_ids,(set,list,tuple)) or
+                not 1 <= len(asset_ids) <= 16 or
+                any(not isinstance(a,str) or len(a)!=64
+                    or any(c not in "0123456789abcdef" for c in a)
+                    for a in asset_ids) or len(set(asset_ids))!=len(asset_ids)):
+            raise ValueError("Explicit asset selection requires 1..16 unique full SHA-256 IDs")
+        requested=set(asset_ids)
+        if limit is not None and len(requested)>limit:
+            raise ValueError("Explicit asset selection exceeds the plan limit")
     workspace = Path(workspace).expanduser().resolve()
     with connect(workspace) as db:
         # A UI activity override is optional in older catalogs. Unknown means
@@ -266,7 +278,10 @@ def build_plan(workspace: Path, *, coverage_seconds=45, interest_seconds=2,
         rows = [dict(r) for r in db.execute(sql)]
         rows = [r for r in rows if r["duration"] is not None and
                 math.isfinite(float(r["duration"])) and r["duration"] > 0 and
-                (activity == "all" or r["activity"] == activity)]
+                (activity == "all" or r["activity"] == activity) and
+                (requested is None or r["id"] in requested)]
+        if requested is not None and set(r["id"] for r in rows)!=requested:
+            raise ValueError("One or more selected assets are missing, invalid-duration, or mismatched activity")
         if limit is not None:
             rows = rows[:limit]
         assets = [_candidate_schedule(db, workspace, a,
@@ -297,6 +312,8 @@ def build_plan(workspace: Path, *, coverage_seconds=45, interest_seconds=2,
             "No automatic deletion or acceptance of clips",
         ],
     }
+    if requested is not None:
+        plan["parameters"]["selectedAssetIds"] = sorted(requested)
     plan["planId"] = hashlib.sha256(_encoded(plan).encode()).hexdigest()
     return plan
 
