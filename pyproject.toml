@@ -16,7 +16,7 @@ dependencies = []
 
 [project.optional-dependencies]
 vision = ["numpy>=1.26,<3", "opencv-python-headless>=4.9,<5"]
-semantic = ["torch>=2.3", "transformers>=4.52", "pillow>=10", "numpy>=1.26"]
+semantic = ["torch>=2.3", "transformers>=4.52", "pillow>=10", "numpy>=1.26", "scipy>=1.11,<2"]
 pose = ["mediapipe>=0.10", "pillow>=10", "numpy>=1.26"]
 images = ["pillow>=10"]
 dev = ["pytest>=8", "build>=1", "ruff>=0.8"]
