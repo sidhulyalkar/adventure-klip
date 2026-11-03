@@ -192,6 +192,7 @@ def test_explicit_absence_and_dropped_obis_do_not_produce_species_prior():
         {**base, "id": "4", "occurrenceStatus": "present"},
         {**base, "id": "5", "absence": "true"},
         {**base, "id": "6", "dropped": 1},
+        {**base, "id": "7", "occurrenceStatus": "doubtful"},
     ]}, "obis", retrieved_at="2026-11-02",
         citation="synthetic", license="test")
     assert doc["importStatistics"]["retainedRecords"] == 1
