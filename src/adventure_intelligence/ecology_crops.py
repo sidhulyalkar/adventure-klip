@@ -222,6 +222,11 @@ def create_crop_packet(workspace: Path, asset_id: str, output_dir: Path, *,
     # Second independent hash check catches changed removable media and other
     # source mutations, including changes during decoding or crop writes.
     if verified_digest(source) != asset_id:
+        # Never leave visually plausible but provenance-invalid crop assets.
+        # Remove ONLY the numbered images this newly created packet wrote.
+        # The folder itself remains as an explicit failed-run signal.
+        for item in selected:
+            (target / item["image"]).unlink(missing_ok=True)
         raise RuntimeError("Original source bytes changed during crop extraction; packet invalid")
     manifest = {
         "schemaVersion": 1, "version": VERSION, "sourceAssetSha256": asset_id,
