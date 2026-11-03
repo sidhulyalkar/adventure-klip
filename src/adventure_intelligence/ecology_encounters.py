@@ -27,11 +27,23 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
     window_list = []
     audited = {"cachedFrameSamples": 0, "validObjectBoxes": 0,
                "skippedInvalidBoxes": 0, "suppressedDuplicateBoxes": 0,
-               "truncatedCachedFrames": 0, "cachedProviders": []}
+               "truncatedCachedFrames": 0, "cachedProviders": [],
+               "partialCoverageProviders": []}
     for provider in PROVIDERS:
-        frames, model_key = frames_for_asset(db, workspace, asset_id, provider)
+        # Recovery is allowed only for marine REVIEW proposals. A partial
+        # cache is never silently promoted to full editorial evidence.
+        frames, model_key = frames_for_asset(
+            db, workspace, asset_id, provider, allow_partial=True)
         if not frames or not model_key:
             continue
+        active=db.execute(
+            """SELECT j.status,j.filename FROM semantic_jobs j
+               JOIN semantic_active a ON a.asset_id=j.asset_id
+                 AND a.config_id=j.config_id
+               WHERE a.asset_id=? AND a.provider=?""",
+            (asset_id,provider)).fetchone()
+        if active is not None and active["status"]=="partial":
+            audited["partialCoverageProviders"].append(provider)
         audited["cachedProviders"].append({
             "provider": provider,
             "modelKeySha256": sha256(model_key.encode()).hexdigest(),
@@ -163,7 +175,7 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
         "limitations": [
             "No species identification, verified sighting or individual animal count.",
             "Temporal IoU association can fragment or switch tracks, especially in POV motion.",
-            "Sparse coverage cannot rule out short encounters between samples.",
+            "Sparse or recovered partial coverage cannot rule out encounters between samples.",
             "Requested sample times are approximate; verify actual event boundaries in video.",
             "Review proposals are not added to episodes, auto-exported or used as training labels.",
         ],
