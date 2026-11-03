@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     process.add_argument('--activity',choices=['unknown','ski','bike','snorkeling'],default='unknown')
     process.add_argument('--detector',choices=['baseline','flow'],default='baseline')
     process.add_argument('--allow-removable',action='store_true')
-    process.add_argument('--semantic-backend',choices=['histogram','siglip2','owlv2','context','stack'])
+    process.add_argument('--semantic-backend',choices=['histogram','siglip2','owlv2','ecology-owlv2','context','stack'])
     process.add_argument('--every',type=float,default=4.0)
     process.add_argument('--audio-evidence',action='store_true',help='Extract audio-change evidence without inferring breathing')
     process.add_argument('--no-progress',action='store_true',help='Hide live progress messages on stderr')
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     adaptive_run=sub.add_parser("adaptive-scenes",
         help="Run opt-in semantic inference for a verified adaptive plan")
     adaptive_run.add_argument("--plan",type=Path,required=True)
-    adaptive_run.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],
+    adaptive_run.add_argument("--backend",choices=["histogram","siglip2","owlv2","ecology-owlv2","context","stack"],
                               default="histogram")
     adaptive_run.add_argument("--decode-mode",choices=["single","batched"],default="single",
         help="Opt-in grouped FFmpeg seeks for nearby frames; falls back to single seeks")
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     ecology.add_argument("--output",type=Path,required=True,
                          help="NEW workspace exports/ or reports/ JSON")
     scene=sub.add_parser("scenes",help="Extract optional sparse image embeddings / detections")
-    scene.add_argument("--backend",choices=["histogram","siglip2","owlv2","context","stack"],default="histogram")
+    scene.add_argument("--backend",choices=["histogram","siglip2","owlv2","ecology-owlv2","context","stack"],default="histogram")
     scene.add_argument("--every",type=float,default=4.0)
     scene.add_argument("--limit",type=int)
     scene.add_argument("--pose-model",type=Path)
