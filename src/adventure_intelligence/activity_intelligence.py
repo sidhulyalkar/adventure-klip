@@ -113,9 +113,9 @@ def _frame_scores(text_vectors: dict, image_vectors: list[list[float]]) -> list[
             continue
         group_scores = {}
         for activity, refs in text_vectors.items():
-            similarities = [sum(x*y for x,y in zip(v,ref)) for ref in refs]
-            if not similarities or any(len(v)!=len(ref) for ref in refs):
+            if not refs or any(len(v)!=len(ref) for ref in refs):
                 raise ValueError("Incompatible SigLIP2 text-image embeddings")
+            similarities = [sum(x*y for x,y in zip(v,ref)) for ref in refs]
             group_scores[activity] = max(similarities)
         ranked = sorted(group_scores, key=lambda x:(-group_scores[x],x))
         first, second = ranked[:2]
@@ -357,6 +357,10 @@ def run_activity_scan(workspace:Path,output_dir:Path,*,frames:int=5,
     model=None
     errors=[]
     processed=0
+    # Abort immediately if the required semantic model cannot be loaded.
+    # Per-video errors should be recoverable, but a missing model is global.
+    if any(a.get("duration") and a["duration"]>0 for a in todo):
+        model=SiglipActivityClassifier(allow_model_download=allow_model_download)
     with (target/"records.jsonl").open("a",encoding="utf-8") as checkpoint:
         for i,asset in enumerate(todo,1):
             aid=asset["id"]
@@ -365,8 +369,6 @@ def run_activity_scan(workspace:Path,output_dir:Path,*,frames:int=5,
                 errors.append({"assetId":aid,"reason":"invalid_duration"})
                 continue
             try:
-                if model is None:
-                    model=SiglipActivityClassifier(allow_model_download=allow_model_download)
                 source=None
                 with connect(workspace) as db:
                     cached=_verified_cached_embeddings(db,workspace,aid,model,frames)
