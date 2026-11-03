@@ -236,3 +236,36 @@ def test_offline_obis_normalization_does_not_invent_names_or_ranks():
     assert doc["records"][0]["taxonId"] == "worms:500"
     assert doc["records"][0]["surveyId"] == "survey-evt-1"
     assert doc["records"][0]["group"] == "other"
+
+
+def test_ecology_object_queries_are_explicit_and_do_not_change_default():
+    from adventure_intelligence.semantic import ECOLOGY_QUERIES, DEFAULT_QUERIES
+    assert "kelp" in ECOLOGY_QUERIES and "seagrass" in ECOLOGY_QUERIES
+    assert "sea urchin" in ECOLOGY_QUERIES and "nudibranch" in ECOLOGY_QUERIES
+    assert "kelp" not in DEFAULT_QUERIES  # Opt-in avoids silent model-cost change.
+    assert len(ECOLOGY_QUERIES) <= 24
+    assert len(ECOLOGY_QUERIES) == len(set(ECOLOGY_QUERIES))
+
+
+def test_visual_groups_collect_both_object_providers_without_species_claim(
+        site_and_snapshot, monkeypatch):
+    workspace, aid, _, _, _, site_path, snapshot_path = site_and_snapshot
+
+    def fake_source(db, workspace, aid, provider="siglip2"):
+        if provider == "owlv2":
+            return [{"tMs": 1000, "objects": [{"label": "fish", "score": .3}]}], "old"
+        if provider == "ecology-owlv2":
+            return [{"tMs": 2000, "objects": [
+                {"label": "sea urchin", "score": .4},
+                {"label": "kelp", "score": .5},
+                {"label": "fish", "score": .7}]}], "new"
+        return [], None
+
+    monkeypatch.setattr("adventure_intelligence.scene_atlas.frames_for_asset", fake_source)
+    result = build_ecology_context(workspace, aid, site_path, snapshot_path)
+    proposals = result["broadVisualProposals"]
+    assert proposals["fish"]["sampleCount"] == 2
+    assert proposals["fish"]["providers"] == ["ecology-owlv2", "owlv2"]
+    assert proposals["macroalgae"]["labels"] == ["kelp"]
+    assert proposals["invertebrate"]["labels"] == ["sea urchin"]
+    assert all(c["speciesIdentifiedInVideo"] is False for c in result["candidates"])
