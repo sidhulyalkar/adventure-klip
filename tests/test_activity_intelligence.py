@@ -238,3 +238,102 @@ def test_tampered_model_provenance_not_accepted_for_catalog_promotion(
     with connect(ws) as db:
         assert db.execute(
             "SELECT COUNT(*) FROM assets WHERE activity='unknown'").fetchone()[0]==2
+
+
+
+def test_hf_cache_revision_is_immutable_and_comes_from_expected_repository(tmp_path):
+    from adventure_intelligence.activity_intelligence import _revision_from_cached_config
+    revision="a" * 40
+    root=tmp_path/"models--google--siglip2-base-patch16-224"/"snapshots"/revision
+    root.mkdir(parents=True)
+    config=root/"config.json"
+    config.write_text("{}")
+    assert _revision_from_cached_config(str(config))==revision
+    with pytest.raises(RuntimeError,match="immutable"):
+        _revision_from_cached_config(str(tmp_path/"config.json"))
+    with pytest.raises(RuntimeError,match="immutable"):
+        _revision_from_cached_config(str(
+            tmp_path/"models--other--wrong"/"snapshots"/revision/"config.json"))
+    with pytest.raises(RuntimeError,match="immutable"):
+        _revision_from_cached_config(str(
+            tmp_path/"models--google--siglip2-base-patch16-224"/
+            "snapshots"/"main"/"config.json"))
+
+
+def test_real_classifier_uses_hub_snapshot_when_config_private_commit_missing(
+        tmp_path,monkeypatch):
+    """Reproduce macOS Transformers loading weights with _commit_hash=None."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    import sys
+    from adventure_intelligence.activity_intelligence import (
+        SiglipActivityClassifier, MODEL_ID,
+    )
+
+    revision="4" * 40
+    saved=tmp_path/"models--google--siglip2-base-patch16-224"/"snapshots"/revision
+    saved.mkdir(parents=True)
+    config=saved/"config.json"
+    config.write_text("{}")
+    requested=[]
+
+    class FakeVector:
+        def cpu(self):
+            return self
+        def float(self):
+            return self
+        def tolist(self):
+            return [[1.,0.] for _ in range(4)]
+
+    class FakeInput:
+        def to(self,device):
+            return self
+
+    class FakeProcessor:
+        image_processor=SimpleNamespace(to_dict=lambda:{"fake":"v1"})
+        def __call__(self,**kwargs):
+            return FakeInput()
+
+    class FakeModel:
+        config=SimpleNamespace(_commit_hash=None)
+        def eval(self):
+            return self
+        def to(self,device):
+            return self
+        def get_text_features(self,**kwargs):
+            return FakeVector()
+
+    class Loadable:
+        @classmethod
+        def from_pretrained(cls,model_id,**kwargs):
+            requested.append((model_id,kwargs))
+            return FakeProcessor() if cls.__name__=="P" else FakeModel()
+
+    class P(Loadable):
+        pass
+
+    class M(Loadable):
+        pass
+
+    fake_torch=SimpleNamespace(
+        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda:False)),
+        cuda=SimpleNamespace(is_available=lambda:False),
+        nn=SimpleNamespace(functional=SimpleNamespace(normalize=lambda v,dim:v)),
+        inference_mode=nullcontext,
+    )
+    fake_hub=SimpleNamespace(hf_hub_download=lambda repo_id,filename,local_files_only:
+                             (requested.append(("hub",{"local_files_only":local_files_only}))
+                              or str(config)))
+    monkeypatch.setitem(sys.modules,"torch",fake_torch)
+    monkeypatch.setitem(sys.modules,"transformers",
+                        SimpleNamespace(AutoModel=M,AutoProcessor=P))
+    monkeypatch.setitem(sys.modules,"huggingface_hub",fake_hub)
+    provider=SiglipActivityClassifier(allow_model_download=False)
+    assert provider.revision==revision
+    assert provider.processor_config=={"fake":"v1"}
+    assert len(provider.text_vectors)==4
+    assert requested[0]==("hub",{"local_files_only":True})
+    for model_id,kwargs in requested[1:]:
+        assert model_id==MODEL_ID
+        assert kwargs["revision"]==revision
+        assert kwargs["local_files_only"] is True
