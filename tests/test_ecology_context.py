@@ -151,3 +151,37 @@ def test_missing_occurrences_is_unknown_not_false_negative(site_and_snapshot):
     assert result["status"] == "no_nearby_snapshot_records"
     assert result["candidates"] == []
     assert "unknown" in result["limitations"][-1]
+
+
+def test_cached_semantic_text_retrieval_is_not_species_confidence():
+    from adventure_intelligence.ecology_embeddings import (
+        prompt_for, score_cached_vectors,
+    )
+    candidates = [
+        {"taxonId": "worms:101", "scientificName": "Example fish", "biologicalGroup": "fish"},
+        {"taxonId": "worms:100", "scientificName": "Example kelp", "biologicalGroup": "macroalgae"},
+    ]
+    images = [
+        {"tMs": 10_000, "embedding": [1.0, 0.0]},
+        {"tMs": 20_000, "embedding": [0.0, 1.0]},
+    ]
+    assert "marine macroalgae" in prompt_for(candidates[1])
+    result = score_cached_vectors(candidates, images, [[1., 0.], [0., 1.]],
+                                  model_key="test-model")
+    fish = result["worms:101"]
+    assert fish["score"] == 1.
+    assert fish["topRequestedOrDecodedTimesMs"][0] == 10_000
+    assert fish["isConfirmedSpeciesSighting"] is False
+    assert fish["status"] == "uncalibrated_candidate_retrieval"
+    with pytest.raises(ValueError, match="dimensions"):
+        score_cached_vectors(candidates[:1], images, [[1., 0., 0.]],
+                             model_key="test-model")
+
+
+def test_opt_in_embeddings_abstain_without_cached_frame_features(site_and_snapshot):
+    workspace, aid, footage, raw, _, site_path, snapshot_path = site_and_snapshot
+    result = build_ecology_context(workspace, aid, site_path, snapshot_path,
+                                   with_cached_siglip2=True)
+    assert result["embeddingRetrieval"]["status"] == "unavailable_no_cached_siglip2_frames"
+    assert all("visualRetrieval" not in c for c in result["candidates"])
+    assert footage.read_bytes() == raw
