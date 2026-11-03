@@ -30,6 +30,7 @@ from .safety import protect_source_output
 from .progress import Progress
 from .adaptive_sampling import build_plan, validate_plan, source_preflight
 from .ecology_context import build_ecology_context
+from .ecology_import import import_export
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -105,6 +106,16 @@ def main(argv: list[str] | None = None) -> int:
                               default="histogram")
     adaptive_run.add_argument("--decode-mode",choices=["single","batched"],default="single",
         help="Opt-in grouped FFmpeg seeks for nearby frames; falls back to single seeks")
+    ecology_import=sub.add_parser("ecology-import",
+        help="Normalize a downloaded OBIS/GBIF occurrence JSON locally (no network)")
+    ecology_import.add_argument("--provider",choices=["obis","gbif"],required=True)
+    ecology_import.add_argument("--input",type=Path,required=True)
+    ecology_import.add_argument("--retrieved-at",required=True)
+    ecology_import.add_argument("--citation",required=True)
+    ecology_import.add_argument("--license",required=True)
+    ecology_import.add_argument("--group-map",type=Path,
+        help="Optional explicit taxonId-to-biological-group JSON mapping")
+    ecology_import.add_argument("--output",type=Path,required=True)
     ecology=sub.add_parser("ecology-context",
         help="Create a local, unverified marine taxa shortlist from a frozen occurrence snapshot")
     ecology.add_argument("--asset",required=True,
@@ -340,6 +351,18 @@ def main(argv: list[str] | None = None) -> int:
             _print(result)
             if result["errors"]:
                 return 1
+        elif args.command=="ecology-import":
+            destination=args.output.expanduser().resolve()
+            if not destination.is_relative_to(root) or destination.exists():
+                raise ValueError("Ecology snapshot must be a NEW file inside the workspace")
+            if destination.relative_to(root).parts[0] not in {"exports","reports"}:
+                raise ValueError("Ecology snapshots must be in exports/ or reports/")
+            with connect(root) as db:
+                protect_source_output(db,destination)
+            _print(import_export(args.input.expanduser(),args.provider,destination,
+                retrieved_at=args.retrieved_at,citation=args.citation,
+                license=args.license,
+                group_map_path=args.group_map.expanduser() if args.group_map else None))
         elif args.command=="ecology-context":
             destination=args.output.expanduser().resolve()
             if not destination.is_relative_to(root) or destination.exists():
