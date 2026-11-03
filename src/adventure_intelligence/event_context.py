@@ -24,44 +24,106 @@ from .sources import resolve_source, verified_digest
 VERSION="event-context-embedding-v1"
 
 
-def _context_windows(proposals:list[dict],duration_ms:int,*,max_events:int)->list[dict]:
-    """Collapse overlapping *review windows*, not biological individuals."""
-    by_group={}
-    for p in proposals:
-        a,b=p.get("startMs"),p.get("endMs")
-        if (type(a) is not int or type(b) is not int
-                or not 0<=a<b<=duration_ms):
+def _sample_boxes(proposal:dict) -> dict[int,list[tuple]]:
+    """Small indexed visual boxes for same-frame *review* consolidation."""
+    out={}
+    for sample in proposal.get("sampledBoxEvidence",[])[:40]:
+        if not isinstance(sample,dict):
             continue
-        group=p.get("biologicalGroup")
-        if not isinstance(group,str) or not group:
+        t=sample.get("requestedMs")
+        box=sample.get("bbox")
+        if type(t) is not int or not isinstance(box,list) or len(box)!=4:
             continue
-        by_group.setdefault(group,[]).append(p)
-    merged=[]
-    for group,items in sorted(by_group.items()):
-        items.sort(key=lambda p:(p["startMs"],p["endMs"],p["id"]))
-        for p in items:
-            if (merged and merged[-1]["group"]==group
-                    and p["startMs"]<=merged[-1]["endMs"]):
-                m=merged[-1]
-                m["startMs"]=min(m["startMs"],p["startMs"])
-                m["endMs"]=max(m["endMs"],p["endMs"])
-                m["sourceProposalIds"].append(p["id"])
-                m["providerNames"].add(p["provider"])
-                m["reviewPriority"]=max(m["reviewPriority"],p["reviewPriority"])
-                m["rawCandidates"].append(p)
-            else:
-                merged.append({
-                    "group":group,"startMs":p["startMs"],"endMs":p["endMs"],
-                    "sourceProposalIds":[p["id"]],
-                    "providerNames":{p["provider"]},
-                    "reviewPriority":p["reviewPriority"],
-                    "rawCandidates":[p],
-                })
-    merged.sort(key=lambda m:(-m["reviewPriority"],m["startMs"],m["group"]))
-    # A single review card may cover several overlapping objects. This
-    # asserts NEITHER one animal nor several unique animals.
-    return merged[:max_events]
+        if (any(type(x) not in (float,int) or not math.isfinite(x) for x in box)
+                or box[2]<=box[0] or box[3]<=box[1]):
+            continue
+        out.setdefault(t,[]).append(tuple(float(v) for v in box))
+    return out
 
+
+def _same_visual_region(a:dict,b:dict) ->bool:
+    """Conservative same-frame box overlap, NOT identity or unique animals.
+
+    Equal timestamps and strong spatial overlap are required to consolidate
+    contradictory detector labels. Mere time-window overlap is insufficient
+    for fish swimming alongside a ray, or a human hand near the subject.
+    """
+    from .tracking import _iou
+    aa=_sample_boxes(a)
+    bb=_sample_boxes(b)
+    common=sorted(set(aa)&set(bb))
+    matched=0
+    strongest=0.0
+    for t in common[:24]:
+        overlap=max((_iou(x,y) for x in aa[t] for y in bb[t]),default=0.)
+        strongest=max(strongest,overlap)
+        if overlap>=.58:
+            matched+=1
+    return strongest>=.87 or (matched>=2 and strongest>=.65)
+
+
+def _context_windows(proposals:list[dict],duration_ms:int,*,max_events:int)->list[dict]:
+    """Collapse redundant *review hypotheses* without counting individuals.
+
+    Same-group overlapping intervals are bundled as before. Different-group
+    labels are bundled ONLY when detector boxes co-locate in source frames.
+    Conflicting biological labels remain unresolved in the resulting card.
+    """
+    valid=[]
+    for p in proposals[:200]:
+        if not isinstance(p,dict):
+            continue
+        a,b=p.get("startMs"),p.get("endMs")
+        group=p.get("biologicalGroup")
+        if (type(a) is not int or type(b) is not int
+                or not 0<=a<b<=duration_ms or
+                not isinstance(group,str) or not group or
+                not isinstance(p.get("id"),str) or
+                not isinstance(p.get("provider"),str)):
+            continue
+        valid.append(p)
+    valid.sort(key=lambda p:(p["startMs"],p["endMs"],p["id"]))
+    parents=list(range(len(valid)))
+
+    def root(k):
+        while parents[k]!=k:
+            parents[k]=parents[parents[k]]
+            k=parents[k]
+        return k
+
+    for i,a in enumerate(valid):
+        for j in range(i+1,len(valid)):
+            b=valid[j]
+            if b["startMs"]>a["endMs"]:
+                break
+            same_group=(a["biologicalGroup"]==b["biologicalGroup"])
+            co_located=not same_group and _same_visual_region(a,b)
+            if (same_group and b["startMs"]<=a["endMs"]) or co_located:
+                parents[root(j)]=root(i)
+    clusters={}
+    for i,p in enumerate(valid):
+        clusters.setdefault(root(i),[]).append(p)
+    merged=[]
+    for items in clusters.values():
+        groups=sorted({p["biologicalGroup"] for p in items})
+        labels=sorted({p.get("label",p["biologicalGroup"]) for p in items})
+        group=(groups[0] if len(groups)==1 else "conflicting_labels_unverified")
+        merged.append({
+            "group":group,
+            "biologicalGroupHypotheses":groups,
+            "detectorLabelHypotheses":labels,
+            "crossLabelConflict":len(groups)>1,
+            "startMs":min(p["startMs"] for p in items),
+            "endMs":max(p["endMs"] for p in items),
+            "sourceProposalIds":[p["id"] for p in items],
+            "providerNames":{p["provider"] for p in items},
+            "reviewPriority":max(p["reviewPriority"] for p in items),
+            "rawCandidates":items,
+            "sameAnimalIdentityUnverified":True,
+            "mayContainMultipleSubjects":True,
+        })
+    merged.sort(key=lambda m:(-m["reviewPriority"],m["startMs"],m["group"]))
+    return merged[:max_events]
 
 def _phase_times(candidate:dict,duration_ms:int)->dict:
     times=sorted({t for p in candidate["rawCandidates"]
@@ -124,11 +186,16 @@ def _contact_sheet(cards:list[dict],*,asset_id:str)->str:
                 f'<figure><img loading="lazy" src="{name}" alt="Candidate {phase["phase"]}">'
                 f'<figcaption>{escape(phase["phase"])} · '
                 f'{phase["requestedMs"]/1000:.1f}s</figcaption></figure>')
+        names=", ".join(escape(x) for x in c.get("biologicalGroupHypotheses",[]))
+        conflict=('<p>Conflicting detector hypotheses: '+names+
+                  '. Same animal is NOT established.</p>'
+                  if c.get("crossLabelConflict") else '')
         entries.append(
             '<article><h2>'+escape(c["group"])+
             f' · {c["startMs"]/1000:.1f}–{c["endMs"]/1000:.1f}s</h2>'
             '<p>Unverified broad object detection. Inspect the complete '
             'source clip before recording the animal, activity or highlight value.</p>'
+            +conflict+
             '<div class="photos">'+''.join(photos)+'</div>'
             f'<small>{len(c["sourceProposalIds"])} overlapping detector proposal(s) '
             'grouped for review, NOT counted as individual animals.</small></article>')
@@ -250,6 +317,10 @@ def build_event_context(workspace:Path,asset_id:str,output_dir:Path,*,
         cards.append({
             "id":f"event-context-{index:02d}",
             "group":event["group"],
+            "biologicalGroupHypotheses":event["biologicalGroupHypotheses"],
+            "detectorLabelHypotheses":event["detectorLabelHypotheses"],
+            "crossLabelConflict":event["crossLabelConflict"],
+            "mayContainMultipleSubjects":True,
             "startMs":event["startMs"],"endMs":event["endMs"],
             "sourceProposalIds":event["sourceProposalIds"],
             "detectorProviders":sorted(event["providerNames"]),
@@ -258,6 +329,7 @@ def build_event_context(workspace:Path,asset_id:str,output_dir:Path,*,
             "contextEmbedding":representation,
             "phases":phases,
             "reviewQuestions":[
+                "Do the conflicting detector labels refer to one visual subject or multiple subjects?",
                 "What actually happens in the entire source window?",
                 "Is the subject visible and framed clearly throughout the event?",
                 "What changes between approach, encounter and aftermath?",
