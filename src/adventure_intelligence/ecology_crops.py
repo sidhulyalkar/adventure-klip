@@ -80,7 +80,7 @@ def _select_samples(proposals: list[dict], *, max_events: int, crops_per_event: 
 
 
 def _crop_png(raw: bytes, bbox: list, width: int, *, margin: float) -> tuple[bytes, dict]:
-    from PIL import Image, ImageOps, UnidentifiedImageError
+    from PIL import Image, UnidentifiedImageError
     if len(raw) > 35_000_000:
         raise ValueError("Decoded PNG exceeds crop evidence limit")
     try:
@@ -174,18 +174,21 @@ def create_crop_packet(workspace: Path, asset_id: str, output_dir: Path, *,
     target.mkdir(mode=0o700, exist_ok=False)
     selected = []
     failures = []
-    decoded_cache = {}
-    # Each distinct requested timestamp is decoded once; multiple animals
-    # visible in that frame share the same source frame, not species identities.
+    decode_count = 0
+    cached_time, cached_png, cached_timing = None, None, None
+    # Chronological ordering lets adjacent proposals share a single decoded
+    # frame without keeping up to 24 large PNGs resident in memory.
+    samples.sort(key=lambda p: (p["evidence"]["requestedMs"], p["eventId"]))
     for index, proposal in enumerate(samples):
         frame = proposal["evidence"]
         requested = frame["requestedMs"]
         original_pts = frame["sourceDecodedPtsMs"]
         try:
-            if requested not in decoded_cache:
-                png, timing = extract_frame_png(source, requested, width=width)
-                decoded_cache[requested] = (png, timing)
-            raw, timing = decoded_cache[requested]
+            if cached_time != requested:
+                cached_png, cached_timing = extract_frame_png(source, requested, width=width)
+                cached_time = requested
+                decode_count += 1
+            raw, timing = cached_png, cached_timing
             actual_pts = timing.get("decodedPtsMs")
             if type(actual_pts) is not int or abs(actual_pts - original_pts) > 2:
                 raise ValueError("Source PTS changed since original cached object detection")
@@ -224,7 +227,7 @@ def create_crop_packet(workspace: Path, asset_id: str, output_dir: Path, *,
         "cropsPerEvent": crops_per_event, "margin": float(margin),
         "sampledEncounterProposals": len(queue["candidateWindows"]),
         "requestedCropOperations": len(samples),
-        "uniqueFrameDecodes": len(decoded_cache),
+        "uniqueFrameDecodes": decode_count,
         "cropCount": len(selected), "crops": selected, "failures": failures,
         "limitations": [
             "No species confirmation, animal identity or abundance inference.",
@@ -239,6 +242,6 @@ def create_crop_packet(workspace: Path, asset_id: str, output_dir: Path, *,
     return {
         "status": manifest["status"], "manifest": str(target / "manifest.json"),
         "cropCount": len(selected), "failedCrops": len(failures),
-        "uniqueFrameDecodes": len(decoded_cache),
+        "uniqueFrameDecodes": decode_count,
         "sourceVerifiedBeforeAndAfter": True,
     }
