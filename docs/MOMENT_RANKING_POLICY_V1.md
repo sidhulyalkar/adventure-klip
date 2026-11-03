@@ -53,9 +53,13 @@ Signals range from 0 to 1, or **null** when not assessed:
 
 The ranker never generates numeric quality measurements from detector labels
 or uncalibrated embedding similarities. A species rarity field is ignored
-unless `taxonomyStatus=verified_species`. Verification here is a **provided
-annotation**, not something the ranker independently proves. A detector
-proposal like `marine_mammal` is not acceptable rarity provenance.
+unless `taxonomyStatus=verified_species` **and** a curated verification
+record is supplied in `verifiedTaxonEvidence`, including a `taxonId`,
+a `source` and a `basis` of `expert_review` or
+`curated_reference_review`. Verification is a **provided annotation**,
+not something the ranker independently proves. A detector proposal like
+`marine_mammal` or a bare self-asserted species name is not acceptable
+rarity provenance.
 
 Unknown signals remain `null`. Sharing review requires assessed
 significance, visibility, image quality and narrative completeness, and
