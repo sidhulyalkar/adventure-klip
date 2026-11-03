@@ -211,6 +211,8 @@ def refinement_times(observations:list[dict], *, budget:int,
     """Investigate boundaries and ambiguous contexts only, not all old frames."""
     if type(budget) is not int or budget<0:
         raise ValueError("Invalid refinement budget")
+    if budget==0:
+        return []
     valid=sorted((o for o in observations if type(o.get("requestedMs")) is int),
                  key=lambda x:x["requestedMs"])
     candidates=[]
@@ -316,7 +318,10 @@ def overlay_events(segments:list[dict],detector_frames:dict) ->list[dict]:
                 t=frame.get("tMs")
                 if type(t) is not int or not segment["startMs"]<=t<segment["endMs"]:
                     continue
-                for obj in (frame.get("objects") or [])[:100]:
+                objects=frame.get("objects")
+                if not isinstance(objects,list):
+                    continue
+                for obj in objects[:100]:
                     if not isinstance(obj,dict):
                         continue
                     label=obj.get("label")
