@@ -10,9 +10,10 @@ camera motion.
 from __future__ import annotations
 
 from collections import Counter
-from hashlib import sha256
 import json
 import math
+from html import escape
+from pathlib import Path
 
 VERSION="moment-ranking-policy-v1"
 SPORTS=("snorkeling","ski","bike")
@@ -105,13 +106,17 @@ def validate_moment(raw:dict) ->dict:
     # merely seeing an animal-shaped object or a plausible occurrence range.
     if taxonomy!="verified_species":
         signals["verifiedTaxonRarity"]=None
+    notes=raw.get("evidenceNotes",[])
+    if (not isinstance(notes,list) or len(notes)>20
+            or any(not isinstance(n,str) or len(n)>512 for n in notes)):
+        raise ValueError("evidenceNotes must be short strings")
     return {
         "momentId":ident,"activity":activity,"assetId":aid,
         "startMs":a,"endMs":b,"sessionId":session,"subjectGroup":topic,
         "taxonomyStatus":taxonomy,
         "humanReview":raw.get("humanReview") or "unreviewed",
         "signals":signals,
-        "evidenceNotes":raw.get("evidenceNotes",[]),
+        "evidenceNotes":notes,
     }
 
 
@@ -168,6 +173,7 @@ def score_moment(moment:dict)->dict:
             "autoPublish":False,
         },
         "missingSignalFields":missing,
+        "evidenceNotes":m["evidenceNotes"],
         "reasonCodes":reasons,
         "signalsUsed":s,
         "rankingVersion":VERSION,
@@ -292,3 +298,133 @@ def from_event_context(doc:dict)->list[dict]:
             ],
         })
     return out
+
+
+
+def _review_html(report:dict)->str:
+    by_id={m["momentId"]:m for m in report["moments"]}
+    sections=[]
+    for axis,title in (("discovery","Investigate"),
+                       ("share","Share review"),("learning","Technique and learning")):
+        cards=[]
+        for ident in report["queues"][axis]:
+            m=by_id[ident]
+            labels={
+                "discovery":"Priority for additional investigation",
+                "share":"Not publication approval",
+                "learning":"Learning hypothesis for review",
+            }
+            missing=", ".join(m["missingSignalFields"]) or "No missing signals"
+            reasons=", ".join(m["reasonCodes"]) or "No risk flags"
+            cards.append(
+                '<article><strong>'+escape(m["momentId"])+'</strong>'
+                f'<p>{escape(m["activity"])} · {m["startMs"]/1000:.1f}–'
+                f'{m["endMs"]/1000:.1f}s · {m["scores"][axis]:.3f}</p>'
+                f'<small>{escape(labels[axis])}. Missing: {escape(missing)}. '
+                f'Flags: {escape(reasons)}.</small></article>')
+        sections.append(
+            '<section><h2>'+title+'</h2>'
+            +(''.join(cards) if cards else
+              '<p>No eligible scored moments. Review missing evidence below.</p>')
+            +'</section>')
+    unscored=[m for m in report["moments"]
+              if not any(m["reviewEligibility"].values())]
+    pending=''.join(
+        '<article><strong>'+escape(x["momentId"])+'</strong>'
+        '<p>Unscored proposal; no unsupported quality or species assertions.</p>'
+        '<small>Need: '+escape(", ".join(x["missingSignalFields"]))+
+        '</small></article>' for x in unscored)
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Klip · Evidence-aware moment ranking</title><style>'
+        'body{font:14px system-ui;background:#101923;color:#eaf0f4;'
+        'max-width:1200px;margin:26px auto;padding:0 16px;line-height:1.45}'
+        'h1{font-size:1.6rem}h2{font-size:1.1rem;color:#f1bcb2}'
+        'p,small{color:#b3c2cd}main{display:grid;'
+        'grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:18px}'
+        'article{background:#1b2b37;border:1px solid #334454;border-radius:12px;'
+        'padding:12px;margin-bottom:10px}article strong{overflow-wrap:anywhere}'
+        'small{display:block}</style></head><body>'
+        '<h1>Moment triage</h1><p>Uncalibrated review queues, not decisions to '
+        'publish or verified animal identifications. Exceptional encounters '
+        'can remain important even with poor clarity, but invisible subjects '
+        'are not automatically selected for sharing.</p>'
+        '<main>'+''.join(sections)+'</main><h2>Evidence still needed</h2>'
+        +pending+'</body></html>')
+
+
+def create_rank_report(workspace:Path,input_file:Path,output_dir:Path,*,
+                       review_file:Path|None=None,limit:int=20,
+                       balance_sports:bool=True)->dict:
+    """Read existing event packets or bounded moment features. Never decode."""
+    from .catalog import connect
+    from .safety import protect_source_output
+    workspace=Path(workspace).expanduser().resolve()
+    input_file=Path(input_file).expanduser().resolve()
+    target=Path(output_dir).expanduser().resolve()
+    if (target==workspace or not target.is_relative_to(workspace)
+            or target.relative_to(workspace).parts[0] not in ("reports","exports")
+            or target.exists()):
+        raise ValueError("Ranking output must be a new workspace reports/ or exports/ folder")
+    with connect(workspace) as db:
+        protect_source_output(db,target/"ranking.json")
+        protect_source_output(db,target/"review.html")
+    def read_json(path):
+        if not path.is_file() or path.stat().st_size>20_000_000:
+            raise ValueError("Ranking input must be a bounded JSON file")
+        return json.loads(path.read_text(encoding="utf-8"))
+    payload=read_json(input_file)
+    if isinstance(payload,dict) and payload.get("version")=="event-context-embedding-v1":
+        raw=from_event_context(payload)
+    elif isinstance(payload,list):
+        raw=payload
+    elif isinstance(payload,dict) and isinstance(payload.get("moments"),list):
+        raw=payload["moments"]
+    else:
+        raise ValueError("Expected event-context manifest or moment list")
+    if review_file is not None:
+        reviews=read_json(Path(review_file).expanduser().resolve())
+        if not isinstance(reviews,list):
+            raise ValueError("Review overrides must be a JSON list")
+        overrides={}
+        for row in reviews:
+            if (not isinstance(row,dict)
+                    or not isinstance(row.get("momentId"),str)
+                    or set(row)-{"momentId","signals","taxonomyStatus",
+                               "humanReview","evidenceNotes"}):
+                raise ValueError("Invalid review override")
+            ident=row["momentId"]
+            if ident in overrides:
+                raise ValueError("Repeated moment review override")
+            overrides[ident]=row
+        if set(overrides)-{x.get("momentId") for x in raw if isinstance(x,dict)}:
+            raise ValueError("Review refers to an absent moment")
+        augmented=[]
+        for m in raw:
+            patch=overrides.get(m.get("momentId"))
+            if not patch:
+                augmented.append(m)
+                continue
+            changes={k:v for k,v in patch.items() if k!="momentId"}
+            merged={**m,**changes}
+            if "signals" in changes:
+                merged["signals"]={**m.get("signals",{}),**changes["signals"]}
+            augmented.append(merged)
+        raw=augmented
+    report=rank_moments(raw,limit=limit,balance_sports=balance_sports)
+    report["inputFile"]=str(input_file)
+    report["reviewOverridesUsed"]=review_file is not None
+    report["sourceVideosDecoded"]=0
+    report["modelInferenceCalls"]=0
+    target.mkdir(parents=True,exist_ok=False)
+    with (target/"ranking.json").open("x",encoding="utf-8") as handle:
+        handle.write(json.dumps(report,indent=2,sort_keys=True,allow_nan=False)+"\n")
+    with (target/"review.html").open("x",encoding="utf-8") as handle:
+        handle.write(_review_html(report))
+    return {
+        "status":"review_only","momentCount":len(raw),
+        "queues":report["queues"],"sourceVideosDecoded":0,
+        "ranking":str(target/"ranking.json"),"reviewHtml":str(target/"review.html"),
+        "note":"Unknown event significance or rare species remains unscored until validated.",
+    }
