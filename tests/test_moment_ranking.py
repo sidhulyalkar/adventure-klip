@@ -51,7 +51,11 @@ def test_murky_exceptional_wildlife_beats_crystal_clear_ordinary_scene():
         "imageQuality":.99,"narrativeCompleteness":.70,
         "investigationPotential":.15,"uncertainty":.20})
     murky=moment("murky-confirmed-ray",start=15000,
-        taxonomyStatus="verified_species",subjectGroup="ray",signals={
+        taxonomyStatus="verified_species",subjectGroup="ray",
+        verifiedTaxonEvidence={"taxonId":"curated-reference-id-17",
+                              "basis":"expert_review",
+                              "source":"independent-review-2026-11-03"},
+        signals={
             "eventSignificance":.95,"visualNovelty":.93,
             "subjectVisibility":.57,"imageQuality":.30,
             "narrativeCompleteness":.76,
@@ -72,7 +76,9 @@ def test_rare_but_nearly_invisible_remains_investigable_not_share_eligible():
         "narrativeCompleteness":.6,
         "investigationPotential":1.0,"uncertainty":.85},
         taxonomyStatus="verified_species",
-        signals_unused=True)
+        verifiedTaxonEvidence={"taxonId":"curated-reference-id-17",
+                              "basis":"expert_review",
+                              "source":"independent-review-2026-11-03"})
     # Exercise a verified rarity assessment, not a detector hypothesis.
     faint["signals"]["verifiedTaxonRarity"]=.97
     scored=score_moment(faint)
@@ -253,3 +259,14 @@ def test_cli_event_manifest_is_unscored_until_explicit_review(tmp_path,monkeypat
     assert ranked["moments"][0]["taxonomyStatus"]=="unverified"
     assert ranked["moments"][0]["reviewEligibility"]["autoPublish"] is False
     assert src.read_bytes()==raw
+
+
+
+def test_self_asserted_verified_species_without_provenance_never_uses_rarity():
+    unsupported=moment("claimed-rare",taxonomyStatus="verified_species",
+                       signals={"verifiedTaxonRarity":1.0})
+    scored=score_moment(unsupported)
+    assert scored["signalsUsed"]["verifiedTaxonRarity"] is None
+    assert scored["taxonReviewProvenanceProvided"] is False
+    assert "self_asserted_taxon_missing_review_provenance" in scored["reasonCodes"]
+
