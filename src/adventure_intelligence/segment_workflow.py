@@ -18,7 +18,7 @@ from .sources import resolve_source
 from .segment_intelligence import (
     VERSION,PROMPTS,MAX_FRAME_COUNT,SegmentModel,coarse_timestamps,
     score_segment_frame,refinement_times,build_segments,overlay_events,
-    html_review,
+    wildlife_priority_times,html_review,
 )
 
 
@@ -74,6 +74,7 @@ def scan_segments(workspace:Path,asset_id:str,output_dir:Path,*,
             "refineFrames":refine_frames,"prompts":PROMPTS[resolved_activity],
             "sourceTimeline":"requested_video_relative_ms",
             "decodedSourcePts":"preserved_separately_not_zero_normalized",
+            "marinePriorityStrategy":"cached_unverified_proposals_max_6_v1",
         }
         config_hash=_hash(config)
         if target.exists():
@@ -124,12 +125,23 @@ def scan_segments(workspace:Path,asset_id:str,output_dir:Path,*,
                           "timestampBasis":"decoded_frame_pts",
                           "stage":stage,"png":png,**result}
 
+    marine_budget=(min(6,max_frames-refine_frames-3)
+                   if object_frames and resolved_activity=="snorkeling" else 0)
     coarse=coarse_timestamps(duration_ms,step_ms=step_seconds*1000,
-                             max_frames=max_frames,refine_budget=refine_frames)
-    decode_stage(coarse,"coarse")
-    initial=[{k:v for k,v in x.items() if k!="png"}
-             for t,x in sorted(collected.items())]
-    targeted=refinement_times(initial,budget=max_frames-len(coarse))
+                             max_frames=max_frames-marine_budget,
+                             refine_budget=refine_frames)
+    marine_priorities=wildlife_priority_times(object_frames,duration_ms,
+                                               limit=marine_budget)
+    # Allocate at most six of the coarse-frame slots to known cached marine
+    # observations, keeping the total frame budget unchanged.
+    coverage_budget=max_frames-refine_frames
+    priority_extra=[t for t in marine_priorities if t not in coarse]
+    initial=sorted(coarse+priority_extra[:max(0,coverage_budget-len(coarse))])
+    decode_stage(initial,"coarse")
+    initial_observations=[{k:v for k,v in x.items() if k!="png"}
+                          for t,x in sorted(collected.items())]
+    targeted=refinement_times(initial_observations,
+                              budget=min(refine_frames,max_frames-len(initial)))
     targeted=[t for t in targeted if 0<=t<duration_ms and t not in collected]
     decode_stage(targeted[:refine_frames],"refine")
     after=source.stat()
@@ -177,7 +189,8 @@ def scan_segments(workspace:Path,asset_id:str,output_dir:Path,*,
         "frameDecodeErrors":errors,
         "budget":{
             "maxFrameInference":max_frames,
-            "coarsePlanned":len(coarse),
+            "coarsePlanned":len(initial),
+            "marinePriorityPlanned":len(initial)-len(coarse),
             "refinementPlanned":len(targeted[:refine_frames]),
             "actualSuccessful":len(valid),
             "skipped":len(errors),
