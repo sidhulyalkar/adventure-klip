@@ -47,7 +47,7 @@ def scan_segments(workspace:Path,asset_id:str,output_dir:Path,*,
         raise ValueError("Invalid max-frames and refinement budget")
     workspace=Path(workspace).expanduser().resolve()
     target=Path(output_dir).expanduser().resolve()
-    if (not target.is_relative_to(workspace) or
+    if (not target.is_relative_to(workspace) or target==workspace or
             target.relative_to(workspace).parts[0] not in ("reports","exports")):
         raise ValueError("Segment packet must be under workspace reports/ or exports/")
     with connect(workspace) as db:
@@ -77,6 +77,9 @@ def scan_segments(workspace:Path,asset_id:str,output_dir:Path,*,
             "marinePriorityStrategy":"cached_unverified_proposals_max_6_v1",
         }
         config_hash=_hash(config)
+        # Verify the indexed source even when reusing an existing report.
+        # A report must never silently refer to media changed in-place.
+        source=resolve_source(db,row)
         if target.exists():
             if not target.is_dir() or not (target/"config.json").is_file():
                 raise ValueError("Existing segment folder is incomplete or incompatible")
@@ -90,8 +93,7 @@ def scan_segments(workspace:Path,asset_id:str,output_dir:Path,*,
                     "review":str(target/"review.html"),
                     "report":str(target/"report.json"),
                     "segments":len(report["segments"])}
-        # Hash the actual source before using any preexisting semantic evidence.
-        source=resolve_source(db,row)
+        # Cached detector documents are checksum-verified independently.
         object_frames={}
         if resolved_activity=="snorkeling":
             for provider in ("ecology-owlv2","owlv2"):
