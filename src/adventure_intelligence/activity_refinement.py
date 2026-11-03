@@ -290,6 +290,8 @@ def refine_activities(workspace:Path,input_dir:Path,output_dir:Path,*,
                 source_kind=mode
                 images=[]
                 times=[]
+                source_pts=[]
+                frame_errors=[]
                 raw=[]
                 if mode=="thumbnail":
                     file=input_dir/"thumbnails"/f"{aid}.jpg"
@@ -299,6 +301,7 @@ def refine_activities(workspace:Path,input_dir:Path,output_dir:Path,*,
                         raise ValueError("Oversized cached thumbnail")
                     raw=[file.read_bytes()]
                     times=[int(asset["duration"]*500)]
+                    source_pts=[None]  # cached thumbnail has no fresh PTS proof
                     images=[f"thumbnails/{aid}-000.jpg"]
                     (target/images[0]).write_bytes(_thumbnail(raw[0]))
                     source_kind="first_pass_single_thumbnail_only"
@@ -307,14 +310,15 @@ def refine_activities(workspace:Path,input_dir:Path,output_dir:Path,*,
                         source=resolve_source(db,asset)  # full content SHA before inference
                     start_stat=source.stat()
                     wanted=_sample_times(int(asset["duration"]*1000),frames)
-                    frame_errors=[]
                     for t in wanted:
                         try:
                             png,timing=extract_frame_png(source,t,width=384)
-                            if timing.get("timestampBasis")!="decoded_frame_pts":
+                            if (timing.get("timestampBasis")!="decoded_frame_pts"
+                                    or type(timing.get("decodedPtsMs")) is not int):
                                 raise ValueError("Frame lacks source PTS")
                             raw.append(png)
                             times.append(t)
+                            source_pts.append(timing["decodedPtsMs"])
                         except (OSError,ValueError,RuntimeError) as exc:
                             frame_errors.append({"requestedMs":t,"reason":str(exc)[:120]})
                     if len(raw)<3:
@@ -333,8 +337,9 @@ def refine_activities(workspace:Path,input_dir:Path,output_dir:Path,*,
                 vectors=model.image_vectors(raw)
                 if len(vectors)!=len(raw):
                     raise ValueError("Refinement encoder returned wrong frame count")
-                observations=[{"requestedMs":t,**_scores(v,model.text_vectors)}
-                              for t,v in zip(times,vectors)]
+                observations=[{"requestedMs":t,"sourceDecodedPtsMs":pts,
+                               **_scores(v,model.text_vectors)}
+                              for t,pts,v in zip(times,source_pts,vectors)]
                 decision=_summarize(observations)
                 record={"configHash":config_hash,"assetId":aid,
                         "basename":Path(asset["stored_path"]).name,
@@ -344,6 +349,7 @@ def refine_activities(workspace:Path,input_dir:Path,output_dir:Path,*,
                         "processorHash":model.processor_hash,
                         "firstPassStatus":(item["original"] or {}).get("decision",{}).get("status"),
                         "observations":observations,"decision":decision,"images":images,
+                        "frameDecodeErrors":frame_errors,
                         "sourceMediaRechecked":mode=="sampled",
                         "limitations":["Zero-shot cosine is not calibrated",
                                        "Snorkeling requires human verification",
