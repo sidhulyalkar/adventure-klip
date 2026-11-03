@@ -217,7 +217,8 @@ def _visual_groups(db, workspace: Path, asset_id: str) -> dict:
 
 def build_ecology_context(workspace: Path, asset_id: str,
                           site_file: Path, snapshot_file: Path, *,
-                          radius_km: float = 30., top: int = 30) -> dict:
+                          radius_km: float = 30., top: int = 30,
+                          with_cached_siglip2: bool = False) -> dict:
     """Return local-only context, with locations omitted from output by default."""
     if not isinstance(asset_id, str) or len(asset_id) != 64 or any(
             c not in "0123456789abcdef" for c in asset_id):
@@ -308,7 +309,7 @@ def build_ecology_context(workspace: Path, asset_id: str,
                     for (left, right), count in sorted(
                         pairs.items(), key=lambda e: (-e[1], e[0]))
                     if left in selected and right in selected][:50]
-    return {
+    report = {
         "schemaVersion": 1, "version": VERSION, "assetId": asset_id,
         "status": "ecological_shortlist_only" if candidates else "no_nearby_snapshot_records",
         "sourceSnapshotSha256": source_sha, "siteSha256": site_sha,
@@ -329,3 +330,16 @@ def build_ecology_context(workspace: Path, asset_id: str,
             "Taxa absent from this snapshot are unknown, not absent from the environment.",
         ],
     }
+    if with_cached_siglip2:
+        from .ecology_embeddings import cached_siglip2_retrieval
+        retrieval = cached_siglip2_retrieval(workspace, asset_id, report["candidates"])
+        report["embeddingRetrieval"] = {
+            "status": retrieval["status"],
+            "modelKeySha256": retrieval.get("modelKeySha256"),
+            "note": "Never a confirmed species sighting or calibrated classifier",
+        }
+        for candidate in report["candidates"]:
+            result = retrieval["proposals"].get(candidate["taxonId"])
+            if result is not None:
+                candidate["visualRetrieval"] = result
+    return report
