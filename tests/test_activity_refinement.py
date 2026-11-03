@@ -89,6 +89,10 @@ def test_white_sand_blue_fraction_zero_but_underwater_review_candidate(setup,mon
     assert refined["decision"]["confidence"] is None
     assert refined["decision"]["underwaterVotes"]==5
     assert refined["sourceMediaRechecked"] is True
+    assert len(refined["observations"])==5
+    assert all(o["sourceDecodedPtsMs"]==o["requestedMs"]+20
+               for o in refined["observations"])
+    assert refined["frameDecodeErrors"]==[]
     assert len(refined["images"])==3
     assert all((folder/p).is_file() for p in refined["images"])
     assert file.read_bytes()==raw
