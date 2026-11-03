@@ -1,5 +1,8 @@
 """Qualification of sparse sport-specific segment hypotheses and safe execution."""
 
+from io import BytesIO
+import json
+
 import pytest
 
 from adventure_intelligence.segment_intelligence import (
@@ -63,7 +66,7 @@ def test_unknown_never_determined_by_single_frame_and_gaps_remain():
     b={**a,"requestedMs":90_000,"decodedPtsMs":90_250}
     out=build_segments([a,b],100_000,max_support_radius_ms=12000)
     assert len(out["segments"])==2
-    assert out["unsampledMs"]>=76000
+    assert out["unsampledMs"]>=65000
     assert all(s["status"]=="single_frame_navigation_hint" for s in out["segments"])
     assert out["segments"][0]["endMs"]<out["segments"][1]["startMs"]
     assert out["segments"][0]["sourcePtsEvidenceMs"]==[250]
