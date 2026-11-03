@@ -355,6 +355,13 @@ def build_ecology_context(workspace: Path, asset_id: str,
         source, digest, nodes = load_taxonomy(taxonomy_file)
         reconciled = reconcile_taxa(report["candidates"], nodes)
         report["candidates"] = reconciled["candidates"]
+        for candidate in report["candidates"]:
+            # A reviewed crosswalk may correct a generic "other" taxon group.
+            # Attach any existing broad-group detector evidence, but do not
+            # change scores or claim the named taxon is visually present.
+            if candidate.get("broadVisualProposal") is None:
+                candidate["broadVisualProposal"] = visual.get(
+                    candidate["biologicalGroup"])
         report["taxonomyCrosswalk"] = {
             "version": reconciled["version"], "source": source,
             "snapshotSha256": digest,
