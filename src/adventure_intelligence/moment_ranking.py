@@ -102,9 +102,18 @@ def validate_moment(raw:dict) ->dict:
     if set(evidence)-set(SIGNALS):
         raise ValueError("Unrecognized signal keys")
     signals={name:_numeric_signal(evidence.get(name),name) for name in SIGNALS}
-    # Rarity is an explicit verified species-level value, NEVER derived from
-    # merely seeing an animal-shaped object or a plausible occurrence range.
-    if taxonomy!="verified_species":
+    verification=raw.get("verifiedTaxonEvidence")
+    provenance_valid=(
+        taxonomy=="verified_species" and isinstance(verification,dict)
+        and verification.get("basis") in ("expert_review","curated_reference_review")
+        and isinstance(verification.get("taxonId"),str)
+        and 1<=len(verification["taxonId"])<=160
+        and isinstance(verification.get("source"),str)
+        and 3<=len(verification["source"])<=240
+    )
+    # A self-asserted "verified_species" field does not create verification.
+    # Require a documented species-level review/referent to use rarity.
+    if not provenance_valid:
         signals["verifiedTaxonRarity"]=None
     notes=raw.get("evidenceNotes",[])
     if (not isinstance(notes,list) or len(notes)>20
@@ -114,6 +123,7 @@ def validate_moment(raw:dict) ->dict:
         "momentId":ident,"activity":activity,"assetId":aid,
         "startMs":a,"endMs":b,"sessionId":session,"subjectGroup":topic,
         "taxonomyStatus":taxonomy,
+        "verifiedTaxonProvenanceProvided":provenance_valid,
         "humanReview":raw.get("humanReview") or "unreviewed",
         "signals":signals,
         "evidenceNotes":notes,
@@ -137,7 +147,9 @@ def score_moment(moment:dict)->dict:
     reasons=[]
     if m["taxonomyStatus"]!="verified_species":
         reasons.append("no_species_rarity_bonus_without_verification")
-    if m["taxonomyStatus"]=="verified_species" and s["verifiedTaxonRarity"] is None:
+    if m["taxonomyStatus"]=="verified_species" and not m["verifiedTaxonProvenanceProvided"]:
+        reasons.append("self_asserted_taxon_missing_review_provenance")
+    elif m["taxonomyStatus"]=="verified_species" and s["verifiedTaxonRarity"] is None:
         reasons.append("verified_taxon_but_rarity_unassessed")
     if s["subjectVisibility"] is None:
         reasons.append("subject_visibility_unassessed")
@@ -173,6 +185,7 @@ def score_moment(moment:dict)->dict:
             "autoPublish":False,
         },
         "missingSignalFields":missing,
+        "taxonReviewProvenanceProvided":m["verifiedTaxonProvenanceProvided"],
         "evidenceNotes":m["evidenceNotes"],
         "reasonCodes":reasons,
         "signalsUsed":s,
