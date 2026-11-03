@@ -102,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     adaptive.add_argument("--limit",type=int,default=8,
         help="Pilot size; use --limit 0 only if you explicitly want the full library")
     adaptive.add_argument("--activity",choices=["all","unknown","ski","bike","snorkeling"],default="all")
+    adaptive.add_argument("--asset",action="append",
+        help="Optional exact source SHA-256 to plan; repeat for up to 16 verified assets")
     adaptive.add_argument("--coverage-seconds",type=float,default=45)
     adaptive.add_argument("--interest-seconds",type=float,default=2)
     adaptive.add_argument("--max-frames",type=int,default=128)
@@ -387,7 +389,8 @@ def main(argv: list[str] | None = None) -> int:
             pilot_limit=None if args.limit==0 else args.limit
             plan=build_plan(root,coverage_seconds=args.coverage_seconds,
                 interest_seconds=args.interest_seconds,max_frames=args.max_frames,
-                limit=pilot_limit,activity=args.activity)
+                limit=pilot_limit,activity=args.activity,
+                asset_ids=args.asset)
             if not plan["assets"]:
                 raise ValueError("No valid-duration assets matched the activity")
             with connect(root) as db:
