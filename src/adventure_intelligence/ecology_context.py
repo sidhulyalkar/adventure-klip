@@ -278,7 +278,13 @@ def build_ecology_context(workspace: Path, asset_id: str,
             "ecologicalPriority": round(ranking, 5),
             "supportingRecords": len(rows),
             "independentDatasets": len(dataset_weights),
-            "nearestRecordDistanceKm": round(min(x[1] for x in rows), 1),
+            # Public occurrence IDs plus precise distances could reconstruct
+            # a private filming location; publish only a coarse proximity band.
+            "nearestRecordDistanceBand": (
+                "within_10_km" if min(x[1] for x in rows) < 10 else
+                "10_to_30_km" if min(x[1] for x in rows) < 30 else
+                "30_to_100_km" if min(x[1] for x in rows) < 100 else
+                "100_to_250_km"),
             "exampleReferences": [
                 {"datasetId": r["datasetId"], "recordId": r["recordId"]}
                 for _, _, r in rows[:3]],
