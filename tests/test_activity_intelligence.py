@@ -285,7 +285,7 @@ def test_real_classifier_uses_hub_snapshot_when_config_private_commit_missing(
         def tolist(self):
             return [[1.,0.] for _ in range(4)]
 
-    class FakeInput:
+    class FakeInput(dict):
         def to(self,device):
             return self
 
