@@ -217,3 +217,19 @@ def test_recovery_cli_with_signed_plan(partial_job,capsys):
     got=json.loads(capsys.readouterr().out)
     assert got["availableFrames"]==len(times)-1
     assert got["missingRequestedTimesMs"]==[times[-1]]
+
+
+
+def test_real_duration_drift_still_refuses_signed_plan(partial_job):
+    ws,aid,source,raw,planfile,times,cid=partial_job
+    with connect(ws) as db:
+        db.execute("UPDATE assets SET duration=95.0 WHERE id=?",(aid,))
+        db.commit()
+    with pytest.raises(ValueError,match="duration differs from original signed plan"):
+        recover_semantic_frames(ws,aid,planfile)
+    with connect(ws) as db:
+        row=db.execute(
+            "SELECT status FROM semantic_jobs WHERE asset_id=? AND config_id=?",
+            (aid,cid)).fetchone()
+        assert row["status"]=="failed"
+    assert source.read_bytes()==raw
