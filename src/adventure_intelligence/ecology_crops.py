@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from io import BytesIO
+from html import escape
 import json
 import math
 from pathlib import Path
@@ -20,6 +21,45 @@ from .safety import protect_source_output
 from .sources import resolve_source, verified_digest
 
 VERSION = "ecology-crop-evidence-v1"
+
+
+def _contact_sheet(manifest: dict) -> str:
+    """Self-contained, offline, safely escaped evidence review contact sheet."""
+    cards = []
+    for crop in manifest["crops"]:
+        image = escape(crop["image"], quote=True)
+        label = escape(crop["label"])
+        group = escape(crop["biologicalGroup"])
+        stamp = f'{crop["requestedMs"] / 1000:.3f}s'
+        status = "Unverified object proposal"
+        cards.append(
+            '<article class="tile"><img loading="lazy" alt="Candidate crop" '
+            f'src="{image}"><div class="body"><strong>{label}</strong>'
+            f'<span>{group} · {stamp}</span><small>{status}</small></div></article>'
+        )
+    if not cards:
+        cards.append('<p>No PTS-verified crops were available for review.</p>')
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Klip · Marine evidence review</title><style>'
+        'body{font-family:system-ui,sans-serif;margin:0;background:#101820;'
+        'color:#e7eff5;padding:26px;max-width:1400px}'
+        'h1{font-size:1.5rem;margin:0 0 .5rem}p{color:#b7c7d1;line-height:1.5}'
+        '.grid{display:grid;grid-template-columns:repeat(auto-fill,'
+        'minmax(min(100%,240px),1fr));gap:16px;margin:24px 0}'
+        '.tile{background:#1a2a34;border:1px solid #30424d;'
+        'border-radius:12px;overflow:hidden}'
+        'img{display:block;width:100%;height:220px;object-fit:contain;'
+        'background:#091117}.body{padding:12px;display:grid;gap:5px}'
+        '.body span,.body small{color:#b7c7d1}'
+        'small{font-size:.78rem}</style></head><body>'
+        '<h1>Marine evidence review</h1>'
+        '<p>Local, unverified object crops. These are not confirmed sightings, '
+        'species identities, or animal counts. Refer to manifest.json for '
+        'detector provenance, checksums and source timestamp verification.</p>'
+        '<section class="grid">' + ''.join(cards) + '</section></body></html>'
+    )
 
 
 def _source_row(workspace, asset_id: str):
@@ -248,8 +288,11 @@ def create_crop_packet(workspace: Path, asset_id: str, output_dir: Path, *,
     }
     with (target / "manifest.json").open("x", encoding="utf-8") as outfile:
         outfile.write(json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n")
+    with (target / "index.html").open("x", encoding="utf-8") as outfile:
+        outfile.write(_contact_sheet(manifest))
     return {
         "status": manifest["status"], "manifest": str(target / "manifest.json"),
+        "reviewHtml": str(target / "index.html"),
         "cropCount": len(selected), "failedCrops": len(failures),
         "uniqueFrameDecodes": decode_count,
         "sourceVerifiedBeforeAndAfter": True,
