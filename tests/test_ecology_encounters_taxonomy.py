@@ -212,3 +212,21 @@ def test_duplicate_boxes_not_mistaken_for_multiple_animals(setup, monkeypatch):
     assert len(result["candidateWindows"]) == 1
     assert result["candidateWindows"][0]["proposalBoxCount"] == 1
     assert result["candidateWindows"][0]["distinctIndividualCount"] is None
+
+
+def test_rank_conflict_abstains_instead_of_promoting_species(tmp_path):
+    _, _, nodes = load_taxonomy(_snapshot(tmp_path))
+    items = [
+        {"taxonId": "worms:11", "scientificName": "Bad source",
+         "taxonRank": "family", "biologicalGroup": "fish", "searchPriority": .8},
+        {"taxonId": "worms:1", "scientificName": "Synthetic fish",
+         "taxonRank": "species", "biologicalGroup": "other", "searchPriority": .4},
+    ]
+    result = reconcile_taxa(items, nodes)
+    assert result["canonicalCandidateCount"] == 2
+    conflict = next(c for c in result["candidates"] if c["taxonId"] == "worms:11")
+    assert conflict["taxonomy"]["status"] == "taxonomic_disagreement_requires_review"
+    assert conflict["speciesIdentifiedInVideo"] is False if "speciesIdentifiedInVideo" in conflict else True
+    accepted = next(c for c in result["candidates"] if c["taxonId"] == "worms:1")
+    assert accepted["biologicalGroup"] == "fish"
+    assert accepted["taxonomy"]["originalBiologicalGroup"] == "other"
