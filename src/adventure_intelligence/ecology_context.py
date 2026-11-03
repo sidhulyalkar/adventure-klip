@@ -23,10 +23,13 @@ ALLOWED_GROUPS = {
 }
 # These labels are *object-level queries*, not taxonomy or species identities.
 OBJECT_GROUPS = {
-    "fish": "fish", "shark": "fish", "ray": "fish",
+    "fish": "fish", "shark": "fish", "ray": "fish", "eel": "fish",
     "sea turtle": "marine_reptile", "dolphin": "marine_mammal",
     "whale": "marine_mammal", "sea lion": "marine_mammal",
+    "sea otter": "marine_mammal",
     "octopus": "invertebrate", "jellyfish": "invertebrate",
+    "sea urchin": "invertebrate", "sea anemone": "invertebrate",
+    "sponge": "invertebrate", "crab": "invertebrate", "lobster": "invertebrate",
     "nudibranch": "invertebrate", "sea star": "invertebrate",
     "coral": "coral", "kelp": "macroalgae", "seagrass": "seagrass",
 }
@@ -188,9 +191,12 @@ def _weight(item: dict, site: dict, radius_km: float):
 
 def _visual_groups(db, workspace: Path, asset_id: str) -> dict:
     from .scene_atlas import frames_for_asset
-    frames, _ = frames_for_asset(db, workspace, asset_id, "owlv2")
-    result = defaultdict(lambda: {"labels": set(), "times": set()})
-    for frame in frames:
+    result = defaultdict(lambda: {"labels": set(), "times": set(), "providers": set()})
+    frames_by_provider = []
+    for provider in ("owlv2", "ecology-owlv2"):
+        frames, _ = frames_for_asset(db, workspace, asset_id, provider)
+        frames_by_provider.extend((provider, frame) for frame in frames)
+    for provider, frame in frames_by_provider:
         t = frame.get("decodedPtsMs")
         if type(t) is not int or t < 0:
             t = frame.get("tMs")
@@ -205,9 +211,11 @@ def _visual_groups(db, workspace: Path, asset_id: str) -> dict:
             if not math.isfinite(score) or not 0 <= score <= 1:
                 continue
             result[group]["labels"].add(label.strip().lower())
+            result[group]["providers"].add(provider)
             if type(t) is int and t >= 0:
                 result[group]["times"].add(t)
     return {group: {"labels": sorted(v["labels"]),
+                    "providers": sorted(v["providers"]),
                     "sampleTimesMs": sorted(v["times"])[:40],
                     "sampleCount": len(v["times"]),
                     "status": "unverified_broad_object_query"}
