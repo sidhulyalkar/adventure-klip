@@ -194,3 +194,21 @@ def test_explicit_absence_and_dropped_obis_do_not_produce_species_prior():
         citation="synthetic", license="test")
     assert doc["importStatistics"]["retainedRecords"] == 1
     assert doc["records"][0]["recordId"] == "4"
+
+
+def test_duplicate_boxes_not_mistaken_for_multiple_animals(setup, monkeypatch):
+    ws, aid, _, _ = setup
+    first = _frame(5000, "fish", 10)
+    repeated = dict(first["objects"][0])
+    repeated["score"] = .6
+    first["objects"].append(repeated)
+    monkeypatch.setattr("adventure_intelligence.ecology_encounters.frames_for_asset",
+                        lambda db, ws2, aid2, provider:
+                        ([first, {"tMs": 10000, "objects": None}, None], "model-v1")
+                        if provider == "ecology-owlv2" else ([], None))
+    result = build_encounter_report(ws, aid)
+    assert result["audit"]["validObjectBoxes"] == 2
+    assert result["audit"]["suppressedDuplicateBoxes"] == 1
+    assert len(result["candidateWindows"]) == 1
+    assert result["candidateWindows"][0]["proposalBoxCount"] == 1
+    assert result["candidateWindows"][0]["distinctIndividualCount"] is None
