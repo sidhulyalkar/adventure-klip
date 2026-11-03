@@ -40,6 +40,7 @@ from .activity_confirm import confirm_activity
 from .segment_workflow import scan_segments
 from .semantic_recovery import recover_semantic_frames
 from .event_context import build_event_context
+from .moment_ranking import create_rank_report
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -127,6 +128,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Limit newly scanned records; 0 means all catalog assets")
     activity_scan.add_argument("--allow-model-download",action="store_true",
         help="Explicit permission to download SigLIP2 model weights if not cached")
+    rank_moments=sub.add_parser("rank-moments",
+        help="Explainable multi-objective moment triage from cached event manifest or reviewed features")
+    rank_moments.add_argument("--input",required=True,type=Path)
+    rank_moments.add_argument("--output-dir",required=True,type=Path)
+    rank_moments.add_argument("--reviews",type=Path,
+        help="Optional curated JSON overrides; only human/validated evidence, no species guesses")
+    rank_moments.add_argument("--limit",type=int,default=20)
+    rank_moments.add_argument("--unbalanced",action="store_true",
+        help="Disable round-robin sport exposure; preliminary scores are uncalibrated")
     semantic_recover=sub.add_parser("semantic-recover",
         help="Recover checksum-verified partial marine frame evidence from a failed adaptive job")
     semantic_recover.add_argument("--asset",required=True)
@@ -460,6 +470,11 @@ def main(argv: list[str] | None = None) -> int:
                 _print(recover_semantic_frames(root,args.asset,args.plan,
                     provider=args.provider,max_missing=args.max_missing,
                     min_fraction=args.min_fraction))
+        elif args.command=="rank-moments":
+            with lock_workspace(root):
+                _print(create_rank_report(root,args.input,args.output_dir,
+                    review_file=args.reviews,limit=args.limit,
+                    balance_sports=not args.unbalanced))
         elif args.command=="event-context":
             with lock_workspace(root):
                 _print(build_event_context(root,args.asset,args.output_dir,
