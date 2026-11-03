@@ -6,10 +6,8 @@ bounded sparse sampling and at most one additional boundary refinement pass.
 """
 from __future__ import annotations
 
-from hashlib import sha256
 from pathlib import Path
 import json
-import math
 
 from .activity_intelligence import _hash, _thumbnail
 from .catalog import connect
