@@ -12,7 +12,7 @@ import math
 
 from .ecology_context import OBJECT_GROUPS
 from .scene_atlas import frames_for_asset
-from .tracking import _bbox, associate_boxes
+from .tracking import _bbox, _iou, associate_boxes
 
 VERSION = "ecology-encounter-queue-v1"
 PROVIDERS = ("ecology-owlv2", "owlv2")
@@ -26,7 +26,8 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
         raise ValueError("Invalid encounter queue bounds")
     window_list = []
     audited = {"cachedFrameSamples": 0, "validObjectBoxes": 0,
-               "skippedInvalidBoxes": 0, "cachedProviders": []}
+               "skippedInvalidBoxes": 0, "suppressedDuplicateBoxes": 0,
+               "truncatedCachedFrames": 0, "cachedProviders": []}
     for provider in PROVIDERS:
         frames, model_key = frames_for_asset(db, workspace, asset_id, provider)
         if not frames or not model_key:
@@ -36,7 +37,10 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
             "modelKeySha256": sha256(model_key.encode()).hexdigest(),
         })
         indexed = []
+        audited["truncatedCachedFrames"] += max(0, len(frames) - 512)
         for original in frames[:512]:
+            if not isinstance(original, dict):
+                continue
             requested = original.get("tMs")
             # Source PTS is not necessarily a 0-based video-relative timestamp.
             # The request is the only safe cue for relative clip boundaries.
@@ -44,7 +48,10 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
                 continue
             audited["cachedFrameSamples"] += 1
             boxes = []
-            for obj in original.get("objects", [])[:100]:
+            objects = original.get("objects", [])
+            if not isinstance(objects, list):
+                continue
+            for obj in objects[:100]:
                 if not isinstance(obj, dict):
                     continue
                 label = obj.get("label")
@@ -59,12 +66,27 @@ def encounter_queue(db, workspace, asset_id: str, duration_ms: int, *,
                 if obj.get("coordinateSpace") not in ("sampled_image_pixels",):
                     audited["skippedInvalidBoxes"] += 1
                     continue
+                if (box[0] < 0 or box[1] < 0 or box[2] > 4096 or box[3] > 4096):
+                    audited["skippedInvalidBoxes"] += 1
+                    continue
                 boxes.append({**obj, "label": label.lower().strip(),
                               "biologicalGroup": group, "score": float(score)})
                 audited["validObjectBoxes"] += 1
-            if boxes:
+            # Within-frame high-overlap duplicate same-label boxes are usually
+            # duplicate detection proposals, not distinct animals. This does
+            # not merge overlapping boxes for different organism labels.
+            dedup = []
+            for obj in sorted(boxes, key=lambda b: (-b["score"], b["label"],
+                                                     tuple(_bbox(b)))):
+                if any(existing["label"] == obj["label"]
+                       and _iou(_bbox(existing), _bbox(obj)) >= .85
+                       for existing in dedup):
+                    audited["suppressedDuplicateBoxes"] += 1
+                    continue
+                dedup.append(obj)
+            if dedup:
                 indexed.append({"tMs": requested, "decodedPtsMs": None,
-                                "objects": boxes})
+                                "objects": dedup})
         if not indexed:
             continue
         # A track only bridges a small interval of nearby sampled frames.
