@@ -116,7 +116,7 @@ def test_box_tracking_clips_are_bounded_and_not_animal_counts(setup, monkeypatch
         _frame(89000, "sea urchin", 7),
     ]
 
-    def fake_frames(db, workspace, asset_id, provider):
+    def fake_frames(db, workspace, asset_id, provider, **kwargs):
         assert workspace == ws and asset_id == aid
         return (cached, '{"provider":"ecology-owlv2"}') if provider == "ecology-owlv2" else ([], None)
 
@@ -152,7 +152,7 @@ def test_invalid_boxes_and_provider_collision_never_create_tracks(setup, monkeyp
         _frame(3000, "fish", 2),
     ]
     monkeypatch.setattr("adventure_intelligence.ecology_encounters.frames_for_asset",
-                        lambda db, ws2, aid2, provider:
+                        lambda db, ws2, aid2, provider, **kwargs:
                         (source, '{"provider":"' + provider + '"}'))
     result = build_encounter_report(ws, aid)
     assert result["audit"]["skippedInvalidBoxes"] == 4
@@ -165,7 +165,7 @@ def test_encounters_cli_writes_new_report_without_source_reads(setup, monkeypatc
     ws, aid, movie, original = setup
     called = []
     monkeypatch.setattr("adventure_intelligence.ecology_encounters.frames_for_asset",
-                        lambda *args: (called.append(1) or [], None))
+                        lambda *args, **kwargs: (called.append(1) or [], None))
     target = ws / "exports" / "encounters.json"
     args = ["--workspace", str(ws), "ecology-encounters", "--asset", aid,
             "--output", str(target), "--max-results", "4"]
@@ -206,7 +206,7 @@ def test_duplicate_boxes_not_mistaken_for_multiple_animals(setup, monkeypatch):
     repeated["score"] = .6
     first["objects"].append(repeated)
     monkeypatch.setattr("adventure_intelligence.ecology_encounters.frames_for_asset",
-                        lambda db, ws2, aid2, provider:
+                        lambda db, ws2, aid2, provider, **kwargs:
                         ([first, {"tMs": 10000, "objects": None}, None], "model-v1")
                         if provider == "ecology-owlv2" else ([], None))
     result = build_encounter_report(ws, aid)

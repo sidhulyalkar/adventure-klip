@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 
-from .semantic_jobs import completed_document
+from .semantic_jobs import completed_document, verified_document
 from .examples import latest_examples
 from .audio_triage import audio_window
 from .acoustics import AUDIO_VERSION
@@ -37,15 +37,19 @@ def similarity(a: list[float], b: list[float]) -> float | None:
 
 
 def frames_for_asset(db, workspace, asset_id: str,
-                     provider: str = "siglip2") -> tuple[list[dict], str | None]:
+                     provider: str = "siglip2", *,
+                     allow_partial: bool = False) -> tuple[list[dict], str | None]:
+    # Partial evidence must be explicitly requested by a review-only reader.
+    # Ranking/scoring paths retain the complete-only default.
+    allowed=("('completed','partial')" if allow_partial else "('completed')")
     active=db.execute(
-        """SELECT j.* FROM semantic_jobs j JOIN semantic_active a
+        f"""SELECT j.* FROM semantic_jobs j JOIN semantic_active a
            ON j.asset_id=a.asset_id AND j.config_id=a.config_id
-           WHERE a.asset_id=? AND a.provider=? AND j.status='completed'""",
+           WHERE a.asset_id=? AND a.provider=? AND j.status IN {allowed}""",
         (asset_id,provider)).fetchone()
     if active is None:
         return [],None
-    doc=completed_document(workspace,active)
+    doc=verified_document(workspace,active,allow_partial=allow_partial)
     if doc is None or doc.get("provider")!=provider:
         return [],None
     config=doc.get("config",{})

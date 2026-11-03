@@ -16,21 +16,37 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def completed_document(workspace, job):
-    if job['status'] != 'completed' or not job['filename']:
+def verified_document(workspace, job, *, allow_partial=False):
+    """Never treat partial semantic coverage as complete by default."""
+    status=job['status']
+    if status not in ({'completed','partial'} if allow_partial else {'completed'}):
         return None
-    path = workspace/'semantics'/job['filename']
-    if path.parent.resolve() != (workspace/'semantics').resolve():
+    if not job['filename']:
+        return None
+    path=workspace/'semantics'/job['filename']
+    if path.parent.resolve()!=(workspace/'semantics').resolve():
         return None
     try:
-        raw = path.read_text()
-        doc = json.loads(raw)
+        raw=path.read_text()
+        doc=json.loads(raw)
         if (digest(raw)!=job['sha256'] or doc['assetId']!=job['asset_id']
                 or doc['configId']!=job['config_id']):
             return None
+        if status=='partial':
+            if (doc.get('coverageStatus')!='partial_verified_source'
+                    or doc.get('missingDoesNotMeanAbsent') is not True
+                    or not isinstance(doc.get('missingRequestedTimesMs'),list)
+                    or not doc['missingRequestedTimesMs']
+                    or doc.get('availableFrames')!=len(doc.get('frames',[]))):
+                return None
         return doc
     except (OSError,ValueError,KeyError,TypeError):
         return None
+
+
+def completed_document(workspace, job):
+    """Backwards compatible strictly COMPLETE document read."""
+    return verified_document(workspace,job,allow_partial=False)
 
 
 def frame_descriptor(provider, raw, t, timing=None):

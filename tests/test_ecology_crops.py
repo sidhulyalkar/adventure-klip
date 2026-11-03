@@ -43,7 +43,7 @@ def _mock_cached(monkeypatch, frames=None):
         frames = _frames()
     monkeypatch.setattr(
         "adventure_intelligence.ecology_encounters.frames_for_asset",
-        lambda db, ws, aid, provider: (
+        lambda db, ws, aid, provider, **kwargs: (
             (frames, '{"provider":"ecology-owlv2","version":"test"}')
             if provider == "ecology-owlv2" else ([], None)))
 

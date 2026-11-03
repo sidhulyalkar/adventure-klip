@@ -38,6 +38,8 @@ from .activity_apply import apply_activity_proposals
 from .activity_refinement import refine_activities
 from .activity_confirm import confirm_activity
 from .segment_workflow import scan_segments
+from .semantic_recovery import recover_semantic_frames
+from .event_context import build_event_context
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -125,6 +127,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Limit newly scanned records; 0 means all catalog assets")
     activity_scan.add_argument("--allow-model-download",action="store_true",
         help="Explicit permission to download SigLIP2 model weights if not cached")
+    semantic_recover=sub.add_parser("semantic-recover",
+        help="Recover checksum-verified partial marine frame evidence from a failed adaptive job")
+    semantic_recover.add_argument("--asset",required=True)
+    semantic_recover.add_argument("--plan",required=True,type=Path)
+    semantic_recover.add_argument("--provider",choices=["ecology-owlv2","owlv2","siglip2","context"],
+                                  default="ecology-owlv2")
+    semantic_recover.add_argument("--max-missing",type=int,default=2)
+    semantic_recover.add_argument("--min-fraction",type=float,default=.80)
+    event_context=sub.add_parser("event-context",
+        help="Create bounded before/during/after semantic embeddings from verified marine boxes")
+    event_context.add_argument("--asset",required=True)
+    event_context.add_argument("--output-dir",required=True,type=Path)
+    event_context.add_argument("--max-events",type=int,default=4)
+    event_context.add_argument("--allow-model-download",action="store_true")
     segments=sub.add_parser("segments",
         help="Sparse sport-specific scene segments, boundary investigation and review gallery")
     segments.add_argument("--asset",required=True,
@@ -438,6 +454,16 @@ def main(argv: list[str] | None = None) -> int:
             with lock_workspace(root):
                 _print(run_activity_scan(root,args.output_dir,
                     frames=args.frames,limit=args.limit,
+                    allow_model_download=args.allow_model_download))
+        elif args.command=="semantic-recover":
+            with lock_workspace(root):
+                _print(recover_semantic_frames(root,args.asset,args.plan,
+                    provider=args.provider,max_missing=args.max_missing,
+                    min_fraction=args.min_fraction))
+        elif args.command=="event-context":
+            with lock_workspace(root):
+                _print(build_event_context(root,args.asset,args.output_dir,
+                    max_events=args.max_events,
                     allow_model_download=args.allow_model_download))
         elif args.command=="segments":
             with lock_workspace(root):
