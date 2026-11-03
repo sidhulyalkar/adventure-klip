@@ -91,6 +91,17 @@ def normalize_export(raw: dict, provider: str, *, retrieved_at: str,
         if provider == "gbif" and row.get("hasGeospatialIssue") is True:
             skipped += 1
             continue
+        # OBIS exports contain explicit absences and QC-dropped occurrences.
+        # Do not convert these into positive evidence of local presence.
+        if provider == "obis" and (row.get("absence") is True
+                                   or row.get("dropped") is True):
+            skipped += 1
+            continue
+        status = _get(row, "occurrenceStatus")
+        if status is not None and str(status).strip().lower() in {
+                "absent", "absence", "not present", "false", "0"}:
+            skipped += 1
+            continue
         if provider == "gbif":
             key = _get(row, "acceptedTaxonKey", "taxonKey")
             rank = GBIF_RANKS.get(str(_get(row, "taxonRank", "rank")).upper())
