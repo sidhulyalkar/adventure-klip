@@ -115,7 +115,7 @@ def _frame_scores(text_vectors: dict, image_vectors: list[list[float]]) -> list[
         group_scores = {}
         for activity, refs in text_vectors.items():
             if not refs or any(len(v)!=len(ref) for ref in refs):
-                raise ValueError("Incompatible SigLIP2 text-image embeddings")
+                raise ValueError("Incompatible SigLIP2 text-image embedding dimensions")
             similarities = [sum(x*y for x,y in zip(v,ref)) for ref in refs]
             group_scores[activity] = max(similarities)
         ranked = sorted(group_scores, key=lambda x:(-group_scores[x],x))
@@ -291,7 +291,10 @@ def _safe_dir(workspace:Path,target:Path) -> None:
             target.relative_to(workspace).parts[0] not in {"reports","exports"}):
         raise ValueError("Activity report directory must be under workspace reports/ or exports/")
     with connect(workspace) as db:
-        protect_source_output(db,target)
+        # protect_source_output guards file paths, not existing directories.
+        # Validate prospective files so this remains resumable and cannot
+        # write inside registered original media directories.
+        protect_source_output(db,target/"config.json")
         protect_source_output(db,target/"records.jsonl")
 
 
