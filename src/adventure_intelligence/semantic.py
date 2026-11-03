@@ -12,6 +12,14 @@ import subprocess
 
 DEFAULT_QUERIES=['person','skier','skis','bicycle','mountain bike','tree','rock',
                  'snow','fish','shark','ray','sea turtle','coral','underwater reef']
+# Separate opt-in inventory. Never silently increase prompts for prior OWLv2
+# users or reinterpret object queries as accurate biological taxonomy.
+ECOLOGY_QUERIES=[
+    'fish','shark','ray','sea turtle','coral','kelp','seagrass',
+    'octopus','jellyfish','nudibranch','sea star','sea urchin',
+    'sea lion','sea otter','dolphin','whale','sea anemone',
+    'sponge','crab','lobster','eel'
+]
 VERSION='scene-sampling-pts-v3'
 
 
@@ -133,22 +141,29 @@ class OwlProvider:
     """Optional open-vocabulary detection on sampled frames; scores need validation."""
     name='owlv2'
     version='google/owlv2-base-patch16-ensemble'
-    def __init__(self,threshold:float=0.2):
+    def __init__(self,threshold:float=0.2,queries=None):
         from transformers import pipeline
         self.detector=pipeline('zero-shot-object-detection',model=self.version)
         self.threshold=threshold
-        self.cache_config={'threshold':threshold,'queries':list(DEFAULT_QUERIES),
+        self.queries=list(DEFAULT_QUERIES if queries is None else queries)
+        self.cache_config={'threshold':threshold,'queries':self.queries,
             'resolvedRevision':getattr(self.detector.model.config,'_commit_hash',None)}
     def describe(self,image_bytes:bytes)->dict:
         from PIL import Image
         import io
         image=Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        detections=self.detector(image,candidate_labels=DEFAULT_QUERIES)
+        detections=self.detector(image,candidate_labels=self.queries)
         objects=[{'label':d['label'],'score':float(d['score']),
                   'bbox':dict(d['box']),'bboxFormat':'xyxy','coordinateSpace':'sampled_image_pixels','reviewed':False} for d in detections
                  if float(d['score'])>=self.threshold]
         return {'embedding':None,'objects':objects,'keypoints':[],
                 'notes':['Zero-shot detection; labels are unverified']}
+
+class EcologyOwlProvider(OwlProvider):
+    """Optional broad marine-flora/fauna proposals, not a species classifier."""
+    name='ecology-owlv2'
+    def __init__(self,threshold:float=0.2):
+        super().__init__(threshold=threshold,queries=ECOLOGY_QUERIES)
 
 
 def frame_png(path:Path, t_ms:int, width:int=384, include_timing:bool=False):
@@ -189,6 +204,8 @@ def generate_semantics(workspace:Path,*,backend:str='histogram',
         provider=SiglipProvider()
     elif backend=='owlv2':
         provider=OwlProvider()
+    elif backend=='ecology-owlv2':
+        provider=EcologyOwlProvider()
     elif backend=='context':
         provider=ContextProvider()
     elif backend=='stack':
@@ -197,7 +214,7 @@ def generate_semantics(workspace:Path,*,backend:str='histogram',
             stack.append(PoseProvider(pose_model))
         provider=SceneStack(stack)
     else:
-        raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, context, stack')
+        raise ValueError('Unknown backend; choose histogram, siglip2, owlv2, ecology-owlv2, context, stack')
     from .semantic_jobs import run_semantics
     return run_semantics(workspace,provider,sample_seconds=sample_seconds,limit=limit,
                          max_frames=max_frames,asset_ids=asset_ids,progress=progress,
