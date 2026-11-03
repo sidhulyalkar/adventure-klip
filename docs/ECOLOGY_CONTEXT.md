@@ -109,6 +109,29 @@ klip --workspace "$WS" ecology-context \
   --output "$WS/reports/ecology-review-01.json"
 ```
 
+To enrich broad organism detection with additional marine groups, after your
+current batched histogram pilot finishes, run the **separate, opt-in**
+`ecology-owlv2` semantic provider using the original adaptive plan:
+
+```bash
+klip --workspace "$WS" adaptive-scenes \
+  --plan "$WS/exports/pov-pilot-01.json" \
+  --backend ecology-owlv2 \
+  --decode-mode batched
+```
+
+This incurs a **real object-detection model inference cost** and requires
+`.[semantic]` dependencies; unlike the ecology prior builder, it does read
+source media, verifies the originals, and may use a GPU. Do not run it
+concurrently with your current pilot or other large model jobs.
+Unlike the existing `owlv2` backend, it explicitly proposes kelp, seagrass,
+sea urchin, nudibranch, octopus, sea otter and other broad marine objects.
+Both providers keep distinct versioned caches. Neither identifies a species.
+
+When a source export omits coordinate uncertainty, import preserves it as
+**unknown** and geographic ranking is discounted. Records explicitly marked
+as having GBIF geospatial issues are omitted, not treated as precise locations.
+
 Optional **local-only SigLIP2 text-image retrieval**, if a version-matched
 completed `siglip2` cache and matching model weights already exist on disk:
 
