@@ -36,6 +36,7 @@ from .ecology_crops import create_crop_packet
 from .activity_intelligence import run_activity_scan
 from .activity_apply import apply_activity_proposals
 from .activity_refinement import refine_activities
+from .activity_confirm import confirm_activity
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -135,6 +136,14 @@ def main(argv: list[str] | None = None) -> int:
     activity_refine.add_argument("--include-other-ambiguous",action="store_true")
     activity_refine.add_argument("--exclude-failed",action="store_true")
     activity_refine.add_argument("--allow-model-download",action="store_true")
+    activity_confirm=sub.add_parser("activity-confirm",
+        help="Explicit SHA-verified human confirmation of a single activity label")
+    activity_confirm.add_argument("--asset",required=True)
+    activity_confirm.add_argument("--activity",required=True,choices=["snorkeling","ski","bike"])
+    activity_confirm.add_argument("--reviewed",action="store_true",
+        help="Affirm you visually checked the source recording")
+    activity_confirm.add_argument("--apply",action="store_true",
+        help="Write one confirmed label after a SQLite backup")
     activity_apply=sub.add_parser("activity-apply",
         help="Preview or explicitly promote a few high-consensus activity proposals")
     activity_apply.add_argument("--report-dir",required=True,type=Path)
@@ -422,6 +431,9 @@ def main(argv: list[str] | None = None) -> int:
                     include_other_ambiguous=args.include_other_ambiguous,
                     include_failed=not args.exclude_failed,
                     allow_model_download=args.allow_model_download))
+        elif args.command=="activity-confirm":
+            _print(confirm_activity(root,args.asset,args.activity,
+                reviewed=args.reviewed,apply=args.apply))
         elif args.command=="activity-apply":
             with lock_workspace(root):
                 _print(apply_activity_proposals(root,args.report_dir,
