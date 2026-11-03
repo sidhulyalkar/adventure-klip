@@ -46,7 +46,8 @@ def _observed_month(row: dict):
             return int(direct)
     except (ValueError, TypeError):
         pass
-    event = _get(row, "eventDate", "dateIdentified")
+    # Identification date is not the observation date; do not infer season from it.
+    event = _get(row, "eventDate")
     if isinstance(event, str) and len(event) >= 7 and event[4] == "-":
         try:
             return date.fromisoformat(event[:10]).month
@@ -98,7 +99,7 @@ def normalize_export(raw: dict, provider: str, *, retrieved_at: str,
             try:
                 rank = WORMS_RANKS.get(int(raw_rank))
             except (TypeError, ValueError):
-                rank = None
+                rank = GBIF_RANKS.get(str(raw_rank).upper())
             name = _get(row, "acceptedNameUsage", "scientificName", "scientificname")
             record_id = _get(row, "occurrenceID", "id")
             dataset = _get(row, "datasetID", "datasetId", "dataset_id")
