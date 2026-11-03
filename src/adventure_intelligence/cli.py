@@ -35,6 +35,8 @@ from .ecology_encounters import build_encounter_report
 from .ecology_crops import create_crop_packet
 from .activity_intelligence import run_activity_scan
 from .activity_apply import apply_activity_proposals
+from .activity_refinement import refine_activities
+from .activity_confirm import confirm_activity
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -100,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     adaptive.add_argument("--limit",type=int,default=8,
         help="Pilot size; use --limit 0 only if you explicitly want the full library")
     adaptive.add_argument("--activity",choices=["all","unknown","ski","bike","snorkeling"],default="all")
+    adaptive.add_argument("--asset",action="append",
+        help="Optional exact source SHA-256 to plan; repeat for up to 16 verified assets")
     adaptive.add_argument("--coverage-seconds",type=float,default=45)
     adaptive.add_argument("--interest-seconds",type=float,default=2)
     adaptive.add_argument("--max-frames",type=int,default=128)
@@ -120,6 +124,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Limit newly scanned records; 0 means all catalog assets")
     activity_scan.add_argument("--allow-model-download",action="store_true",
         help="Explicit permission to download SigLIP2 model weights if not cached")
+    activity_refine=sub.add_parser("activity-refine",
+        help="Targeted sandy-seabed and surface-water rescoring; NEVER changes catalog labels")
+    activity_refine.add_argument("--input-dir",type=Path,required=True,
+        help="Existing completed first-pass activity report directory")
+    activity_refine.add_argument("--output-dir",type=Path,required=True,
+        help="Separate resumable report directory in workspace reports/ or exports/")
+    activity_refine.add_argument("--mode",choices=["sampled","thumbnail"],default="sampled",
+        help="Resample source frames or use only the cached single preview thumbnail")
+    activity_refine.add_argument("--frames",type=int,default=5)
+    activity_refine.add_argument("--limit",type=int,default=0)
+    activity_refine.add_argument("--include-snorkeling-ambiguous",action="store_true")
+    activity_refine.add_argument("--include-other-ambiguous",action="store_true")
+    activity_refine.add_argument("--exclude-failed",action="store_true")
+    activity_refine.add_argument("--allow-model-download",action="store_true")
+    activity_confirm=sub.add_parser("activity-confirm",
+        help="Explicit SHA-verified human confirmation of a single activity label")
+    activity_confirm.add_argument("--asset",required=True)
+    activity_confirm.add_argument("--activity",required=True,choices=["snorkeling","ski","bike"])
+    activity_confirm.add_argument("--reviewed",action="store_true",
+        help="Affirm you visually checked the source recording")
+    activity_confirm.add_argument("--apply",action="store_true",
+        help="Write one confirmed label after a SQLite backup")
     activity_apply=sub.add_parser("activity-apply",
         help="Preview or explicitly promote a few high-consensus activity proposals")
     activity_apply.add_argument("--report-dir",required=True,type=Path)
@@ -363,7 +389,8 @@ def main(argv: list[str] | None = None) -> int:
             pilot_limit=None if args.limit==0 else args.limit
             plan=build_plan(root,coverage_seconds=args.coverage_seconds,
                 interest_seconds=args.interest_seconds,max_frames=args.max_frames,
-                limit=pilot_limit,activity=args.activity)
+                limit=pilot_limit,activity=args.activity,
+                asset_ids=args.asset)
             if not plan["assets"]:
                 raise ValueError("No valid-duration assets matched the activity")
             with connect(root) as db:
@@ -399,6 +426,17 @@ def main(argv: list[str] | None = None) -> int:
                 _print(run_activity_scan(root,args.output_dir,
                     frames=args.frames,limit=args.limit,
                     allow_model_download=args.allow_model_download))
+        elif args.command=="activity-refine":
+            with lock_workspace(root):
+                _print(refine_activities(root,args.input_dir,args.output_dir,
+                    mode=args.mode,frames=args.frames,limit=args.limit,
+                    include_snorkeling_ambiguous=args.include_snorkeling_ambiguous,
+                    include_other_ambiguous=args.include_other_ambiguous,
+                    include_failed=not args.exclude_failed,
+                    allow_model_download=args.allow_model_download))
+        elif args.command=="activity-confirm":
+            _print(confirm_activity(root,args.asset,args.activity,
+                reviewed=args.reviewed,apply=args.apply))
         elif args.command=="activity-apply":
             with lock_workspace(root):
                 _print(apply_activity_proposals(root,args.report_dir,
