@@ -181,7 +181,8 @@ def create_crop_packet(workspace: Path, asset_id: str, output_dir: Path, *,
         raise ValueError("crops-per-event must be 1..3")
     if width not in (768, 1536, 2048):
         raise ValueError("width must be 768, 1536 or 2048")
-    if not isinstance(margin, (float, int)) or not .0 <= margin <= 1.5:
+    if (not isinstance(margin, (float, int)) or isinstance(margin, bool)
+            or not math.isfinite(margin) or not .0 <= margin <= 1.5):
         raise ValueError("margin must be between 0 and 1.5")
     workspace = Path(workspace).expanduser().resolve()
     target = Path(output_dir).expanduser().resolve()
