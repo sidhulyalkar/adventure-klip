@@ -122,6 +122,10 @@ def _crop_png(raw: bytes, bbox: list, width: int, *, margin: float) -> tuple[byt
         "frameSize": [image.width, image.height],
         "cropBoundsPx": list(bounds),
         "cropSize": [crop.width, crop.height],
+        "candidateBoxSizeInSampledPixels": [round(x1-x0, 3), round(y1-y0, 3)],
+        "candidateBoxAreaFraction": round(
+            ((right-left)*(bottom-top)) / (image.width*image.height), 8),
+        "visualQualityAssessed": False,
         "coordinateTransform": "bbox_in_384px_sampled_image_scaled_by_decoded_width",
         "orientationNote": "No EXIF orientation inference; source orientation unchanged",
     }
