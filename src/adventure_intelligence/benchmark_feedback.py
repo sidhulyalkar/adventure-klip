@@ -111,7 +111,8 @@ def validate_human_review(benchmark:dict,payload:dict)->dict:
             raise ValueError(f"{key} must be null or a finite number between 0 and 1")
         numeric[key]=float(val) if val is not None else None
     if not (decision is not None or actual is not None or
-            any(v is not None for v in numeric.values())):
+            any(v is not None for v in numeric.values()) or
+            bool(notes.strip()) or bool(event_kind)):
         raise ValueError("An empty review cannot be saved as completed evidence")
     # Bare claims of rare taxa are not verification; keep the benchmark's
     # species field unverified unless a future curated taxonomy workflow
@@ -327,3 +328,79 @@ def write_benchmark_feedback(workspace:Path,benchmark_file:Path,output_dir:Path)
             "interestingControls":len(report["potentiallyMissedControlMoments"]),
             "json":str(dest/"evaluation.json"),"html":str(dest/"index.html"),
             "sourceVideosDecoded":0}
+
+
+
+def import_human_reviews(workspace:Path,benchmark_file:Path,review_file:Path)->dict:
+    """Validate the *entire* offline export before a single atomic DB write.
+
+    Unfilled template rows are skipped; changing one reviewed row appends a
+    new revision, while identical re-imports are idempotent. Neither side
+    changes the underlying source, frozen plans, or previously saved reviews.
+    """
+    root=Path(workspace).expanduser().resolve()
+    benchmark=load_benchmark(root,benchmark_file)
+    source=Path(review_file).expanduser().resolve()
+    if not source.is_file() or source.stat().st_size>4_000_000:
+        raise ValueError("Missing or oversized review JSON export")
+    raw=json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(raw,list) or len(raw)>MAX_ASSIGNMENTS:
+        raise ValueError("Expected a bounded list of exported reviews")
+    reviews=[]
+    seen=set()
+    skipped=0
+    for item in raw:
+        if not isinstance(item,dict) or not isinstance(item.get("reviewId"),str):
+            raise ValueError("Malformed offline review")
+        rid=item["reviewId"]
+        if rid in seen:
+            raise ValueError("Duplicate reviewId in import")
+        seen.add(rid)
+        if rid not in benchmark["assignments"]:
+            raise ValueError("Offline review does not belong to this benchmark")
+        ratings=item.get("ratings")
+        if (not isinstance(ratings,dict)
+                or set(ratings)-set(CRITERIA)):
+            raise ValueError("Invalid offline ratings")
+        empty=(
+            item.get("reviewDecision") is None and
+            item.get("observedEvent") is None and
+            not item.get("eventKind") and
+            not item.get("notes") and
+            all(v is None for v in ratings.values())
+        )
+        if empty:
+            skipped+=1
+            continue
+        reviews.append(validate_human_review(benchmark,item))
+    saved=0
+    unchanged=0
+    # connect() makes the complete import one commit or one rollback.
+    with connect(root) as db:
+        for review in reviews:
+            rid=review["reviewId"]
+            a=benchmark["assignments"][rid]
+            src=db.execute("SELECT duration FROM assets WHERE id=?",
+                           (a["assetId"],)).fetchone()
+            if (src is None or src["duration"] is None or
+                    a["endMs"]>round(float(src["duration"])*1000)+1):
+                raise ValueError("Review source interval no longer matches the catalog")
+            last=db.execute(
+                "SELECT payload_json FROM benchmark_review_revisions "
+                "WHERE benchmark_id=? AND review_id=? ORDER BY rowid DESC LIMIT 1",
+                (benchmark["benchmarkId"],rid)).fetchone()
+            payload=_canonical(review)
+            if last is not None and last["payload_json"]==payload:
+                unchanged+=1
+                continue
+            db.execute(
+                "INSERT INTO benchmark_review_revisions "
+                "(revision_id,benchmark_id,review_id,asset_id,start_ms,end_ms,"
+                "role,payload_json) VALUES (?,?,?,?,?,?,?,?)",
+                (secrets.token_hex(16),benchmark["benchmarkId"],rid,
+                 a["assetId"],a["startMs"],a["endMs"],a["role"],payload))
+            saved+=1
+    return {"status":"imported","benchmarkId":benchmark["benchmarkId"],
+            "savedRevisions":saved,"unchanged":unchanged,
+            "blankRowsSkipped":skipped,"entriesValidated":len(reviews),
+            "atomic":True,"sourceMediaModified":False}
