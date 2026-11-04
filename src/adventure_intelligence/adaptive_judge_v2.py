@@ -128,7 +128,8 @@ def schema()->dict:
         "recommendation":{"type":"string","enum":["keep","skip","unsure"]},
         "summary":{"type":"string"},
         "reason":{"type":"string"},
-        "evidence":{"type":"array","items":{"type":"string"}},
+        "evidence":{"type":"array","items":{"type":"string"},
+                    "minItems":1,"maxItems":3},
         "uncertainty":{"type":"string","enum":sorted(UNCERTAINTY)},
         "needsTemporalReview":{"type":"boolean"},
         "ratings":{"type":"object","additionalProperties":False,
@@ -175,6 +176,8 @@ def normalize_reply(raw:dict)->dict:
     overrides=[]
     if suggestion=="skip" and (raw["needsTemporalReview"] or
             raw["observedEvent"]=="uncertain" or
+            (raw["observedEvent"]=="yes" and
+             (scores["eventInterest"] is None or scores["eventInterest"]>=1)) or
             (scores["eventInterest"] is not None and scores["eventInterest"]>=2)):
         suggestion="unsure"
         overrides.append("avoid_false_skip_with_incomplete_temporal_evidence")
