@@ -410,6 +410,7 @@ def make_handler(workspace:Path,token:str):
                             batch=body["batch"],moment_id=body["momentId"],
                             decision=body["decision"],
                             event_observed=body["eventObserved"],
+                            reviewed_activity=body.get("reviewedActivity","unresolved"),
                             ratings=body["ratings"],
                             note=body.get("note",""),
                             improvement_note=body.get("improvementNote",""))
