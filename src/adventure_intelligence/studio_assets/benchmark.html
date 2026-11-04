@@ -71,6 +71,22 @@
     </select></label>
   </div>
   <label class="full">What actually happened? <input id="eventKind" type="text" maxlength="200" placeholder="e.g. ray swims across sand, controlled turn sequence"></label>
+  <details class="recording-quality"><summary>Recording defects and deletion review (optional)</summary>
+    <p class="help">Tag what you actually observed, not an AI guess. A deletion candidate only requests a later full-recording review. Nothing is deleted.</p>
+    <div class="quality-flags" id="qualityFlags">
+      <label><input type="checkbox" value="crooked_mount" data-quality-flag> Crooked camera mount</label>
+      <label><input type="checkbox" value="off_center_subject" data-quality-flag> Subject off-center / cut off</label>
+      <label><input type="checkbox" value="obscured_lens" data-quality-flag> Obscured lens</label>
+      <label><input type="checkbox" value="soft_focus" data-quality-flag> Soft focus / blur</label>
+      <label><input type="checkbox" value="bad_exposure" data-quality-flag> Poor exposure</label>
+      <label><input type="checkbox" value="unstable_framing" data-quality-flag> Distracting camera movement</label>
+      <label><input type="checkbox" value="unusable_audio" data-quality-flag> Unusable audio</label>
+      <label><input type="checkbox" value="repeated_take" data-quality-flag> Redundant take</label>
+      <label><input type="checkbox" value="needs_rotation" data-quality-flag> Rotation might rescue clip</label>
+      <label><input type="checkbox" value="other_recording_defect" data-quality-flag> Other defect</label>
+    </div>
+    <label><input type="checkbox" id="deletionCandidate"> Flag this interval for separate full-source deletion review (requires Skip and a defect tag)</label>
+  </details>
   <details><summary>Review dimensions <span>0 = low · 1 = exceptional · blank = unknown</span></summary>
     <div id="criteria" class="criteria"></div>
   </details>
