@@ -41,6 +41,7 @@ from .segment_workflow import scan_segments
 from .semantic_recovery import recover_semantic_frames
 from .event_context import build_event_context
 from .moment_ranking import create_rank_report
+from .archive_pilot import run_archive_pilot
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -99,6 +100,22 @@ def main(argv: list[str] | None = None) -> int:
     timeline=sub.add_parser("timeline",help="Produce calibrated per-video event timelines")
     timeline.add_argument("--source",choices=["pixel-change","optical-flow"],default="pixel-change")
     timeline.add_argument("--bin-ms",type=int,default=2000)
+    archive=sub.add_parser("archive-pilot",
+        help="Automatically inventory, select and plan a frozen stratified archive batch; --run executes cheap histogram inference")
+    archive.add_argument("--legacy",type=Path,
+        help="Optional read-only comparison with a second Klip workspace; never merges databases")
+    archive.add_argument("--batch",type=int,default=1,
+        help="Frozen batch number, starting at 1; rerun the same number to resume")
+    archive.add_argument("--batch-size",type=int,default=8,
+        help="Videos per pilot batch (1..16)")
+    archive.add_argument("--batch-count",type=int,default=1,
+        help="Run or plan several consecutive frozen batches (1..8); stops on first error")
+    archive.add_argument("--coverage-seconds",type=float,default=30)
+    archive.add_argument("--max-frames",type=int,default=24)
+    archive.add_argument("--output-dir",type=Path,
+        help="Optional NEW batch folder under workspace reports/ or exports/")
+    archive.add_argument("--run",action="store_true",
+        help="Explicitly run inexpensive histogram semantics for the frozen batch")
     adaptive=sub.add_parser("adaptive-plan",
         help="Plan budgeted POV sampling from cached evidence without decoding")
     adaptive.add_argument("--output",type=Path,required=True,
@@ -419,6 +436,35 @@ def main(argv: list[str] | None = None) -> int:
                 _print(generate_timelines(root,source=args.source,bin_ms=args.bin_ms))
         elif args.command=='history':
             _print(event_history(root,args.asset_id))
+        elif args.command=="archive-pilot":
+            if not 1<=args.batch_count<=8:
+                raise ValueError("--batch-count must be between 1 and 8")
+            if args.batch_count>1 and args.output_dir is not None:
+                raise ValueError("--output-dir with multiple batches is ambiguous; use the default frozen campaign")
+            results=[]
+            for n in range(args.batch,args.batch+args.batch_count):
+                report=run_archive_pilot(root,legacy=args.legacy,
+                    batch=n,batch_size=args.batch_size,
+                    step_seconds=args.coverage_seconds,
+                    max_frames=args.max_frames,output_dir=args.output_dir,
+                    run=args.run)
+                results.append(report)
+                if report["status"] in {"partial_failure","no_more_eligible_assets","no_eligible_assets"}:
+                    break
+            if len(results)==1:
+                _print(results[0])
+            else:
+                _print({"version":"archive-pilot-orchestrator-v1",
+                        "status":("partial_failure"
+                                  if any(x["status"]=="partial_failure" for x in results)
+                                  else "completed" if args.run else "planned"),
+                        "batches":results,
+                        "nextBatch":results[-1]["batch"]+1
+                        if results[-1].get("batch") is not None
+                        and results[-1]["status"] not in {"no_more_eligible_assets"}
+                        else None})
+            if any(x["status"]=="partial_failure" for x in results):
+                return 1
         elif args.command=="adaptive-plan":
             destination=args.output.expanduser().resolve()
             if not destination.is_relative_to(root) or destination.exists():
