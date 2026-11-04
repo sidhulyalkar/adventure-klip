@@ -43,6 +43,7 @@ from .event_context import build_event_context
 from .moment_ranking import create_rank_report
 from .archive_pilot import run_archive_pilot
 from .archive_status import inspect_archive_campaign, write_archive_status
+from .clip_value_lab import make_value_packet, value_report
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -101,6 +102,18 @@ def main(argv: list[str] | None = None) -> int:
     timeline=sub.add_parser("timeline",help="Produce calibrated per-video event timelines")
     timeline.add_argument("--source",choices=["pixel-change","optical-flow"],default="pixel-change")
     timeline.add_argument("--bin-ms",type=int,default=2000)
+    value_lab=sub.add_parser("value-lab",
+        help="Freeze a playable local review packet from pilot episodes, coverage and random controls")
+    value_lab.add_argument("--campaign",type=Path)
+    value_lab.add_argument("--batch",type=int,default=1)
+    value_lab.add_argument("--max-per-asset",type=int,default=3)
+    value_lab.add_argument("--output-dir",type=Path,
+        help="Optional new folder; Studio uses default reports/clip-value-lab-v1/")
+    value_report_cli=sub.add_parser("value-report",
+        help="Summarize human clip-value ratings and rank reviewed source intervals without video decoding")
+    value_report_cli.add_argument("--batch",type=int,default=1)
+    value_report_cli.add_argument("--output",type=Path,
+        help="Optional new workspace reports/ or exports/ JSON file")
     archive_status=sub.add_parser("archive-status",
         help="Read-only diagnosis of frozen archive batches, frame gaps and recoverable checkpoints")
     archive_status.add_argument("--campaign",type=Path,
@@ -445,6 +458,27 @@ def main(argv: list[str] | None = None) -> int:
                 _print(generate_timelines(root,source=args.source,bin_ms=args.bin_ms))
         elif args.command=='history':
             _print(event_history(root,args.asset_id))
+        elif args.command=="value-lab":
+            with lock_workspace(root):
+                _print(make_value_packet(root,
+                    args.campaign or root/"reports"/"archive-pilot-v1",
+                    batch=args.batch,output_dir=args.output_dir,
+                    max_per_asset=args.max_per_asset))
+        elif args.command=="value-report":
+            report=value_report(root,batch=args.batch)
+            if args.output is not None:
+                dest=args.output.expanduser().resolve()
+                if (not dest.is_relative_to(root) or dest==root or
+                    dest.relative_to(root).parts[0] not in ("reports","exports")
+                    or dest.exists()):
+                    raise ValueError("Review report must be a NEW workspace reports/ or exports/ file")
+                with connect(root) as db:
+                    protect_source_output(db,dest)
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                with dest.open("x",encoding="utf-8") as f:
+                    json.dump(report,f,indent=2,sort_keys=True,allow_nan=False)
+                    f.write("\n")
+            _print(report)
         elif args.command=="archive-status":
             campaign=args.campaign or root/"reports"/"archive-pilot-v1"
             report=inspect_archive_campaign(root,campaign,provider=args.provider)
