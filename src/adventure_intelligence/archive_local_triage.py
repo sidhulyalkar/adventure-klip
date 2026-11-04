@@ -16,6 +16,8 @@ from .studio_preview_judge import (
     valid_local_model,preview_paths,cached_judgment,generate_preview,local_judgment,
 )
 from .studio import SourceStream
+from .adaptive_judge_v2 import (context_hint, adaptive_judgment,
+    cached_adaptive_judgment)
 
 VERSION="archive-local-triage-v1"
 
@@ -52,17 +54,20 @@ def _sample_unreviewed(rows:list[dict],reviewed:set[str],limit:int):
 
 
 def run_local_triage(workspace:Path,assignments:Path,*,model:str,
-                     limit:int=8,run:bool=False)->dict:
+                     limit:int=8,run:bool=False,policy:str="legacy")->dict:
     if not valid_local_model(model):
         raise ValueError("Specify a valid installed local vision model name")
     if type(limit) is not int or not 1<=limit<=24:
         raise ValueError("Pilot limit must be between 1 and 24")
+    if policy not in ("legacy","adaptive-v2"):
+        raise ValueError("Judge policy must be legacy or adaptive-v2")
     root=Path(workspace).expanduser().resolve()
     benchmark=load_benchmark(root,assignments)
     feedback=benchmark_feedback_status(root,assignments)
     selected=_sample_unreviewed(list(benchmark["assignments"].values()),
                                  set(feedback["reviewEntries"]),limit)
-    result={"version":VERSION,"mode":"local_inference" if run else "dry_run",
+    result={"version":VERSION,"judgePolicy":policy,
+            "mode":"local_inference" if run else "dry_run",
             "model":model,"selected":len(selected),
             "reviewedHumanAlready":len(feedback["reviewEntries"]),
             "selectionRoles":dict(sorted(Counter(x["role"] for x in selected).items())),
@@ -80,17 +85,28 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
         aid,start,end=item["assetId"],item["startMs"],item["endMs"]
         clip,_manifest=preview_paths(root,aid,start,end)
         try:
-            cached=cached_judgment(clip,model=model)
+            context=context_hint(item)
+            if policy=="adaptive-v2":
+                cached=cached_adaptive_judgment(clip,model=model,context=context)
+            else:
+                cached=cached_judgment(clip,model=model)
             if cached is not None:
                 suggestion=cached
             else:
                 generate_preview(root,source,item)
-                suggestion=local_judgment(clip,model=model)
+                suggestion=(adaptive_judgment(clip,model=model,context=context)
+                            if policy=="adaptive-v2" else
+                            local_judgment(clip,model=model))
             result["items"].append({
                 "reviewId":item["reviewId"],"filename":item["basename"],
                 "selectionGroup":item["selectionGroup"],"role":item["role"],
                 "status":"suggested","recommendation":suggestion["recommendation"],
                 "summary":suggestion["summary"],"cached":suggestion["cached"],
+                "contextHint":context,
+                "promptFingerprint":suggestion.get("promptFingerprint"),
+                "decisionRationale":suggestion.get("reason"),
+                "uncertaintyReason":suggestion.get("uncertaintyReason"),
+                "policyOverrides":suggestion.get("policyOverrides",[]),
                 "requiresHumanReview":True})
         except (RuntimeError,ValueError,OSError) as exc:
             failed+=1
