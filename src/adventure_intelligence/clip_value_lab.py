@@ -388,6 +388,43 @@ def save_value_review(workspace:Path,*,batch:int,moment_id:str,
             previous["revision_id"] if previous else None}
 
 
+def _criterion_agreement(scored:list[dict],reviews:dict,*,axis:str,
+                         target:str)->dict:
+    """Agreement with a DIFFERENT human preference target, never fitted here.
+
+    Pairs are restricted to the same sport. A rank/target tie is excluded,
+    and fewer than three comparable pairs gives no reported agreement.
+    This is in-sample descriptive alignment, NOT held-out generalization.
+    """
+    grouped={}
+    for m in scored:
+        record=reviews.get(m["momentId"])
+        if not record:
+            continue
+        actual=record["ratings"].get(target)
+        inferred=m["scores"].get(axis)
+        if actual is None or inferred is None:
+            continue
+        grouped.setdefault(m["activity"],[]).append((m["momentId"],actual,inferred))
+    pairs=0
+    agreeing=0
+    for data in grouped.values():
+        for i,a in enumerate(data):
+            for b in data[i+1:]:
+                target_delta=a[1]-b[1]
+                model_delta=a[2]-b[2]
+                if target_delta==0 or abs(model_delta)<1e-10:
+                    continue
+                pairs+=1
+                agreeing+=(target_delta*model_delta)>0
+    return {
+        "axis":axis,"humanTarget":target,
+        "comparablePairs":pairs,"agreeingPairs":agreeing,
+        "agreement":round(agreeing/pairs,4) if pairs>=3 else None,
+        "interpretation":"Descriptive within-pilot, same-sport agreement; not held-out accuracy",
+    }
+
+
 def value_report(workspace:Path,*,batch:int=1)->dict:
     packet=read_value_packet(workspace,batch=batch)
     with connect(Path(workspace)) as db:
@@ -436,6 +473,14 @@ def value_report(workspace:Path,*,batch:int=1)->dict:
         }
         all_moments.append(raw)
     ranked=rank_moments(all_moments,limit=24)
+    target_alignment=[
+        _criterion_agreement(ranked["moments"],latest,axis="share",
+                             target="audienceAppeal"),
+        _criterion_agreement(ranked["moments"],latest,axis="share",
+                             target="watchAgain"),
+        _criterion_agreement(ranked["moments"],latest,axis="learning",
+                             target="personalMeaning"),
+    ]
     reviewed_by_source=Counter(
         next(m["selectionSource"] for m in packet["moments"] if
              m["momentId"]==ident) for ident in reviewed)
@@ -448,6 +493,7 @@ def value_report(workspace:Path,*,batch:int=1)->dict:
         "reviewedBySelectionSource":dict(reviewed_by_source),
         "totalBySelectionSource":dict(total_by_source),
         "ratedCriteriaCounts":dict(criteria_counts),
+        "humanPreferenceAgreement":target_alignment,
         "ranking":ranked,
         "unresolvedActivityExcludedFromRankings":
             sum(not (m["activityConfirmed"] and
@@ -458,6 +504,7 @@ def value_report(workspace:Path,*,batch:int=1)->dict:
         "warnings":[
             "Human-reviewed ordinal 0–4 ratings are inputs, not calibrated probabilities.",
             "Unreviewed intervals remain unknown; random controls are not negatives.",
+            "Target agreement is same-reviewer in-sample descriptive alignment, not independent audience validation.",
             "This is preliminary within-pilot preference alignment, not event recall.",
             "Species rarity, sports technique and athlete physiology have not been verified.",
             "These rankings are for review only, never automatic publication.",
