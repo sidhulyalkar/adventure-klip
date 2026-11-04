@@ -220,3 +220,44 @@ def judge_preview(path:Path,*,model:str,transport=None,timeout:int=150)->dict:
             "totalDurationNs":response.get("total_duration"),
             "networkDestination":"127.0.0.1",
             "humanApprovalRequired":True}
+
+
+
+def _judge_record_path(path:Path,model:str)->Path:
+    if not isinstance(model,str) or not _MODEL.fullmatch(model):
+        raise ValueError("Invalid local vision model name")
+    return path.with_name(path.stem+"-judge-"+
+                          sha256(model.encode()).hexdigest()[:16]+".json")
+
+
+def cached_judgment(preview:Path,*,model:str)->dict|None:
+    record=_judge_record_path(preview,model)
+    if not record.is_file() or not preview.is_file() or record.stat().st_size>12000:
+        return None
+    try:
+        cached=json.loads(record.read_text(encoding="utf-8"))
+        if (cached.get("model")!=model or
+                cached.get("previewSha256")!=sha256(preview.read_bytes()).hexdigest()):
+            return None
+        answer=_validate_judgment(cached["suggestion"])
+        return {**answer,"model":model,"backend":"ollama_loopback_only",
+                "cached":True,"humanApprovalRequired":True}
+    except (KeyError,TypeError,ValueError,OSError):
+        return None
+
+
+def local_judgment(preview:Path,*,model:str,transport=None)->dict:
+    with _CACHE_LOCK:
+        previous=cached_judgment(preview,model=model)
+        if previous is not None:
+            return previous
+        result=judge_preview(preview,model=model,transport=transport)
+        record={
+            "model":model,"previewSha256":sha256(preview.read_bytes()).hexdigest(),
+            "suggestion":{k:result[k] for k in ("recommendation","observedEvent",
+                "summary","reason","limitations")}
+        }
+        path=_judge_record_path(preview,model)
+        path.write_text(json.dumps(record,allow_nan=False,sort_keys=True),
+                        encoding="utf-8")
+        return {**result,"cached":False}
