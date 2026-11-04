@@ -75,6 +75,8 @@
     const review=state.reviews[m.momentId]||null;
     $('decision').value=review?.decision||'later';
     $('observed').value=review?.eventObserved||'uncertain';
+    $('reviewedActivity').value=review?.reviewedActivity||
+      (m.activityConfirmed?m.selectionGroup:'unresolved');
     $('note').value=review?.note||'';
     $('improvement').value=review?.improvementNote||'';
     document.querySelectorAll('select[data-rating-key]').forEach(element=>{
@@ -158,7 +160,7 @@
       }
       const review={
         batch,momentId:m.momentId,decision:$('decision').value,
-        eventObserved:observed,ratings,
+        eventObserved:observed,reviewedActivity:$('reviewedActivity').value,ratings,
         note:$('note').value,improvementNote:$('improvement').value
       };
       const saved=await api('/api/value-lab/review',review);
