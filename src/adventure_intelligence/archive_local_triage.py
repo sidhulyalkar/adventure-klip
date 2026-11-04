@@ -14,7 +14,8 @@ import time
 
 from .benchmark_feedback import load_benchmark, benchmark_feedback_status
 from .studio_preview_judge import (
-    valid_local_model,preview_paths,cached_judgment,generate_preview,local_judgment,
+    valid_local_model,preview_paths,_check_cached,
+    cached_judgment,generate_preview,local_judgment,
 )
 from .studio import SourceStream
 from .adaptive_judge_v2 import (context_hint, adaptive_judgment,
@@ -91,7 +92,7 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
     failed=0
     for item in selected:
         aid,start,end=item["assetId"],item["startMs"],item["endMs"]
-        clip,_manifest=preview_paths(root,aid,start,end)
+        clip,manifest=preview_paths(root,aid,start,end)
         stage="cached_judge_lookup"
         start_time=time.perf_counter()
         try:
@@ -103,8 +104,16 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
             if cached is not None:
                 suggestion=cached
             else:
-                stage="source_verification_and_preview"
-                generate_preview(root,source,item)
+                # Reuse an earlier source-SHA-verified short H.264 derivative
+                # for v2 rejudging without hashing a multi-gigabyte original.
+                # The preview carries its original source hash in its key;
+                # its checksum/provenance receipt must validate first.
+                stage="cached_preview_validation"
+                reusable=_check_cached(clip,manifest,aid=aid,
+                                       start_ms=start,end_ms=end)
+                if not reusable:
+                    stage="source_verification_and_preview"
+                    generate_preview(root,source,item)
                 stage="local_judge_sampling_or_response"
                 suggestion=(adaptive_judgment(clip,model=model,context=context)
                             if policy=="adaptive-v2" else
@@ -131,6 +140,8 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
             # machine-readable diagnostics. Narrow codes guide safe retry.
             if stage=="cached_judge_lookup":
                 code="cache_validation_error"
+            elif stage=="cached_preview_validation":
+                code="preview_cache_validation_error"
             elif stage=="source_verification_and_preview":
                 code="source_or_preview_error"
             elif "sample" in message.lower() or "frame" in message.lower():
@@ -141,6 +152,7 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
                 code="judge_inference_error"
             safe_message={
                 "cache_validation_error":"Could not validate the cached suggestion.",
+                "preview_cache_validation_error":"A saved preview failed its checksum or source receipt.",
                 "source_or_preview_error":"Original source verification or short preview preparation failed.",
                 "judge_frame_sampling_error":"The local model's preview JPEG sampling failed.",
                 "judge_response_validation_error":"The local model returned an invalid or unsupported response.",
