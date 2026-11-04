@@ -242,3 +242,81 @@ def test_run_second_look_is_bounded_and_leaves_human_reviews_untouched(
     with connect(ws) as db:
         assert db.execute("SELECT count(*) FROM benchmark_review_revisions").fetchone()[0]==0
     assert {p.name:p.read_bytes() for p in source.iterdir()}==originals
+
+
+
+def test_studio_second_look_is_auth_protected_and_never_edits_reviews(
+        review_fixture,monkeypatch):
+    from http.client import HTTPConnection
+    from http.server import ThreadingHTTPServer
+    from threading import Thread
+    from adventure_intelligence import studio as app
+    from adventure_intelligence.benchmark_feedback import benchmark_feedback_status
+
+    ws,source,originals,assignments=review_fixture
+    row=list(load_benchmark(ws,assignments)["assignments"].values())[0]
+    proxy=cache_proxy(ws,row)
+    monkeypatch.setattr(app,"cached_adaptive_judgment",
+                        lambda path,**k:first_pass())
+    monkeypatch.setattr(app,"second_look",
+                        lambda path,**k:{
+                            **temporal.validate(model_answer()),
+                            "firstPassComparison":{
+                                "previousJudgmentAvailable":True,
+                                "previousRecommendation":"unsure",
+                                "recommendationChanged":False},
+                            "sampleTimesMs":[700,2000,3400,5000,6600,8000,9300],
+                            "cached":False,
+                        })
+    server=ThreadingHTTPServer(("127.0.0.1",0),
+        app.make_handler(ws,"private-test-token",assignments,
+                         "gemma3:4b","adaptive-v2"))
+    server.daemon_threads=True
+    thread=Thread(target=server.serve_forever,daemon=True)
+    thread.start()
+    def request(path,*,token=True):
+        client=HTTPConnection("127.0.0.1",server.server_port,timeout=12)
+        headers={"Content-Type":"application/json",
+                 "Host":f"127.0.0.1:{server.server_port}"}
+        if token:headers["X-Klip-Token"]="private-test-token"
+        client.request("POST",path,
+                       body=json.dumps({"reviewId":row["reviewId"]}),
+                       headers=headers)
+        resp=client.getresponse()
+        status=resp.status
+        body=json.loads(resp.read())
+        client.close()
+        return status,body
+    try:
+        status,_=request("/api/benchmark/temporal-look",token=False)
+        assert status==403
+        status,out=request("/api/benchmark/temporal-look")
+        assert status==200 and out["status"]=="provisional_temporal_second_look"
+        assert out["humanApprovalRequired"] is True
+        assert out["suggestion"]["sourceFramesSeen"]==7
+        assert out["suggestion"]["videoOrAudioReviewed"] is False
+        assert benchmark_feedback_status(ws,assignments)["reviewedAssignments"]==0
+        proxy.unlink()
+        status,out=request("/api/benchmark/temporal-look")
+        assert status==400
+        assert "preview" in out["error"].lower()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+    assert {p.name:p.read_bytes() for p in source.iterdir()}==originals
+
+
+def test_cli_temporal_look_has_no_hidden_media_work_in_dry_run(review_fixture,capsys):
+    from adventure_intelligence.cli import main
+    ws,source,originals,assignments=review_fixture
+    assert main(["--workspace",str(ws),"archive-temporal-look",
+                 "--assignments",str(assignments),
+                 "--model","gemma3:4b","--limit","4"])==0
+    displayed=json.loads(capsys.readouterr().out)
+    assert displayed["mode"]=="dry_run"
+    assert displayed["sourceVideoReads"]==0
+    assert displayed["newFullSourceShaPasses"]==0
+    assert displayed["missingVerifiedPreviews"]>0
+    assert displayed["selected"]==0
+    assert {p.name:p.read_bytes() for p in source.iterdir()}==originals
