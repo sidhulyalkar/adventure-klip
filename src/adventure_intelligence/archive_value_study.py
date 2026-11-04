@@ -49,8 +49,9 @@ def _valid_asset(row:dict)->bool:
 def _centered(start:int,end:int,duration:int,window:int)->tuple[int,int]:
     if not 0<=start<end<=duration:
         raise ValueError("Invalid source-relative candidate interval")
-    width=min(duration,max(window,end-start))
-    width=min(width,120000)
+    # Keep the default editorial shot length sport-specific; a long episode
+    # hypothesis is not proof that the entire 56-second span is engaging.
+    width=min(duration,window)
     center=(start+end)//2
     left=max(0,min(duration-width,center-width//2))
     return left,left+width
