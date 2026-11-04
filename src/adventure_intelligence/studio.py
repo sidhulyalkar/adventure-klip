@@ -37,6 +37,7 @@ from .studio_preview_judge import (generate_preview, preview_paths, _check_cache
     cached_judgment, local_judgment)
 from .adaptive_judge_v2 import (context_hint, adaptive_judgment,
     cached_adaptive_judgment)
+from .temporal_second_look import (should_investigate, cached_second_look, second_look)
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -428,6 +429,9 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                             "localJudgeEnabled":local_judge_model is not None,
                             "localJudgeModel":local_judge_model,
                             "judgePolicy":judge_policy,
+                            "temporalSecondLookEnabled":(
+                                local_judge_model is not None and
+                                judge_policy=="adaptive-v2"),
                             "previews":{a["reviewId"]:{
                                 "ready":_check_cached(
                                     *preview_paths(workspace,a["assetId"],
@@ -446,6 +450,18 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                                                       a["startMs"],a["endMs"])[0],
                                         model=local_judge_model))
                                     if local_judge_model else None,
+                                "temporalSuggestion":(
+                                    cached_second_look(
+                                        preview_paths(workspace,a["assetId"],
+                                                      a["startMs"],a["endMs"])[0],
+                                        model=local_judge_model,context=context_hint(a),
+                                        first=cached_adaptive_judgment(
+                                            preview_paths(workspace,a["assetId"],
+                                                          a["startMs"],a["endMs"])[0],
+                                            model=local_judge_model,
+                                            context=context_hint(a)))
+                                    if local_judge_model and judge_policy=="adaptive-v2"
+                                    else None),
                             } for a in benchmark["assignments"].values()}})
                 elif path=="/api/benchmark/evaluation":
                     if benchmark is None:
@@ -514,7 +530,31 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                 body=json.loads(self.rfile.read(length))
                 if not isinstance(body,dict):
                     raise ValueError("Expected a JSON object")
-                if parsed.path in ("/api/benchmark/prepare-preview",
+                if parsed.path=="/api/benchmark/temporal-look":
+                    if benchmark is None or not local_judge_model or judge_policy!="adaptive-v2":
+                        raise ValueError("Start Studio with a selected benchmark and --judge-policy adaptive-v2")
+                    rid=body.get("reviewId")
+                    if not isinstance(rid,str) or rid not in benchmark["assignments"]:
+                        raise ValueError("Unknown frozen review interval")
+                    a=benchmark["assignments"][rid]
+                    cached_path,cached_manifest=preview_paths(
+                        workspace,a["assetId"],a["startMs"],a["endMs"])
+                    if not _check_cached(cached_path,cached_manifest,
+                        aid=a["assetId"],start_ms=a["startMs"],end_ms=a["endMs"]):
+                        raise ValueError("Verified short preview unavailable; prepare this interval first")
+                    context=context_hint(a)
+                    first=cached_adaptive_judgment(
+                        cached_path,model=local_judge_model,context=context)
+                    if not should_investigate(first):
+                        raise ValueError("This interval has no uncertain adaptive-v2 first pass to investigate")
+                    result={"status":"provisional_temporal_second_look",
+                        "reviewId":rid,
+                        "suggestion":second_look(
+                            cached_path,model=local_judge_model,
+                            context=context,first=first),
+                        "sourceVideoModified":False,
+                        "humanApprovalRequired":True}
+                elif parsed.path in ("/api/benchmark/prepare-preview",
                                    "/api/benchmark/local-judge"):
                     if benchmark is None:
                         self._json(404,{"error":"No benchmark configured"})

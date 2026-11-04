@@ -45,6 +45,7 @@ from .archive_pilot import run_archive_pilot
 from .archive_status import inspect_archive_campaign, write_archive_status
 from .archive_review import seed_archive_reviews
 from .archive_local_triage import run_local_triage
+from .archive_temporal_look import inspect_temporal_candidates
 from .judge_audit import compare_judge_policies, save_judge_audit
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
@@ -122,6 +123,15 @@ def main(argv: list[str] | None = None) -> int:
     archive_audit.add_argument("--model",required=True)
     archive_audit.add_argument("--output-dir",type=Path,
         help="Optional new reports/ or exports/ folder for offline JSON+HTML audit")
+    temporal=sub.add_parser("archive-temporal-look",
+        help="Budgeted seven-frame second look at locally verified short previews; no original video reads")
+    temporal.add_argument("--assignments",required=True,type=Path)
+    temporal.add_argument("--model",required=True)
+    temporal.add_argument("--limit",type=int,default=4)
+    temporal.add_argument("--only-review-id",
+        help="Investigate precisely one eligible frozen review interval")
+    temporal.add_argument("--run",action="store_true",
+        help="Opt in to local Ollama inference using seven stills from verified cached H264 previews")
     archive_triage=sub.add_parser("archive-local-triage",
         help="Optionally judge a bounded balanced set of frozen review intervals with an installed localhost vision model")
     archive_triage.add_argument("--assignments",required=True,type=Path)
@@ -503,6 +513,13 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _print(save_judge_audit(root,args.assignments,
                     model=args.model,output_dir=args.output_dir))
+        elif args.command=="archive-temporal-look":
+            report=inspect_temporal_candidates(root,args.assignments,
+                model=args.model,limit=args.limit,
+                only_review_id=args.only_review_id,run=args.run)
+            _print(report)
+            if report.get("status")=="partial_failure":
+                return 1
         elif args.command=="archive-local-triage":
             result=run_local_triage(root,args.assignments,
                 model=args.model,limit=args.limit,run=args.run,
