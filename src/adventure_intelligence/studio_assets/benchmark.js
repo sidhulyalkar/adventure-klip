@@ -2,7 +2,7 @@
 (() => {
   const $=id=>document.getElementById(id);
   const token=document.querySelector('meta[name="klip-session"]').content;
-  const state={assignments:[],criteria:{},reviews:{},index:0,loading:true,dirty:false};
+  const state={assignments:[],criteria:{},reviews:{},previews:{},index:0,loading:true,dirty:false,mode:'original',loadGeneration:0};
   const player=$('player');
   const api=async(path,body)=>{
     const res=await fetch(path,{method:body?'POST':'GET',
@@ -79,6 +79,37 @@
     if(index<0||index>=state.assignments.length||!canNavigate())return;
     state.index=index;render();
   }
+  function currentAssignment(){return state.assignments[state.index];}
+  function mediaUrl(a,mode){
+    if(mode==='preview'){
+      return '/api/benchmark/preview-file/'+encodeURIComponent(a.reviewId)+
+             '?token='+encodeURIComponent(token);
+    }
+    return '/api/media/'+encodeURIComponent(a.assetId)+
+           '?token='+encodeURIComponent(token);
+  }
+  function loadMedia(mode){
+    const a=currentAssignment();if(!a)return;
+    state.mode=mode;
+    const generation=++state.loadGeneration;
+    player.pause();player.removeAttribute('src');player.load();
+    $('sourceMode').textContent=mode==='preview'?
+      'Short H.264 proxy · local only':'Original DJI file · SHA verification on first open';
+    player.src=mediaUrl(a,mode);player.load();
+    announce(mode==='preview'?'Loading cached short preview…':
+      'Loading source; the first open may verify the full video SHA-256.');
+    window.setTimeout(()=>{
+      if(generation!==state.loadGeneration || player.readyState>=2)return;
+      announce('Playback is taking longer than expected. Try Prepare short preview, or skip this moment for later.',true);
+    },12000);
+  }
+  function showSuggestion(value){
+    const el=$('aiSuggestion');
+    if(!value){el.textContent='AI triage is optional and never substitutes for human approval.';return;}
+    el.textContent='AI suggests '+value.recommendation.toUpperCase()+
+      ': '+value.summary+' · '+value.reason+
+      ' · Limited to three still frames; human review required.';
+  }
   function render(){
     state.dirty=false;
     const a=state.assignments[state.index];
@@ -111,20 +142,14 @@
       li.textContent=phrase;
       $('prompts').append(li);
     }
-    player.pause();
-    player.removeAttribute('src');
-    player.load();
-    // No arbitrary path. This route resolves only indexed, SHA-verified
-    // originals through Studio's token-protected, read-only byte-range server.
-    player.src='/api/media/'+encodeURIComponent(a.assetId)+
-      '?token='+encodeURIComponent(token);
-    player.load();
-    announce('This is a review assignment, not a confirmed positive or negative.');
+    const info=state.previews[a.reviewId]||{};
+    showSuggestion(info.suggestion);
+    loadMedia(info.ready?'preview':'original');
   }
   function seekStart(){
     const a=state.assignments[state.index];
     if(!a)return;
-    try{player.currentTime=a.startMs/1000;}catch{
+    try{player.currentTime=state.mode==='preview'?0:a.startMs/1000;}catch{
       announce('Source is not seekable by the browser; verify the camera codec.',true);
     }
   }
@@ -132,6 +157,7 @@
   player.addEventListener('seeking',()=>{
     const a=state.assignments[state.index];
     if(!a)return;
+    if(state.mode==='preview')return;
     const low=a.startMs/1000;
     const high=a.endMs/1000;
     if(player.currentTime<low-0.1||player.currentTime>high+0.1){
@@ -140,13 +166,44 @@
   });
   player.addEventListener('timeupdate',()=>{
     const a=state.assignments[state.index];
-    if(a&&player.currentTime>=a.endMs/1000){
+    if(a&&player.currentTime>=
+        (state.mode==='preview'?Math.max(0,player.duration-.05):a.endMs/1000)){
       player.pause();
     }
   });
   player.addEventListener('error',()=>announce(
-    'Video cannot play here. Check that the DJI SSD is attached and browser codec support.',true));
+    'Browser cannot play this media. Prepare the short H.264 preview, or inspect the source path and codec.',true));
+  player.addEventListener('canplay',()=>announce('Ready for review · local read-only source'));
+  player.addEventListener('stalled',()=>announce(
+    'Playback stalled. The source SSD or codec may be slow. Use Prepare short preview.',true));
   $('replay').addEventListener('click',()=>{seekStart();player.play().catch(()=>{});});
+  $('original').addEventListener('click',()=>loadMedia('original'));
+  $('preparePreview').addEventListener('click',async()=>{
+    const a=currentAssignment();if(!a)return;
+    const rid=a.reviewId;
+    $('preparePreview').disabled=true;
+    announce('Verifying original SHA-256 and transcoding a short H.264 interval locally. This can take time.');
+    try{
+      await api('/api/benchmark/prepare-preview',{reviewId:rid});
+      state.previews[rid]={...(state.previews[rid]||{}),ready:true};
+      if(currentAssignment()?.reviewId===rid)loadMedia('preview');
+    }catch(e){announce(e.message,true);}
+    finally{$('preparePreview').disabled=false;}
+  });
+  $('aiTriage').addEventListener('click',async()=>{
+    const a=currentAssignment();if(!a)return;
+    const rid=a.reviewId;
+    $('aiTriage').disabled=true;
+    $('aiSuggestion').textContent='Local vision model is inspecting three frames, not the complete video.';
+    try{
+      const result=await api('/api/benchmark/local-judge',{reviewId:rid});
+      state.previews[rid]={ready:true,suggestion:result.suggestion};
+      if(currentAssignment()?.reviewId===rid){
+        showSuggestion(result.suggestion);loadMedia('preview');
+      }
+    }catch(e){$('aiSuggestion').textContent=e.message;}
+    finally{$('aiTriage').disabled=false;}
+  });
   $('previous').addEventListener('click',()=>move(-1));
   $('next').addEventListener('click',()=>move(1));
   document.querySelector('.review-panel').addEventListener('input',()=>{
@@ -157,8 +214,8 @@
     state.dirty=true;
     $('saveStatus').textContent='Unsaved review changes';
   });
-  $('save').addEventListener('click',async()=>{
-    const payload=reviewPayload();if(!payload)return;
+  async function saveReview(advance=false){
+    const payload=reviewPayload();if(!payload)return false;
     $('save').disabled=true;$('saveStatus').textContent='Saving…';
     try{
       await api('/api/benchmark/review',payload);
@@ -167,13 +224,35 @@
       $('saveStatus').textContent='Saved locally · append-only revision';
       $('counter').textContent=(state.index+1)+' / '+state.assignments.length+
         ' · '+Object.keys(state.reviews).length+' reviewed';
+      if(advance && state.index<state.assignments.length-1)move(1);
+      return true;
     }catch(err){
       $('saveStatus').textContent=err.message;
+      return false;
     }finally{$('save').disabled=false;}
+  }
+  $('save').addEventListener('click',()=>saveReview(false));
+  for(const button of document.querySelectorAll('[data-quick]')){
+    button.addEventListener('click',async()=>{
+      $('reviewDecision').value=button.dataset.quick;
+      state.dirty=true;
+      await saveReview(true);
+    });
+  }
+  $('nextUnreviewed').addEventListener('click',()=>{
+    if(!canNavigate())return;
+    const next=state.assignments.findIndex((a,i)=>
+      i>state.index && !state.reviews[a.reviewId]);
+    if(next>=0){state.index=next;render();}
+    else announce('No later unreviewed interval. You can revisit reviewed moments.');
   });
   document.addEventListener('keydown',event=>{
     if(event.target.closest('input,textarea,select,button'))return;
     if(event.key==='ArrowRight'&&!$('next').disabled)move(1);
+    if(!event.repeat && ['k','s','u'].includes(event.key.toLowerCase())){
+      const action={k:'keep',s:'skip',u:'uncertain'}[event.key.toLowerCase()];
+      document.querySelector('[data-quick="'+action+'"]').click();
+    }
     if(event.key==='ArrowLeft'&&!$('previous').disabled)move(-1);
   });
   (async()=>{
@@ -182,6 +261,8 @@
       state.assignments=data.assignments;
       state.criteria=data.criteria;
       state.reviews=data.reviews;
+      state.previews=data.previews||{};
+      $('aiTriage').hidden=!data.localJudgeEnabled;
       renderCriteria();
       if(state.assignments.length){render();}
       else announce('No review assignments found.');
