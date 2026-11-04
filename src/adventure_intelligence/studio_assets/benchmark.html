@@ -37,7 +37,10 @@
 <section class="triage-panel" aria-label="Fast review and optional private AI suggestions">
   <div class="heading-row">
     <div><p class="eyebrow">FAST TRIAGE</p><h2>One decision, detailed ratings optional</h2></div>
-    <button type="button" id="aiTriage">Ask local AI judge</button>
+    <div class="judge-actions">
+      <button type="button" id="aiTriage">Ask 3-frame AI judge</button>
+      <button type="button" id="temporalLook" hidden>Inspect 7-frame sequence</button>
+    </div>
   </div>
   <div class="quick-actions">
     <button type="button" class="quick keep" data-quick="keep">Keep <kbd>K</kbd></button>
