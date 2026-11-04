@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 import json
+import time
 
 from .benchmark_feedback import load_benchmark, benchmark_feedback_status
 from .studio_preview_judge import (
@@ -54,7 +55,8 @@ def _sample_unreviewed(rows:list[dict],reviewed:set[str],limit:int):
 
 
 def run_local_triage(workspace:Path,assignments:Path,*,model:str,
-                     limit:int=8,run:bool=False,policy:str="legacy")->dict:
+                     limit:int=8,run:bool=False,policy:str="legacy",
+                     only_review_id:str|None=None)->dict:
     if not valid_local_model(model):
         raise ValueError("Specify a valid installed local vision model name")
     if type(limit) is not int or not 1<=limit<=24:
@@ -64,8 +66,14 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
     root=Path(workspace).expanduser().resolve()
     benchmark=load_benchmark(root,assignments)
     feedback=benchmark_feedback_status(root,assignments)
-    selected=_sample_unreviewed(list(benchmark["assignments"].values()),
-                                 set(feedback["reviewEntries"]),limit)
+    if only_review_id is not None:
+        if only_review_id not in benchmark["assignments"]:
+            raise ValueError("Requested review ID is not in the frozen assignment set")
+        selected=([benchmark["assignments"][only_review_id]]
+                  if only_review_id not in feedback["reviewEntries"] else [])
+    else:
+        selected=_sample_unreviewed(list(benchmark["assignments"].values()),
+                                     set(feedback["reviewEntries"]),limit)
     result={"version":VERSION,"judgePolicy":policy,
             "mode":"local_inference" if run else "dry_run",
             "model":model,"selected":len(selected),
@@ -84,6 +92,8 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
     for item in selected:
         aid,start,end=item["assetId"],item["startMs"],item["endMs"]
         clip,_manifest=preview_paths(root,aid,start,end)
+        stage="cached_judge_lookup"
+        start_time=time.perf_counter()
         try:
             context=context_hint(item)
             if policy=="adaptive-v2":
@@ -93,7 +103,9 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
             if cached is not None:
                 suggestion=cached
             else:
+                stage="source_verification_and_preview"
                 generate_preview(root,source,item)
+                stage="local_judge_sampling_or_response"
                 suggestion=(adaptive_judgment(clip,model=model,context=context)
                             if policy=="adaptive-v2" else
                             local_judgment(clip,model=model))
@@ -107,13 +119,40 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
                 "decisionRationale":suggestion.get("reason"),
                 "uncertaintyReason":suggestion.get("uncertaintyReason"),
                 "policyOverrides":suggestion.get("policyOverrides",[]),
+                "investigationScore":suggestion.get("investigationScore"),
+                "assessedDimensions":suggestion.get("assessedDimensions",0),
+                "scoreMeaning":suggestion.get("scoreMeaning","unscored_legacy"),
+                "elapsedSeconds":round(time.perf_counter()-start_time,3),
                 "requiresHumanReview":True})
         except (RuntimeError,ValueError,OSError) as exc:
             failed+=1
+            message=str(exc)
+            # Avoid user source paths, model prompts or private raw frames in
+            # machine-readable diagnostics. Narrow codes guide safe retry.
+            if stage=="cached_judge_lookup":
+                code="cache_validation_error"
+            elif stage=="source_verification_and_preview":
+                code="source_or_preview_error"
+            elif "sample" in message.lower() or "frame" in message.lower():
+                code="judge_frame_sampling_error"
+            elif "json" in message.lower() or "response" in message.lower():
+                code="judge_response_validation_error"
+            else:
+                code="judge_inference_error"
+            safe_message={
+                "cache_validation_error":"Could not validate the cached suggestion.",
+                "source_or_preview_error":"Original source verification or short preview preparation failed.",
+                "judge_frame_sampling_error":"The local model's preview JPEG sampling failed.",
+                "judge_response_validation_error":"The local model returned an invalid or unsupported response.",
+                "judge_inference_error":"Local model inference failed; inspect the local Ollama service.",
+            }[code]
             result["items"].append({
                 "reviewId":item["reviewId"],"filename":item["basename"],
                 "selectionGroup":item["selectionGroup"],"role":item["role"],
                 "status":"failed","errorType":type(exc).__name__,
+                "failureStage":stage,"errorCode":code,
+                "diagnostic":safe_message,
+                "elapsedSeconds":round(time.perf_counter()-start_time,3),
                 "requiresHumanReview":True})
     result["failed"]=failed
     result["status"]="partial_failure" if failed else "completed"
