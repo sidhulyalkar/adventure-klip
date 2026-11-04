@@ -128,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     archive_triage.add_argument("--model",required=True,
         help="An explicitly installed local Ollama image-capable model")
     archive_triage.add_argument("--limit",type=int,default=8)
+    archive_triage.add_argument("--only-review-id",
+        help="Retry one exact unreviewed assignment; skip all other cached or completed intervals")
     archive_triage.add_argument("--judge-policy",choices=["legacy","adaptive-v2"],
         default="legacy",help="Opt-in adaptive evidence-rubric v2, separate from running legacy inference")
     archive_triage.add_argument("--run",action="store_true",
@@ -504,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="archive-local-triage":
             result=run_local_triage(root,args.assignments,
                 model=args.model,limit=args.limit,run=args.run,
-                policy=args.judge_policy)
+                policy=args.judge_policy,only_review_id=args.only_review_id)
             _print(result)
             if result.get("status")=="partial_failure":
                 return 1
