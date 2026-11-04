@@ -330,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
     studio.add_argument('--no-browser',action='store_true',help='Print URL without opening a browser')
     studio.add_argument('--benchmark',type=Path,
         help='Launch directly into source-backed archive review using assignments.json')
+    studio.add_argument('--local-judge-model',
+        help='Explicit opt-in: use an already installed Ollama vision model on localhost only')
     review=sub.add_parser("review",help="Create a local HTML report for video/event review")
     review.add_argument("--output",type=Path)
     mark=sub.add_parser('mark',help='Append one human-reviewed activity/incident label')
@@ -728,7 +730,8 @@ def main(argv: list[str] | None = None) -> int:
             _print(session_candidates(root,args.gap_minutes))
         elif args.command=='studio':
             serve_studio(root,port=args.port,open_browser=not args.no_browser,
-                         benchmark_file=args.benchmark)
+                         benchmark_file=args.benchmark,
+                         local_judge_model=args.local_judge_model)
         elif args.command=="review":
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":
