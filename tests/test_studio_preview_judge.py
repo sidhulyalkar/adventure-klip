@@ -130,3 +130,71 @@ def test_bound_local_judge_never_writes_human_review(testbench,monkeypatch):
     assert out["humanLabelsWritten"]==0
     assert benchmark_feedback_status(ws,manifest)["reviewedAssignments"]==0
     assert {p.name:p.read_bytes() for p in media.iterdir()}==originals
+
+
+
+def test_local_studio_preview_routes_are_token_gated_and_range_seekable(
+        testbench,monkeypatch):
+    from http.client import HTTPConnection
+    from http.server import ThreadingHTTPServer
+    from threading import Thread
+    from adventure_intelligence.studio import make_handler
+    from adventure_intelligence import studio as server_module
+    ws,media,originals,manifest=testbench
+    bench=load_benchmark(ws,manifest)
+    a=next(iter(bench["assignments"].values()))
+    monkeypatch.setattr(preview,"require_tool",lambda name:"ffmpeg")
+    monkeypatch.setattr(preview.subprocess,"run",_fake_transcoder)
+    monkeypatch.setattr(server_module,"local_judgment",lambda path,model:{
+        "recommendation":"unsure","summary":"Possible underwater object",
+        "reason":"Sparse frames cannot confirm identity",
+        "limitations":["Unverified object"],"humanApprovalRequired":True,
+        "cached":False})
+    srv=ThreadingHTTPServer(
+        ("127.0.0.1",0),make_handler(ws,"unit-token",manifest,"gemma3:4b"))
+    srv.daemon_threads=True
+    thread=Thread(target=srv.serve_forever,daemon=True)
+    thread.start()
+    def req(method,path,body=None,token=True,headers=None):
+        conn=HTTPConnection("127.0.0.1",srv.server_port,timeout=15)
+        h={"Host":f"127.0.0.1:{srv.server_port}"}
+        if token:h["X-Klip-Token"]="unit-token"
+        if headers:h.update(headers)
+        if body is not None:
+            body=json.dumps(body)
+            h["Content-Type"]="application/json"
+        conn.request(method,path,body=body,headers=h)
+        response=conn.getresponse()
+        result=response.status,response.read(),dict(response.getheaders())
+        conn.close()
+        return result
+    try:
+        route="/api/benchmark/preview-file/"+a["reviewId"]
+        status,_,_=req("GET",route)
+        assert status==404
+        status,_,_=req("POST","/api/benchmark/prepare-preview",
+                       {"reviewId":a["reviewId"]},token=False)
+        assert status==403
+        status,body,_=req("POST","/api/benchmark/prepare-preview",
+                          {"reviewId":a["reviewId"]})
+        assert status==200
+        assert json.loads(body)["status"]=="preview_ready"
+        status,bytes_out,headers=req("GET",route,headers={"Range":"bytes=0-63"})
+        assert status==206 and len(bytes_out)==64
+        assert headers["Content-Range"].startswith("bytes 0-63/")
+        status,body,_=req("POST","/api/benchmark/local-judge",
+                          {"reviewId":a["reviewId"]})
+        assert status==200
+        result=json.loads(body)
+        assert result["suggestion"]["recommendation"]=="unsure"
+        status,body,_=req("GET","/api/benchmark")
+        assert status==200
+        detail=json.loads(body)["previews"][a["reviewId"]]
+        assert detail["ready"] is True
+        with connect(ws) as db:
+            assert db.execute("SELECT count(*) FROM benchmark_review_revisions").fetchone()[0]==0
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join(timeout=4)
+    assert {p.name:p.read_bytes() for p in media.iterdir()}==originals
