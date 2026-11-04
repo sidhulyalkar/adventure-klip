@@ -23,6 +23,14 @@ from .media import require_tool
 
 VERSION="studio-preview-local-judge-v1"
 _MODEL=re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,100}$")
+
+
+def valid_local_model(model):
+    # Allow Ollama namespace/model:tag identifiers but reject endpoint URLs.
+    return (isinstance(model,str) and bool(_MODEL.fullmatch(model))
+            and "://" not in model and ".." not in model)
+
+
 _CACHE_LOCK=threading.RLock()
 MAX_PREVIEW_BYTES=45*1024*1024
 
@@ -163,7 +171,7 @@ def _validate_judgment(result:dict)->dict:
 
 
 def judge_preview(path:Path,*,model:str,transport=None,timeout:int=150)->dict:
-    if not isinstance(model,str) or not _MODEL.fullmatch(model):
+    if not valid_local_model(model):
         raise ValueError("Explicit installed local vision model is required")
     images=_jpeg_samples(path)
     schema={
@@ -224,7 +232,7 @@ def judge_preview(path:Path,*,model:str,transport=None,timeout:int=150)->dict:
 
 
 def _judge_record_path(path:Path,model:str)->Path:
-    if not isinstance(model,str) or not _MODEL.fullmatch(model):
+    if not valid_local_model(model):
         raise ValueError("Invalid local vision model name")
     return path.with_name(path.stem+"-judge-"+
                           sha256(model.encode()).hexdigest()[:16]+".json")
