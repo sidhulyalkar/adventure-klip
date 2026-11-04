@@ -289,6 +289,7 @@
   for(const button of document.querySelectorAll('[data-quick]')){
     button.addEventListener('click',async()=>{
       $('reviewDecision').value=button.dataset.quick;
+      if(button.dataset.quick!=='skip')$('deletionCandidate').checked=false;
       state.dirty=true;
       await saveReview(true);
     });
