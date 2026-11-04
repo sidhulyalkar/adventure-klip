@@ -136,8 +136,9 @@ def save_judge_audit(workspace:Path,assignments:Path,*,model:str,output_dir:Path
                item["humanDecision"],item["legacyRecommendation"],
                item["adaptiveRecommendation"],
                item["adaptiveInvestigationScore"])
-        rows.append("<tr>"+"".join("<td>"+escape(str(v or "unassessed"))+"</td>"
-                                    for v in cells)+"</tr>")
+        rows.append("<tr>"+"".join(
+            "<td>"+escape(str("unassessed" if v is None else v))+"</td>"
+            for v in cells)+"</tr>")
     html=(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
