@@ -464,17 +464,23 @@ def make_handler(workspace:Path,token:str):
     return Handler
 
 
-def serve_studio(workspace:Path,port:int=0,open_browser:bool=True):
+def serve_studio(workspace:Path,port:int=0,open_browser:bool=True,open_path:str="/"):
     """Serve a private local UI, then block until Ctrl+C."""
     if not 0<=port<=65535:
         raise ValueError("Port must be 0..65535")
+    if open_path!="/" and not (
+        open_path=="/value-lab" or
+        (open_path.startswith("/value-lab?batch=")
+         and open_path.removeprefix("/value-lab?batch=").isdigit()
+         and 1<=int(open_path.removeprefix("/value-lab?batch="))<=10000)):
+        raise ValueError("Unsupported local Studio start page")
     workspace=Path(workspace).expanduser().resolve()
     with connect(workspace):
         pass
     token=secrets.token_urlsafe(32)
     server=ThreadingHTTPServer(("127.0.0.1",port),make_handler(workspace,token))
     server.daemon_threads=True
-    url=f"http://127.0.0.1:{server.server_port}/"
+    url=f"http://127.0.0.1:{server.server_port}{open_path}"
     print(f"[klip] Local studio running at {url}",flush=True)
     print("[klip] Original video files are opened read-only; press Ctrl+C to stop.",flush=True)
     if open_browser:
