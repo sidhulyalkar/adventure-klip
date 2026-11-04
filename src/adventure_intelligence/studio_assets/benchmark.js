@@ -121,9 +121,18 @@
       (axis?' · '+axis:'')+
       (value.policyOverrides?.length?' · conservative gate applied':'')
       :'';
+    const sevenFrames=value.policyVersion==='adaptive-temporal-second-look-v1';
+    const evidence=sevenFrames?(value.frameEvidence||[]).map(x=>
+      'Frame '+(x.index+1)+': '+x.observation).join(' · '):'';
+    const comparison=sevenFrames&&value.firstPassComparison?.previousJudgmentAvailable?
+      ' · First pass: '+value.firstPassComparison.previousRecommendation+
+      ' · Changed: '+(value.firstPassComparison.recommendationChanged?'yes':'no'):'';
     el.textContent='AI suggests '+value.recommendation.toUpperCase()+
       ': '+value.summary+' · '+value.reason+rationale+
-      ' · Uncalibrated opinion based on three still frames only; human approval required.';
+      (evidence?' · '+evidence:'')+comparison+
+      (sevenFrames?' · Seven separate stills, no continuous motion evidence':
+                   ' · Only three still frames')+
+      ' · Uncalibrated, provisional, human approval required.';
   }
   function render(){
     state.dirty=false;
@@ -158,7 +167,9 @@
       $('prompts').append(li);
     }
     const info=state.previews[a.reviewId]||{};
-    showSuggestion(info.suggestion);
+    showSuggestion(info.temporalSuggestion||info.suggestion);
+    $('temporalLook').disabled=!info.ready || !info.suggestion ||
+       info.suggestion.policyVersion!=='adaptive-context-rubric-v2';
     loadMedia(info.ready?'preview':'original');
   }
   function seekStart(){
@@ -218,6 +229,21 @@
       }
     }catch(e){$('aiSuggestion').textContent=e.message;}
     finally{$('aiTriage').disabled=false;}
+  });
+  $('temporalLook').addEventListener('click',async()=>{
+    const a=currentAssignment();if(!a)return;
+    const rid=a.reviewId;
+    $('temporalLook').disabled=true;
+    $('aiSuggestion').textContent='Local model is examining seven sampled frames from an already verified short preview.';
+    try{
+      const result=await api('/api/benchmark/temporal-look',{reviewId:rid});
+      state.previews[rid]={
+        ...(state.previews[rid]||{}),
+        temporalSuggestion:result.suggestion,
+      };
+      if(currentAssignment()?.reviewId===rid)showSuggestion(result.suggestion);
+    }catch(e){$('aiSuggestion').textContent=e.message;}
+    finally{$('temporalLook').disabled=false;}
   });
   $('previous').addEventListener('click',()=>move(-1));
   $('next').addEventListener('click',()=>move(1));
@@ -308,6 +334,7 @@
       }
       state.assignments=[...queue,...completed];
       $('aiTriage').hidden=!data.localJudgeEnabled;
+      $('temporalLook').hidden=!data.temporalSecondLookEnabled;
       renderCriteria();
       if(state.assignments.length){render();}
       else announce('No review assignments found.');
