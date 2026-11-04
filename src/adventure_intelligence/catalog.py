@@ -164,6 +164,20 @@ CREATE TABLE IF NOT EXISTS sequence_combination_feedback (
 );
 CREATE INDEX IF NOT EXISTS sequence_feedback_revision
  ON sequence_combination_feedback(sequence_revision_id);
+CREATE TABLE IF NOT EXISTS benchmark_review_revisions (
+ revision_id TEXT PRIMARY KEY,
+ benchmark_id TEXT NOT NULL,
+ review_id TEXT NOT NULL,
+ asset_id TEXT NOT NULL REFERENCES assets(id),
+ start_ms INTEGER NOT NULL,
+ end_ms INTEGER NOT NULL,
+ role TEXT NOT NULL CHECK(role IN ('candidate_hypothesis','control_systematic')),
+ payload_json TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK(start_ms>=0 AND end_ms>start_ms)
+);
+CREATE INDEX IF NOT EXISTS benchmark_review_versioned
+ ON benchmark_review_revisions(benchmark_id,review_id,created_at);
 
 """
 

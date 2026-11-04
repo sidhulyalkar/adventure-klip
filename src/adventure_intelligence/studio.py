@@ -31,6 +31,8 @@ from .clip_rules import suggest_trim, exclusion_spans
 from .boundary_inspector import boundary_evidence
 from .transition_evidence import EdgeEvidence, VERSION as EDGE_VERSION
 from .examples import latest_examples
+from .benchmark_feedback import load_benchmark,save_human_review,benchmark_feedback_status
+from .archive_review import CRITERIA
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -43,6 +45,8 @@ _RESOURCE={
     "/focus_refine.css":("focus_refine.css","text/css; charset=utf-8"),
     "/focus.js":("focus.js","text/javascript; charset=utf-8"),
     "/boundary_review.js":("boundary_review.js","text/javascript; charset=utf-8"),
+    "/benchmark.js":("benchmark.js","text/javascript; charset=utf-8"),
+    "/benchmark.css":("benchmark.css","text/css; charset=utf-8"),
 }
 
 
@@ -204,10 +208,12 @@ class SourceStream:
             return fd,st.st_size
 
 
-def make_handler(workspace:Path,token:str):
+def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
     """Handler factory allows isolated HTTP regression tests using ephemeral ports."""
     paths=files("adventure_intelligence").joinpath("studio_assets")
     streamer=SourceStream(workspace)
+    benchmark=(load_benchmark(workspace,benchmark_file)
+               if benchmark_file is not None else None)
 
     class Handler(BaseHTTPRequestHandler):
         server_version="KlipStudio/1.0"
@@ -317,8 +323,12 @@ def make_handler(workspace:Path,token:str):
             if not self._origin_safe():
                 self._json(403,{"error":"Local host required"})
                 return
-            if path in {"/","/classic"}:
-                name="focus.html" if path=="/" else "index.html"
+            if path in {"/","/classic","/benchmark"}:
+                if path=="/benchmark" and benchmark is None:
+                    self._json(404,{"error":"No archive benchmark was selected when Studio opened"})
+                    return
+                name=("benchmark.html" if path=="/benchmark" else
+                      "focus.html" if path=="/" else "index.html")
                 html=paths.joinpath(name).read_text(encoding="utf-8")
                 html=html.replace("KLIP_SESSION_TOKEN",token)
                 self._send(200,html.encode(),"text/html; charset=utf-8")
@@ -331,7 +341,24 @@ def make_handler(workspace:Path,token:str):
                 self._json(403,{"error":"Unauthorized studio session"})
                 return
             try:
-                if path=="/api/overview":
+                if path=="/api/benchmark":
+                    if benchmark is None:
+                        self._json(404,{"error":"No benchmark configured"})
+                    else:
+                        reviews=benchmark_feedback_status(workspace,benchmark["path"])
+                        self._json(200,{
+                            "benchmarkId":benchmark["benchmarkId"],
+                            "assignments":list(benchmark["assignments"].values()),
+                            "criteria":CRITERIA,
+                            "reviews":reviews["reviewEntries"],
+                            "reviewedCount":reviews["reviewedAssignments"],
+                            "warnings":reviews["limitations"]})
+                elif path=="/api/benchmark/evaluation":
+                    if benchmark is None:
+                        self._json(404,{"error":"No benchmark configured"})
+                    else:
+                        self._json(200,benchmark_feedback_status(workspace,benchmark["path"]))
+                elif path=="/api/overview":
                     self._json(200,studio_overview(workspace))
                 elif path=="/api/sequence":
                     self._json(200,sequence_state(workspace))
@@ -390,7 +417,14 @@ def make_handler(workspace:Path,token:str):
                 body=json.loads(self.rfile.read(length))
                 if not isinstance(body,dict):
                     raise ValueError("Expected a JSON object")
-                if parsed.path=="/api/reviews":
+                if parsed.path=="/api/benchmark/review":
+                    if benchmark is None:
+                        self._json(404,{"error":"No benchmark configured"})
+                        return
+                    with lock_workspace(workspace):
+                        result=save_human_review(
+                            workspace,benchmark["path"],body)
+                elif parsed.path=="/api/reviews":
                     with lock_workspace(workspace):
                         result=review_example(
                             workspace,
@@ -440,7 +474,8 @@ def make_handler(workspace:Path,token:str):
     return Handler
 
 
-def serve_studio(workspace:Path,port:int=0,open_browser:bool=True):
+def serve_studio(workspace:Path,port:int=0,open_browser:bool=True,
+                 benchmark_file:Path|None=None):
     """Serve a private local UI, then block until Ctrl+C."""
     if not 0<=port<=65535:
         raise ValueError("Port must be 0..65535")
@@ -448,9 +483,12 @@ def serve_studio(workspace:Path,port:int=0,open_browser:bool=True):
     with connect(workspace):
         pass
     token=secrets.token_urlsafe(32)
-    server=ThreadingHTTPServer(("127.0.0.1",port),make_handler(workspace,token))
+    server=ThreadingHTTPServer(
+        ("127.0.0.1",port),make_handler(workspace,token,benchmark_file))
     server.daemon_threads=True
     url=f"http://127.0.0.1:{server.server_port}/"
+    if benchmark_file is not None:
+        url+="benchmark"
     print(f"[klip] Local studio running at {url}",flush=True)
     print("[klip] Original video files are opened read-only; press Ctrl+C to stop.",flush=True)
     if open_browser:

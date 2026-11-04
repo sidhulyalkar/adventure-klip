@@ -44,6 +44,7 @@ from .moment_ranking import create_rank_report
 from .archive_pilot import run_archive_pilot
 from .archive_status import inspect_archive_campaign, write_archive_status
 from .archive_review import seed_archive_reviews
+from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -102,6 +103,17 @@ def main(argv: list[str] | None = None) -> int:
     timeline=sub.add_parser("timeline",help="Produce calibrated per-video event timelines")
     timeline.add_argument("--source",choices=["pixel-change","optical-flow"],default="pixel-change")
     timeline.add_argument("--bin-ms",type=int,default=2000)
+    archive_import=sub.add_parser("archive-review-import",
+        help="Atomically import offline benchmark ratings into append-only private review revisions")
+    archive_import.add_argument("--assignments",type=Path,required=True)
+    archive_import.add_argument("--reviews",type=Path,required=True,
+        help="Local JSON exported by the offline benchmark review gallery")
+    archive_results=sub.add_parser("archive-review-results",
+        help="Evaluate saved human archive reviews without reading source videos")
+    archive_results.add_argument("--assignments",required=True,type=Path,
+        help="Versioned archive review assignments.json")
+    archive_results.add_argument("--output-dir",required=True,type=Path,
+        help="New private evaluation report folder")
     archive_review=sub.add_parser("archive-review",
         help="Create a balanced source-grounded candidate and control review benchmark from frozen batches")
     archive_review.add_argument("--campaign",type=Path,
@@ -316,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
     studio=sub.add_parser('studio',help='Open local, private video review studio')
     studio.add_argument('--port',type=int,default=0,help='Loopback-only port; 0 chooses a free port')
     studio.add_argument('--no-browser',action='store_true',help='Print URL without opening a browser')
+    studio.add_argument('--benchmark',type=Path,
+        help='Launch directly into source-backed archive review using assignments.json')
     review=sub.add_parser("review",help="Create a local HTML report for video/event review")
     review.add_argument("--output",type=Path)
     mark=sub.add_parser('mark',help='Append one human-reviewed activity/incident label')
@@ -454,6 +468,11 @@ def main(argv: list[str] | None = None) -> int:
                 _print(generate_timelines(root,source=args.source,bin_ms=args.bin_ms))
         elif args.command=='history':
             _print(event_history(root,args.asset_id))
+        elif args.command=="archive-review-import":
+            with lock_workspace(root):
+                _print(import_human_reviews(root,args.assignments,args.reviews))
+        elif args.command=="archive-review-results":
+            _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
         elif args.command=="archive-review":
             campaign=args.campaign or root/"reports"/"archive-pilot-v1"
             _print(seed_archive_reviews(root,campaign,args.output_dir,
@@ -708,7 +727,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="sessions":
             _print(session_candidates(root,args.gap_minutes))
         elif args.command=='studio':
-            serve_studio(root,port=args.port,open_browser=not args.no_browser)
+            serve_studio(root,port=args.port,open_browser=not args.no_browser,
+                         benchmark_file=args.benchmark)
         elif args.command=="review":
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":

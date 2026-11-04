@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="klip-session" content="KLIP_SESSION_TOKEN">
+<title>Klip · Archive benchmark</title>
+<link rel="stylesheet" href="/benchmark.css">
+<script src="/benchmark.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<header class="header">
+  <a href="/" class="brand">klip<span>.</span></a>
+  <span class="scope">ARCHIVE BENCHMARK · LOCAL REVIEW</span>
+  <a href="/" class="textlink">Back to studio</a>
+</header>
+<main>
+<div class="intro">
+  <div><p class="eyebrow" id="category">CANDIDATE / CONTROL</p>
+       <h1 id="clipTitle">Your next moment</h1>
+       <p id="clipContext">Loading saved review assignments.</p></div>
+  <div class="navigation">
+       <button type="button" id="previous" aria-label="Previous video window">← Previous</button>
+       <button type="button" id="next" aria-label="Next video window">Next →</button>
+  </div>
+</div>
+<div class="status" role="status" id="status" aria-live="polite"></div>
+<section class="player-frame" aria-label="Local video segment">
+  <video id="player" playsinline controls preload="metadata" aria-label="Original source footage within the selected interval"></video>
+  <div class="player-foot"><span id="range">0:00 – 0:00</span>
+    <button type="button" id="replay">Replay interval</button>
+    <span>Full source · read only</span></div>
+</section>
+<section class="review-panel" aria-label="Evidence-backed review">
+  <div class="heading-row">
+  <div><p class="eyebrow">OBSERVE · THEN RATE</p><h2>What makes this moment valuable?</h2></div>
+  <span class="counter" id="counter">0 / 0</span></div>
+  <p class="help">A selected interval is not automatically a highlight. A control interval may contain something Klip missed. Rate only what you can actually see.</p>
+  <div class="core">
+    <label>My decision<select id="reviewDecision">
+      <option value="">Not reviewed</option><option value="keep">Keep</option>
+      <option value="skip">Skip</option><option value="uncertain">Uncertain</option>
+    </select></label>
+    <label>Did a meaningful event occur?<select id="observedEvent">
+      <option value="">Unassessed</option><option value="true">Yes</option>
+      <option value="false">No</option>
+    </select></label>
+    <label>Observed activity<select id="observedActivity">
+      <option value="">Unassessed</option><option value="snorkeling">Snorkeling</option>
+      <option value="ski">Skiing</option><option value="bike">Mountain biking</option>
+      <option value="other">Other or mixed</option>
+    </select></label>
+  </div>
+  <label class="full">What actually happened? <input id="eventKind" type="text" maxlength="200" placeholder="e.g. ray swims across sand, controlled turn sequence"></label>
+  <details open><summary>Review dimensions <span>0 = low · 1 = exceptional · blank = unknown</span></summary>
+    <div id="criteria" class="criteria"></div>
+  </details>
+  <details><summary>Activity-specific review prompts</summary>
+    <ul id="prompts"></ul>
+  </details>
+  <label class="full">What could be improved? What evidence supports your assessment?
+    <textarea id="notes" rows="3" maxlength="2000" placeholder="Observable technique, subject visibility, context, uncertainty..."></textarea>
+  </label>
+  <div class="actions">
+    <button type="button" id="save" class="primary">Save reviewed moment</button>
+    <span id="saveStatus" role="status" aria-live="polite"></span>
+  </div>
+</section>
+<footer>Original video is streamed locally and never modified. Human judgments are appended to Klip’s private SQLite database. No automatic species identification, athletic technique claims or publishing.</footer>
+</main>
+</div>
+</body>
+</html>
