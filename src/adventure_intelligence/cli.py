@@ -45,6 +45,7 @@ from .archive_pilot import run_archive_pilot
 from .archive_status import inspect_archive_campaign, write_archive_status
 from .archive_review import seed_archive_reviews
 from .archive_local_triage import run_local_triage
+from .judge_audit import compare_judge_policies, save_judge_audit
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -115,12 +116,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    archive_audit=sub.add_parser("archive-judge-audit",
+        help="Compare saved legacy vs adaptive-v2 Ollama suggestions with human decisions, cache only")
+    archive_audit.add_argument("--assignments",required=True,type=Path)
+    archive_audit.add_argument("--model",required=True)
+    archive_audit.add_argument("--output-dir",type=Path,
+        help="Optional new reports/ or exports/ folder for offline JSON+HTML audit")
     archive_triage=sub.add_parser("archive-local-triage",
         help="Optionally judge a bounded balanced set of frozen review intervals with an installed localhost vision model")
     archive_triage.add_argument("--assignments",required=True,type=Path)
     archive_triage.add_argument("--model",required=True,
         help="An explicitly installed local Ollama image-capable model")
     archive_triage.add_argument("--limit",type=int,default=8)
+    archive_triage.add_argument("--judge-policy",choices=["legacy","adaptive-v2"],
+        default="legacy",help="Opt-in adaptive evidence-rubric v2, separate from running legacy inference")
     archive_triage.add_argument("--run",action="store_true",
         help="Explicitly verify sources, prepare small H.264 previews and call Ollama on 127.0.0.1 only")
     archive_review=sub.add_parser("archive-review",
@@ -341,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
         help='Launch directly into source-backed archive review using assignments.json')
     studio.add_argument('--local-judge-model',
         help='Explicit opt-in: use an already installed Ollama vision model on localhost only')
+    studio.add_argument('--judge-policy',choices=['legacy','adaptive-v2'],
+        default='legacy',help='Use separate context-aware v2 rubric/cache; legacy remains unchanged')
     review=sub.add_parser("review",help="Create a local HTML report for video/event review")
     review.add_argument("--output",type=Path)
     mark=sub.add_parser('mark',help='Append one human-reviewed activity/incident label')
@@ -484,9 +495,16 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="archive-judge-audit":
+            if args.output_dir is None:
+                _print(compare_judge_policies(root,args.assignments,model=args.model))
+            else:
+                _print(save_judge_audit(root,args.assignments,
+                    model=args.model,output_dir=args.output_dir))
         elif args.command=="archive-local-triage":
             result=run_local_triage(root,args.assignments,
-                model=args.model,limit=args.limit,run=args.run)
+                model=args.model,limit=args.limit,run=args.run,
+                policy=args.judge_policy)
             _print(result)
             if result.get("status")=="partial_failure":
                 return 1
@@ -746,7 +764,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=='studio':
             serve_studio(root,port=args.port,open_browser=not args.no_browser,
                          benchmark_file=args.benchmark,
-                         local_judge_model=args.local_judge_model)
+                         local_judge_model=args.local_judge_model,
+                         judge_policy=args.judge_policy)
         elif args.command=="review":
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":
