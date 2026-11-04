@@ -102,32 +102,104 @@ def _choose_windows(asset:dict,*,half_ms:int=7000)->list[dict]:
 
 
 def _html(report:dict)->str:
+    """Offline, user-editable benchmark; JSON export remains entirely local."""
     groups=[]
+    scale=[(None,"Not assessed"),(0,"0 · Very low"),(.25,"0.25 · Low"),
+           (.5,"0.50 · Moderate"),(.75,"0.75 · High"),(1,"1.00 · Exceptional")]
     for sport in ("snorkeling","ski","bike","unresolved"):
         entries=[x for x in report["assignments"] if x["selectionGroup"]==sport]
         if not entries:
             continue
         blocks=[]
         for a in entries:
-            # A local file URI is a convenience only, not cached playback.
-            # Browser security settings may block local file links.
             url=a.get("sourceFileUrl")
             link=(f'<a href="{escape(url,quote=True)}" rel="noopener">Open source video</a>'
                   if url else '<span>Original file unavailable</span>')
             questions=''.join('<li>'+escape(q)+'</li>'
                               for q in SPORT_QUESTIONS[sport])
+            rating_fields=[]
+            for key,desc in CRITERIA.items():
+                options=''.join('<option value="'+('' if val is None else str(val))+'">'+
+                                escape(label)+'</option>'
+                                for val,label in scale)
+                rating_fields.append(
+                    '<label class="rating"><span>'+escape(key)+
+                    f'<small>{escape(desc)}</small></span>'
+                    f'<select data-criterion="{escape(key,quote=True)}">'
+                    +options+'</select></label>')
             blocks.append(
-                '<article><strong>'+escape(a["basename"])+'</strong>'
+                '<article class="review" data-review-id="'+escape(a["reviewId"],quote=True)+'">'
+                '<strong>'+escape(a["basename"])+'</strong>'
                 f'<p>{escape(a["role"])} · {a["startMs"]/1000:.1f}–'
                 f'{a["endMs"]/1000:.1f}s · {escape(a["analysisCoverage"])}</p>'
                 +link+
-                '<p>Watch the entire interval, then rate only what is observable. '
-                'The role is a sampling label, NOT a truth label.</p>'
+                '<p>Watch the full interval. A candidate is not necessarily '
+                'good; a control is not necessarily uninteresting.</p>'
+                '<label>Decision <select data-field="reviewDecision">'
+                '<option value="">Not reviewed</option>'
+                '<option value="keep">Keep</option>'
+                '<option value="skip">Skip</option>'
+                '<option value="uncertain">Uncertain</option>'
+                '</select></label>'
+                '<label>Actual activity <select data-field="observedActivity">'
+                '<option value="">Unknown / not assessed</option>'
+                '<option value="snorkeling">Snorkeling</option>'
+                '<option value="ski">Ski</option>'
+                '<option value="bike">Bike</option>'
+                '<option value="other">Other / mixed</option>'
+                '</select></label>'
+                '<label>Was a meaningful event actually observed? '
+                '<select data-field="observedEvent">'
+                '<option value="">Not assessed</option>'
+                '<option value="true">Yes</option>'
+                '<option value="false">No</option>'
+                '<option value="unknown">Unclear</option>'
+                '</select></label>'
+                '<label>Event description <input data-field="eventKind" '
+                'maxlength="200" placeholder="e.g. ray swims past, completed turn"/></label>'
+                '<details><summary>Value criteria (0 to 1, unknown allowed)</summary>'
+                +''.join(rating_fields)+'</details>'
                 '<details><summary>Sport-specific review prompts</summary><ul>'
-                +questions+'</ul></details><small>'
-                +escape(a["reviewId"])+'</small></article>')
+                +questions+'</ul></details>'
+                '<label>Evidence and improvement notes '
+                '<textarea data-field="notes" rows="3" maxlength="2000" '
+                'placeholder="What was visible? What would make this better?"></textarea></label>'
+                '<small>'+escape(a["reviewId"])+'</small></article>')
         groups.append('<section><h2>'+escape(sport)+'</h2>'+
                       ''.join(blocks)+'</section>')
+    script=r"""
+    (() => {
+      const exportButton=document.getElementById("export");
+      exportButton.addEventListener("click", () => {
+        const data=Array.from(document.querySelectorAll(".review")).map(card => {
+          const field=name=>card.querySelector('[data-field="'+name+'"]').value;
+          const event=field("observedEvent");
+          const ratings={};
+          for (const el of card.querySelectorAll("[data-criterion]")) {
+            ratings[el.dataset.criterion]=el.value===""?null:Number(el.value);
+          }
+          return {
+            reviewId:card.dataset.reviewId,
+            reviewDecision:field("reviewDecision")||null,
+            observedActivity:field("observedActivity")||null,
+            observedEvent:event===""||event==="unknown"?null:event==="true",
+            eventKind:field("eventKind")||null,
+            notes:field("notes"),
+            ratings,
+            rareTaxonVerified:false,
+            taxonReviewSource:null,
+            eventBoundaryAdjustmentMs:null
+          };
+        });
+        const content=JSON.stringify(data,null,2)+"\n";
+        const blob=new Blob([content],{type:"application/json"});
+        const url=URL.createObjectURL(blob);
+        const anchor=document.createElement("a");
+        anchor.href=url;anchor.download="klip-human-reviews.json";
+        anchor.click();
+        URL.revokeObjectURL(url);
+      });
+    })();"""
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -135,18 +207,31 @@ def _html(report:dict)->str:
         'body{font:14px system-ui;background:#101923;color:#eef2f5;'
         'max-width:1150px;margin:28px auto;padding:0 16px;line-height:1.5}'
         'main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,'
-        '320px),1fr));gap:16px}h1{font-size:1.6rem}h2{font-size:1.1rem;'
+        '350px),1fr));gap:16px}h1{font-size:1.6rem}h2{font-size:1.1rem;'
         'color:#eebdaf}article{padding:14px;background:#1c2b38;'
         'border:1px solid #354657;border-radius:12px;margin-bottom:12px}'
         'p,small{color:#b4c4d1}small{display:block;overflow-wrap:anywhere}'
-        'a{color:#9ad2de}summary{cursor:pointer}</style></head><body>'
-        '<h1>Review benchmark · initial archive batches</h1>'
-        '<p>Candidate and systematic-control intervals. No actual highlights '
-        'have been confirmed by these assignments. Record ratings separately '
-        'in the review template; missing or unclear observations remain null.</p>'
-        '<main>'+''.join(groups)+'</main></body></html>'
+        'a{color:#9ad2de}label{display:block;margin:12px 0}'
+        'input,textarea,select{font:inherit;border:1px solid #526578;'
+        'color:#eef2f5;background:#233644;border-radius:6px;'
+        'padding:6px;max-width:100%;display:block;margin-top:4px}'
+        'textarea{width:95%}.rating{display:flex;gap:12px;'
+        'align-items:center;justify-content:space-between;'
+        'border-bottom:1px solid #354657;padding-bottom:8px}'
+        '.rating span{max-width:65%}.rating select{max-width:35%}'
+        'button{padding:12px 18px;border:0;border-radius:8px;'
+        'background:#eebdaf;color:#182431;font-weight:700;cursor:pointer}'
+        'button:focus-visible,input:focus-visible,select:focus-visible,'
+        'textarea:focus-visible{outline:2px solid #eebdaf}'
+        'details{margin:12px 0;padding:8px;border:1px solid #354657;'
+        'border-radius:8px}summary{cursor:pointer}</style></head><body>'
+        '<h1>Archive event review benchmark</h1>'
+        '<p>Candidate and systematic-control intervals. Scores are '
+        'human assessments, not classifier confidence. No files are '
+        'uploaded; export a local JSON file when you finish.</p>'
+        '<p><button id="export" type="button">Export my reviews (JSON)</button></p>'
+        '<main>'+''.join(groups)+'</main><script>'+script+'</script></body></html>'
     )
-
 
 def seed_archive_reviews(workspace:Path,campaign:Path,output_dir:Path,*,
                          max_assets:int=32,window_seconds:int=14)->dict:
