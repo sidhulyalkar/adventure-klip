@@ -15,6 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from . import studio_preview_judge as legacy
+from .review_priority import investigation_priority
 
 POLICY="adaptive-context-rubric-v2"
 GROUPS={"snorkeling","ski","bike","unresolved"}
@@ -187,6 +188,7 @@ def normalize_reply(raw:dict)->dict:
         overrides.append("unverified_event_requires_further_review")
     priority=("high" if suggestion=="keep" else
               "investigate" if suggestion=="unsure" else "low")
+    investigation=investigation_priority(scores)
     return {
         "policyVersion":POLICY,
         "recommendation":suggestion,
@@ -200,6 +202,7 @@ def normalize_reply(raw:dict)->dict:
         "needsTemporalReview":raw["needsTemporalReview"],
         "ratings":scores,
         "priority":priority,
+        **investigation,
         "policyOverrides":overrides,
         "limitations":[
             "Only three stills; no continuous video or audio was reviewed",
