@@ -165,6 +165,30 @@ CREATE TABLE IF NOT EXISTS sequence_combination_feedback (
 CREATE INDEX IF NOT EXISTS sequence_feedback_revision
  ON sequence_combination_feedback(sequence_revision_id);
 
+-- Append-only, independently versioned review of candidate Moments. This is
+-- separate from keep/skip examples and doesn't modify existing event evidence.
+CREATE TABLE IF NOT EXISTS moment_value_revisions (
+ revision_id TEXT PRIMARY KEY,
+ packet_id TEXT NOT NULL,
+ moment_id TEXT NOT NULL,
+ previous_revision_id TEXT REFERENCES moment_value_revisions(revision_id),
+ asset_id TEXT NOT NULL REFERENCES assets(id),
+ start_ms INTEGER NOT NULL,
+ end_ms INTEGER NOT NULL,
+ decision TEXT NOT NULL CHECK(decision IN ('keep','skip','later')),
+ event_observed TEXT NOT NULL CHECK(event_observed IN ('observed','not_observed','uncertain')),
+ ratings_json TEXT NOT NULL,
+ note TEXT NOT NULL DEFAULT '',
+ improvement_note TEXT NOT NULL DEFAULT '',
+ reviewer TEXT NOT NULL DEFAULT 'local_user',
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ CHECK(end_ms > start_ms)
+);
+CREATE INDEX IF NOT EXISTS moment_value_packet_lookup
+ ON moment_value_revisions(packet_id,moment_id);
+CREATE INDEX IF NOT EXISTS moment_value_asset_lookup
+ ON moment_value_revisions(asset_id,start_ms,end_ms);
+
 """
 
 
