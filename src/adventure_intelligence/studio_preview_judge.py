@@ -119,28 +119,43 @@ def generate_preview(workspace:Path,streamer,assignment:dict,*,timeout:int=150)-
 
 
 def _jpeg_samples(path:Path,*,limit:int=3)->list[str]:
+    """Sample only a short local proxy, with one probe and bounded seek fallback.
+
+    A failed fast seek may be retried with accurate post-input seeking.
+    A timed-out decoder is *not* retried automatically, avoiding a CPU/SSD
+    stall. Neither path reads an original DJI video.
+    """
+    from .media import probe
+    import math
+
+    if type(limit) is not int or not 1<=limit<=3:
+        raise ValueError("Invalid bounded frame sampling count")
+    duration=float(probe(path)["duration"])
+    if not math.isfinite(duration) or not 1<=duration<=61:
+        raise ValueError("Frame sampling preview duration is invalid")
     ffmpeg=require_tool("ffmpeg")
-    # Extract a few independently decoded stills from the *small proxy*, not
-    # the multi-gigabyte original. The video model must not be presented
-    # as having inspected all original frames, action dynamics, or audio.
     samples=[]
     with tempfile.TemporaryDirectory(prefix="klip-local-judge-") as folder:
         for idx,fraction in enumerate((.18,.50,.82)[:limit]):
-            # The preview is <=60 sec and we read duration with ffprobe.
-            from .media import probe
-            duration=float(probe(path)["duration"])
-            t=max(0.0,duration*fraction)
+            stamp=f"{duration*fraction:.3f}"
             out=Path(folder)/(f"frame-{idx}.jpg")
-            result=subprocess.run(
-                [ffmpeg,"-hide_banner","-loglevel","error","-nostdin",
-                 "-ss",f"{t:.3f}","-i",str(path),
-                 "-frames:v","1","-vf","scale='min(512,iw)':-2",
-                 "-q:v","6","-y",str(out)],
-                stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,
-                timeout=25,check=False)
-            if result.returncode or not out.is_file() or not 100<out.stat().st_size<220000:
+            for accurate_seek in (False,True):
+                out.unlink(missing_ok=True)
+                seek=(["-i",str(path),"-ss",stamp] if accurate_seek else
+                      ["-ss",stamp,"-i",str(path)])
+                result=subprocess.run(
+                    [ffmpeg,"-hide_banner","-loglevel","error","-nostdin",
+                     *seek,"-frames:v","1",
+                     "-vf","scale='min(512,iw)':-2",
+                     "-q:v","6","-y",str(out)],
+                    stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,
+                    timeout=20,check=False)
+                if (result.returncode==0 and out.is_file()
+                        and 100<out.stat().st_size<220000):
+                    samples.append(base64.b64encode(out.read_bytes()).decode("ascii"))
+                    break
+            else:
                 raise RuntimeError("Cannot sample an inspectable local judge frame")
-            samples.append(base64.b64encode(out.read_bytes()).decode("ascii"))
     return samples
 
 
