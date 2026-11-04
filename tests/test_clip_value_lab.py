@@ -13,7 +13,7 @@ from adventure_intelligence.archive_pilot import run_archive_pilot
 from adventure_intelligence.catalog import connect
 from adventure_intelligence.clip_value_lab import (
     CRITERIA,make_value_packet,read_value_packet,save_value_review,
-    value_lab_state,value_report,
+    value_lab_state,value_report,_criterion_agreement,
 )
 from adventure_intelligence.cli import main
 from adventure_intelligence.indexing import index_folder
@@ -290,3 +290,36 @@ def test_unconfirmed_activity_needs_explicit_human_observation_for_sport_ranking
             "SELECT activity FROM assets WHERE id=?",
             (unconfirmed["assetId"],)).fetchone()[0]!="snorkeling" or not unconfirmed["activityConfirmed"]
     assert {p.name:p.read_bytes() for p in camera.iterdir()}==originals
+
+
+
+def test_independent_human_preference_targets_use_within_sport_pairs_only():
+    scored=[
+        {"momentId":"a","activity":"snorkeling",
+         "scores":{"share":.9,"learning":.7}},
+        {"momentId":"b","activity":"snorkeling",
+         "scores":{"share":.6,"learning":.8}},
+        {"momentId":"c","activity":"snorkeling",
+         "scores":{"share":.2,"learning":.4}},
+        {"momentId":"d","activity":"bike",
+         "scores":{"share":1.0,"learning":.2}},
+    ]
+    reviews={
+        "a":{"ratings":{"audienceAppeal":4,"personalMeaning":3}},
+        "b":{"ratings":{"audienceAppeal":2,"personalMeaning":4}},
+        "c":{"ratings":{"audienceAppeal":1,"personalMeaning":1}},
+        "d":{"ratings":{"audienceAppeal":0,"personalMeaning":0}},
+    }
+    result=_criterion_agreement(scored,reviews,axis="share",target="audienceAppeal")
+    assert result["comparablePairs"]==3
+    assert result["agreement"]==1.0
+    # Cross-sport comparison is never treated as calibrated evidence.
+    assert result["agreeingPairs"]==3
+    no_evidence=_criterion_agreement(scored[:2],reviews,
+                                    axis="share",target="audienceAppeal")
+    assert no_evidence["comparablePairs"]==1
+    assert no_evidence["agreement"] is None
+    learning=_criterion_agreement(scored,reviews,axis="learning",
+                                  target="personalMeaning")
+    assert learning["comparablePairs"]==3
+    assert learning["agreement"]<1.0
