@@ -45,11 +45,10 @@ def inspect_temporal_candidates(workspace:Path,assignments:Path,*,model:str,
     eligible=[]
     awaiting_first=0
     missing_preview=0
-    already_reviewed=0
+    already_reviewed=len(seen)
     first_was_definitive=0
     for item in scan:
         if item["reviewId"] in seen:
-            already_reviewed+=1
             continue
         path,receipt=preview_paths(root,item["assetId"],item["startMs"],item["endMs"])
         context=context_hint(item)
