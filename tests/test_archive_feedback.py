@@ -252,3 +252,47 @@ def test_cli_evaluation_and_import_contract(benchmark,tmp_path,capsys):
     result=json.loads(capsys.readouterr().out)
     assert result["reviewed"]==1
     assert (output/"index.html").is_file()
+
+
+
+def test_reviewed_murky_high_value_moment_can_out_rank_clear_ordinary_view(benchmark):
+    root,filename,doc,camera,originals=benchmark
+    clear,ray=doc["assignments"][:2]
+    shallow=_review(clear,observedActivity="snorkeling",
+                    eventKind="ordinary sunlit sand",
+                    ratings={
+                        "eventSignificance":.12,"subjectVisibility":.98,
+                        "ambientVisibility":1.0,"visualQuality":1.0,
+                        "archiveNovelty":.15,"narrativeCompleteness":.78,
+                        "learningValue":.2,
+                    })
+    encounter=_review(ray,observedActivity="snorkeling",
+                      eventKind="human-observed ray-like subject",
+                      ratings={
+                        "eventSignificance":.96,"subjectVisibility":.62,
+                        "ambientVisibility":.2,"visualQuality":.34,
+                        "archiveNovelty":.94,"narrativeCompleteness":.87,
+                        "learningValue":.8,
+                    })
+    save_human_review(root,filename,shallow)
+    save_human_review(root,filename,encounter)
+    summary=benchmark_feedback_status(root,filename)
+    ranking=summary["humanReviewedRanking"]
+    assert ranking["status"]=="human_ratings_only_not_a_trained_ranker"
+    assert ranking["included"]==2
+    assert ranking["queues"]["share"][0]==ray["reviewId"]
+    assert ranking["queues"]["learning"][0]==ray["reviewId"]
+    assert ranking["queues"]["discovery"]==[]
+    assert all(x["reviewEligibility"]["autoPublish"] is False
+               for x in ranking["scoredMoments"])
+    assert all(x["signalsUsed"]["verifiedTaxonRarity"] is None
+               for x in ranking["scoredMoments"])
+    assert {p.name:p.read_bytes() for p in camera.iterdir()}==originals
+
+
+def test_unreviewed_intervals_never_receive_fake_moment_scores(benchmark):
+    root,filename,doc,camera,originals=benchmark
+    summary=benchmark_feedback_status(root,filename)
+    assert summary["humanReviewedRanking"]["included"]==0
+    assert summary["humanReviewedRanking"]["queues"]=={
+        "discovery":[],"share":[],"learning":[]}
