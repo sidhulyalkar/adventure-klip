@@ -13,7 +13,7 @@ import json
 
 from .benchmark_feedback import load_benchmark, benchmark_feedback_status
 from .studio_preview_judge import (
-    _MODEL,preview_paths,cached_judgment,generate_preview,local_judgment,
+    valid_local_model,preview_paths,cached_judgment,generate_preview,local_judgment,
 )
 from .studio import SourceStream
 
@@ -53,7 +53,7 @@ def _sample_unreviewed(rows:list[dict],reviewed:set[str],limit:int):
 
 def run_local_triage(workspace:Path,assignments:Path,*,model:str,
                      limit:int=8,run:bool=False)->dict:
-    if not isinstance(model,str) or not _MODEL.fullmatch(model):
+    if not valid_local_model(model):
         raise ValueError("Specify a valid installed local vision model name")
     if type(limit) is not int or not 1<=limit<=24:
         raise ValueError("Pilot limit must be between 1 and 24")
