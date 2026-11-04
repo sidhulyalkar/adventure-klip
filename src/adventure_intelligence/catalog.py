@@ -177,6 +177,8 @@ CREATE TABLE IF NOT EXISTS moment_value_revisions (
  end_ms INTEGER NOT NULL,
  decision TEXT NOT NULL CHECK(decision IN ('keep','skip','later')),
  event_observed TEXT NOT NULL CHECK(event_observed IN ('observed','not_observed','uncertain')),
+ reviewed_activity TEXT NOT NULL DEFAULT 'unresolved'
+  CHECK(reviewed_activity IN ('unresolved','snorkeling','ski','bike','other')),
  ratings_json TEXT NOT NULL,
  note TEXT NOT NULL DEFAULT '',
  improvement_note TEXT NOT NULL DEFAULT '',
