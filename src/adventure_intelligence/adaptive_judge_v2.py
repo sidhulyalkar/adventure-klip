@@ -43,8 +43,10 @@ SPORT_GUIDANCE={
         "turtle, fish, or coral observation, but do not assert any species, "
         "animal count, rarity, interactions or behavior from 3 stills. "
         "A murky frame with a distinctive visible animal can be compelling; "
-        "a pristine empty sandy bottom may not be. A shadow alone is "
-        "insufficient: request temporal review rather than rejecting it."
+        "a pristine empty sandy bottom may not be. A ray-like wing shape "
+        "is meaningful to inspect but does not establish manta versus eagle "
+        "ray. A shadow alone is insufficient: request temporal review rather "
+        "than rejecting it."
     ),
     "ski":(
         "Distinguish stationary lifts, level traverses, sustained descents, "
@@ -59,7 +61,10 @@ SPORT_GUIDANCE={
         "berms, jumps and technical features. A feature in the frame "
         "does NOT demonstrate riding it, landing or successful execution. "
         "Look for evidence of approach and exit, while marking action "
-        "continuity unknown with 3 frames. Video shake is NOT a skill score."
+        "continuity unknown with 3 frames. Distinguish a pedal mountain "
+        "bike from a motorbike or parked rental vehicle, and beach transport "
+        "from technical trail riding. Avoid asserting a maneuver just "
+        "because a bicycle or obstacle appears. Video shake is NOT a skill score."
     ),
     "unresolved":(
         "Independently determine whether this is underwater footage, skiing, "
