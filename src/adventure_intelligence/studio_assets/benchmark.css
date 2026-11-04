@@ -16,3 +16,12 @@ kbd{font:11px ui-monospace,SFMono-Regular,monospace;opacity:.76;
 #sourceMode{margin-left:auto}
 @media(max-width:720px){.triage-panel{padding:15px}
   .quick{min-width:0;flex:1}#sourceMode{margin-left:0}}
+
+/* Optional, compact recording-defect labels. No destructive control. */
+.quality-flags{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px 18px;margin:12px 0 16px}
+.quality-flags label,.recording-quality>label{display:flex;align-items:center;
+  gap:9px;font-size:12px;font-weight:500;color:var(--muted)}
+.quality-flags input[type="checkbox"],.recording-quality>label input[type="checkbox"]{
+  width:16px;height:16px;margin:0;accent-color:var(--salmon);flex:none}
+@media(max-width:720px){.quality-flags{grid-template-columns:1fr}}
