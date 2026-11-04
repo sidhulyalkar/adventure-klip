@@ -145,3 +145,51 @@ def test_adaptive_success_reports_explainable_rank_and_never_changes_human_truth
     assert out["items"][0]["scoreMeaning"]=="uncalibrated_review_order_not_event_probability"
     assert out["humanLabelsWritten"]==0
     assert out["confirmedEvents"]==0
+
+
+
+def test_verified_existing_proxy_skips_source_hashing_in_v2(tmp_path,monkeypatch):
+    rid="b"*20
+    a={"reviewId":rid,"assetId":"a"*64,"startMs":1000,"endMs":15000,
+       "selectionGroup":"snorkeling","role":"candidate_hypothesis",
+       "basename":"already-prepared.MP4"}
+    monkeypatch.setattr(triage,"load_benchmark",
+                        lambda *args:{"assignments":{rid:a}})
+    monkeypatch.setattr(triage,"benchmark_feedback_status",
+                        lambda *args:{"reviewEntries":{}})
+    monkeypatch.setattr(triage,"SourceStream",lambda root:object())
+    from adventure_intelligence.studio_preview_judge import VERSION
+    from hashlib import sha256
+    import json
+    proxy=tmp_path/"preview.mp4"
+    proxy.write_bytes(b"cached-local-h264-proxy"*30)
+    receipt=tmp_path/"preview.json"
+    receipt.write_text(json.dumps({
+        "version":VERSION,
+        "originalSha256Verified":True,
+        "assetId":a["assetId"],"startMs":1000,"endMs":15000,
+        "previewSha256":sha256(proxy.read_bytes()).hexdigest(),
+    }))
+    monkeypatch.setattr(triage,"preview_paths",lambda *args:(proxy,receipt))
+    monkeypatch.setattr(triage,"cached_adaptive_judgment",
+                        lambda *args,**kwargs:None)
+    monkeypatch.setattr(triage,"generate_preview",
+                        lambda *args,**kwargs:
+                        pytest.fail("A verified proxy should not rehash original video"))
+    monkeypatch.setattr(triage,"adaptive_judgment",
+                        lambda *args,**kwargs:{
+                            **normalize_reply(result_template()),"cached":False})
+    report=triage.run_local_triage(tmp_path,tmp_path/"frozen-assignments.json",
+        model="gemma3:4b",policy="adaptive-v2",only_review_id=rid,run=True)
+    assert report["status"]=="completed"
+    assert report["items"][0]["investigationScore"]>50
+    assert report["humanLabelsWritten"]==0
+
+    # A forged receipt lacking prior full-source SHA verification is rejected
+    # and must trigger the original-source verification path instead.
+    meta=json.loads(receipt.read_text())
+    meta["originalSha256Verified"]=False
+    receipt.write_text(json.dumps(meta))
+    from adventure_intelligence.studio_preview_judge import _check_cached
+    assert _check_cached(proxy,receipt,aid=a["assetId"],
+                         start_ms=1000,end_ms=15000) is False
