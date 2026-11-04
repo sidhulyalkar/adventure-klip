@@ -165,6 +165,11 @@ def test_audit_counts_human_keep_that_legacy_would_skip_without_claiming_recall(
     assert report["byPolicy"]["legacy"]["wouldKeepHumanSkip"]==1
     assert report["byPolicy"]["adaptive-v2"]["wouldSkipHumanKeep"]==0
     assert report["byPolicy"]["adaptive-v2"]["unsureOnHumanKeep"]==1
+    assert report["pairedHumanReviewComparison"]["reviewedWithBoth"]==2
+    assert report["pairedHumanReviewComparison"]["humanKeepWithBoth"]==1
+    assert report["pairedHumanReviewComparison"]["legacyWouldSkipHumanKeep"]==1
+    assert report["pairedHumanReviewComparison"]["adaptiveWouldSkipHumanKeep"]==0
+    assert report["pairedHumanReviewComparison"]["adaptiveChangedSkipToUnsureOnHumanKeep"]==1
     assert report["archiveRecall"] is None
     assert report["modelQualityImprovementProven"] is False
     assert report["videoSourceBytesRead"]==0
