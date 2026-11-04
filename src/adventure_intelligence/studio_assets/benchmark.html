@@ -30,7 +30,22 @@
   <video id="player" playsinline controls preload="metadata" aria-label="Original source footage within the selected interval"></video>
   <div class="player-foot"><span id="range">0:00 – 0:00</span>
     <button type="button" id="replay">Replay interval</button>
-    <span>Full source · read only</span></div>
+    <button type="button" id="preparePreview">Prepare short preview</button>
+    <button type="button" id="original">Try original</button>
+    <span id="sourceMode">Local source · read only</span></div>
+</section>
+<section class="triage-panel" aria-label="Fast review and optional private AI suggestions">
+  <div class="heading-row">
+    <div><p class="eyebrow">FAST TRIAGE</p><h2>One decision, detailed ratings optional</h2></div>
+    <button type="button" id="aiTriage">Ask local AI judge</button>
+  </div>
+  <div class="quick-actions">
+    <button type="button" class="quick keep" data-quick="keep">Keep <kbd>K</kbd></button>
+    <button type="button" class="quick skip" data-quick="skip">Skip <kbd>S</kbd></button>
+    <button type="button" class="quick unsure" data-quick="uncertain">Unsure <kbd>U</kbd></button>
+    <button type="button" id="nextUnreviewed">Next unreviewed</button>
+  </div>
+  <div id="aiSuggestion" class="ai-suggestion" role="status" aria-live="polite">AI triage is optional and never substitutes for human approval.</div>
 </section>
 <section class="review-panel" aria-label="Evidence-backed review">
   <div class="heading-row">
@@ -53,7 +68,7 @@
     </select></label>
   </div>
   <label class="full">What actually happened? <input id="eventKind" type="text" maxlength="200" placeholder="e.g. ray swims across sand, controlled turn sequence"></label>
-  <details open><summary>Review dimensions <span>0 = low · 1 = exceptional · blank = unknown</span></summary>
+  <details><summary>Review dimensions <span>0 = low · 1 = exceptional · blank = unknown</span></summary>
     <div id="criteria" class="criteria"></div>
   </details>
   <details><summary>Activity-specific review prompts</summary>

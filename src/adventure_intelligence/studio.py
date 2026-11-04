@@ -33,6 +33,8 @@ from .transition_evidence import EdgeEvidence, VERSION as EDGE_VERSION
 from .examples import latest_examples
 from .benchmark_feedback import load_benchmark,save_human_review,benchmark_feedback_status
 from .archive_review import CRITERIA
+from .studio_preview_judge import (generate_preview, preview_paths, _check_cached,
+    cached_judgment, local_judgment)
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -207,8 +209,24 @@ class SourceStream:
                 raise OSError("Source media changed since verification; playback blocked")
             return fd,st.st_size
 
+    def verified_path(self,asset_id: str):
+        """Source path and fixed identity after the same SHA-verification as streaming."""
+        fd,_size=self.open_asset(asset_id)
+        try:
+            stat=os.fstat(fd)
+            identity=(stat.st_dev,stat.st_ino,stat.st_size,
+                      stat.st_mtime_ns,stat.st_ctime_ns)
+            with self._lock:
+                path,fields=self._cache[asset_id]
+            if identity!=fields:
+                raise OSError("Original source identity changed")
+            return path,identity
+        finally:
+            os.close(fd)
 
-def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
+
+def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
+                 local_judge_model:str|None=None):
     """Handler factory allows isolated HTTP regression tests using ephemeral ports."""
     paths=files("adventure_intelligence").joinpath("studio_assets")
     streamer=SourceStream(workspace)
@@ -313,6 +331,56 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
             finally:
                 os.close(fd)
 
+        def _send_cached_preview(self,review_id):
+            if benchmark is None or review_id not in benchmark["assignments"]:
+                self._json(404,{"error":"Unknown review interval"})
+                return
+            a=benchmark["assignments"][review_id]
+            file,manifest=preview_paths(workspace,a["assetId"],a["startMs"],a["endMs"])
+            if not _check_cached(file,manifest,aid=a["assetId"],
+                                 start_ms=a["startMs"],end_ms=a["endMs"]):
+                self._json(404,{"error":"Preview not prepared; use Prepare preview"})
+                return
+            fd=os.open(file,os.O_RDONLY | getattr(os,"O_NOFOLLOW",0))
+            try:
+                size=os.fstat(fd).st_size
+                head=self.headers.get("Range")
+                start,end=0,size-1
+                if head:
+                    match=_RANGE_RE.fullmatch(head.strip())
+                    if not match or not any(match.groups()):
+                        self._send(416,extra={"Content-Range":f"bytes */{size}"})
+                        return
+                    a_raw,b_raw=match.groups()
+                    if a_raw:
+                        start=int(a_raw)
+                        end=min(size-1,int(b_raw)) if b_raw else min(size-1,start+2*1024*1024-1)
+                    else:
+                        start=max(0,size-int(b_raw))
+                    if start>=size or end<start:
+                        self._send(416,extra={"Content-Range":f"bytes */{size}"})
+                        return
+                length=end-start+1
+                self.send_response(206 if head else 200)
+                self.send_header("Content-Type","video/mp4")
+                self.send_header("Content-Length",str(length))
+                self.send_header("Accept-Ranges","bytes")
+                if head:self.send_header("Content-Range",f"bytes {start}-{end}/{size}")
+                self.send_header("Cache-Control","private, max-age=600")
+                self.send_header("X-Content-Type-Options","nosniff")
+                self.end_headers()
+                if self.command=="HEAD":return
+                os.lseek(fd,start,os.SEEK_SET)
+                while length>0:
+                    block=os.read(fd,min(256*1024,length))
+                    if not block:break
+                    self.wfile.write(block)
+                    length-=len(block)
+            except (BrokenPipeError,ConnectionResetError):
+                pass
+            finally:
+                os.close(fd)
+
         def do_HEAD(self):
             self.do_GET()
 
@@ -352,7 +420,21 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
                             "criteria":CRITERIA,
                             "reviews":reviews["reviewEntries"],
                             "reviewedCount":reviews["reviewedAssignments"],
-                            "warnings":reviews["limitations"]})
+                            "warnings":reviews["limitations"],
+                            "localJudgeEnabled":local_judge_model is not None,
+                            "localJudgeModel":local_judge_model,
+                            "previews":{a["reviewId"]:{
+                                "ready":_check_cached(
+                                    *preview_paths(workspace,a["assetId"],
+                                                  a["startMs"],a["endMs"]),
+                                    aid=a["assetId"],start_ms=a["startMs"],
+                                    end_ms=a["endMs"]),
+                                "suggestion":cached_judgment(
+                                    preview_paths(workspace,a["assetId"],
+                                                  a["startMs"],a["endMs"])[0],
+                                    model=local_judge_model)
+                                    if local_judge_model else None,
+                            } for a in benchmark["assignments"].values()}})
                 elif path=="/api/benchmark/evaluation":
                     if benchmark is None:
                         self._json(404,{"error":"No benchmark configured"})
@@ -389,6 +471,9 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
                     self._json(200,studio_asset(workspace,path.removeprefix("/api/asset/")))
                 elif path=="/api/comparisons":
                     self._json(200,comparison_summary(workspace))
+                elif path.startswith("/api/benchmark/preview-file/"):
+                    self._send_cached_preview(
+                        path.removeprefix("/api/benchmark/preview-file/"))
                 elif path.startswith("/api/media/"):
                     self._send_video(path.removeprefix("/api/media/"))
                 else:
@@ -417,7 +502,28 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
                 body=json.loads(self.rfile.read(length))
                 if not isinstance(body,dict):
                     raise ValueError("Expected a JSON object")
-                if parsed.path=="/api/benchmark/review":
+                if parsed.path in ("/api/benchmark/prepare-preview",
+                                   "/api/benchmark/local-judge"):
+                    if benchmark is None:
+                        self._json(404,{"error":"No benchmark configured"})
+                        return
+                    rid=body.get("reviewId")
+                    if not isinstance(rid,str) or rid not in benchmark["assignments"]:
+                        raise ValueError("Unknown benchmark review interval")
+                    a=benchmark["assignments"][rid]
+                    if parsed.path=="/api/benchmark/local-judge" and not local_judge_model:
+                        raise ValueError("Start Studio with --local-judge-model first")
+                    preview=generate_preview(workspace,streamer,a)
+                    response={"status":"preview_ready","reviewId":rid,
+                        "previewUrl":"/api/benchmark/preview-file/"+rid+
+                                     "?token="+token,
+                        "sourceVideoModified":False}
+                    if parsed.path=="/api/benchmark/local-judge":
+                        response["suggestion"]=local_judgment(
+                            Path(preview["path"]),model=local_judge_model)
+                        response["status"]="provisional_ai_suggestion"
+                    result=response
+                elif parsed.path=="/api/benchmark/review":
                     if benchmark is None:
                         self._json(404,{"error":"No benchmark configured"})
                         return
@@ -475,7 +581,7 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
 
 
 def serve_studio(workspace:Path,port:int=0,open_browser:bool=True,
-                 benchmark_file:Path|None=None):
+                 benchmark_file:Path|None=None,local_judge_model:str|None=None):
     """Serve a private local UI, then block until Ctrl+C."""
     if not 0<=port<=65535:
         raise ValueError("Port must be 0..65535")
@@ -484,7 +590,7 @@ def serve_studio(workspace:Path,port:int=0,open_browser:bool=True,
         pass
     token=secrets.token_urlsafe(32)
     server=ThreadingHTTPServer(
-        ("127.0.0.1",port),make_handler(workspace,token,benchmark_file))
+        ("127.0.0.1",port),make_handler(workspace,token,benchmark_file,local_judge_model))
     server.daemon_threads=True
     url=f"http://127.0.0.1:{server.server_port}/"
     if benchmark_file is not None:

@@ -44,6 +44,7 @@ from .moment_ranking import create_rank_report
 from .archive_pilot import run_archive_pilot
 from .archive_status import inspect_archive_campaign, write_archive_status
 from .archive_review import seed_archive_reviews
+from .archive_local_triage import run_local_triage
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -114,6 +115,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    archive_triage=sub.add_parser("archive-local-triage",
+        help="Optionally judge a bounded balanced set of frozen review intervals with an installed localhost vision model")
+    archive_triage.add_argument("--assignments",required=True,type=Path)
+    archive_triage.add_argument("--model",required=True,
+        help="An explicitly installed local Ollama image-capable model")
+    archive_triage.add_argument("--limit",type=int,default=8)
+    archive_triage.add_argument("--run",action="store_true",
+        help="Explicitly verify sources, prepare small H.264 previews and call Ollama on 127.0.0.1 only")
     archive_review=sub.add_parser("archive-review",
         help="Create a balanced source-grounded candidate and control review benchmark from frozen batches")
     archive_review.add_argument("--campaign",type=Path,
@@ -330,6 +339,8 @@ def main(argv: list[str] | None = None) -> int:
     studio.add_argument('--no-browser',action='store_true',help='Print URL without opening a browser')
     studio.add_argument('--benchmark',type=Path,
         help='Launch directly into source-backed archive review using assignments.json')
+    studio.add_argument('--local-judge-model',
+        help='Explicit opt-in: use an already installed Ollama vision model on localhost only')
     review=sub.add_parser("review",help="Create a local HTML report for video/event review")
     review.add_argument("--output",type=Path)
     mark=sub.add_parser('mark',help='Append one human-reviewed activity/incident label')
@@ -473,6 +484,12 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="archive-local-triage":
+            result=run_local_triage(root,args.assignments,
+                model=args.model,limit=args.limit,run=args.run)
+            _print(result)
+            if result.get("status")=="partial_failure":
+                return 1
         elif args.command=="archive-review":
             campaign=args.campaign or root/"reports"/"archive-pilot-v1"
             _print(seed_archive_reviews(root,campaign,args.output_dir,
@@ -728,7 +745,8 @@ def main(argv: list[str] | None = None) -> int:
             _print(session_candidates(root,args.gap_minutes))
         elif args.command=='studio':
             serve_studio(root,port=args.port,open_browser=not args.no_browser,
-                         benchmark_file=args.benchmark)
+                         benchmark_file=args.benchmark,
+                         local_judge_model=args.local_judge_model)
         elif args.command=="review":
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":
