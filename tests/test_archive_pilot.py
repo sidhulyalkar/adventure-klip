@@ -215,3 +215,107 @@ def test_multi_batch_cli_stops_safely_when_roster_exhausted(archives,monkeypatch
     assert main(["--workspace",str(root),"archive-pilot","--batch-count","2",
                  "--output-dir",str(root/"reports"/"other")])==2
     assert "ambiguous" in capsys.readouterr().err
+
+
+
+def test_archive_status_explains_actual_missing_times_without_source_io(
+        archives,monkeypatch,capsys):
+    from adventure_intelligence.archive_status import inspect_archive_campaign
+    from adventure_intelligence.semantic_jobs import digest,encoded
+    from adventure_intelligence.semantic_recovery import recover_semantic_frames
+    root,legacy,camera,ids=archives
+    first=run_archive_pilot(root,batch_size=8,step_seconds=5)
+    plan=json.loads(Path(first["plan"]).read_text())
+    schedule=validate_plan(plan)
+    aid=next(iter(schedule))
+    next_aid=list(schedule)[1]
+    times=schedule[aid]
+    assert len(times)>=5
+    conf={"provider":"histogram","modelVersion":"synthetic-histogram-1",
+          "adaptiveScheduleId":plan["planId"]}
+    cid=digest(encoded(conf))
+    with connect(root) as db:
+        db.execute(
+            "INSERT INTO semantic_jobs(asset_id,config_id,config_json,status,error) "
+            "VALUES (?,?,?,'failed',?)",
+            (aid,cid,encoded(conf),"FFmpeg failed to decode the requested video frame"))
+        for t in times[:-1]:
+            frame={"tMs":t,"requestedMs":t,"decodedPtsMs":t,
+                   "timestampBasis":"decoded_frame_pts",
+                   "embedding":[1.0,0.0],"objects":[],"keypoints":[]}
+            payload=encoded(frame)
+            db.execute("INSERT INTO semantic_frames VALUES (?,?,?,?,?)",
+                       (aid,cid,t,payload,digest(payload)))
+        db.commit()
+    report=inspect_archive_campaign(root,root/"reports"/"archive-pilot-v1")
+    first_asset=next(a for a in report["batches"][0]["assets"]
+                     if a["assetId"]==aid)
+    assert first_asset["status"]=="failed_with_checkpoints"
+    assert first_asset["missingRequestedTimesMs"]==[times[-1]]
+    assert first_asset["nearTailFailure"] is True
+    assert first_asset["recoveryEligibleWithoutReinference"] is True
+    assert "semantic-recover" in first_asset["recoveryCommand"]
+    assert report["sourceVideoBytesRead"]==0
+    assert report["newModelInferences"]==0
+    assert report["plannedAssets"]==8
+    assert report["problemAssets"]==1
+    assert next(a for a in report["batches"][0]["assets"]
+                if a["assetId"]==next_aid)["status"]=="not_started"
+
+    # Actually recover the conservative partial histogram checkpoints,
+    # still preserving the failed timestamp and immutable source bytes.
+    src=next(camera.glob("*"))
+    original={p.name:p.read_bytes() for p in camera.iterdir()}
+    recovered=recover_semantic_frames(root,aid,Path(first["plan"]),
+                                      provider="histogram")
+    assert recovered["availableFrames"]==len(times)-1
+    assert recovered["missingRequestedTimesMs"]==[times[-1]]
+    after=inspect_archive_campaign(root,root/"reports"/"archive-pilot-v1")
+    state=next(a for a in after["batches"][0]["assets"] if a["assetId"]==aid)
+    assert state["status"]=="verified_partial"
+    assert state["validCheckpointFrames"]==len(times)-1
+    assert state["recoveryEligibleWithoutReinference"] is False
+    assert {p.name:p.read_bytes() for p in camera.iterdir()}==original
+    destination=root/"reports"/"postrun-status"
+    assert main(["--workspace",str(root),"archive-status",
+                 "--output-dir",str(destination)])==0
+    visible=json.loads(capsys.readouterr().out)
+    assert visible["plannedAssets"]==8
+    assert (destination/"status.json").is_file()
+    assert (destination/"index.html").is_file()
+
+
+def test_archive_status_checks_payload_hashes_and_signed_frozen_plan(archives):
+    from adventure_intelligence.archive_status import inspect_archive_campaign
+    from adventure_intelligence.semantic_jobs import digest,encoded
+    root,legacy,camera,ids=archives
+    batch=run_archive_pilot(root)
+    doc=json.loads(Path(batch["plan"]).read_text())
+    aid,times=next(iter(validate_plan(doc).items()))
+    conf={"provider":"histogram","adaptiveScheduleId":doc["planId"]}
+    config=digest(encoded(conf))
+    with connect(root) as db:
+        db.execute(
+            "INSERT INTO semantic_jobs(asset_id,config_id,config_json,status,error) "
+            "VALUES (?,?,?,'failed','FFmpeg failed')",(aid,config,encoded(conf)))
+        payload=encoded({"tMs":times[0],"decodedPtsMs":times[0],
+                         "timestampBasis":"decoded_frame_pts"})
+        db.execute("INSERT INTO semantic_frames VALUES (?,?,?,?,?)",
+                   (aid,config,times[0],payload,"INVALID"))
+        db.commit()
+    result=inspect_archive_campaign(root,root/"reports"/"archive-pilot-v1")
+    damaged=next(x for x in result["batches"][0]["assets"] if x["assetId"]==aid)
+    assert damaged["invalidCheckpointTimesMs"]==[times[0]]
+    assert damaged["validCheckpointFrames"]==0
+    assert damaged["recoveryEligibleWithoutReinference"] is False
+    # A changed plan is never accepted just because its file name matches.
+    path=Path(batch["plan"])
+    original=path.read_text()
+    try:
+        modified=json.loads(original)
+        modified["assets"][0]["frames"][0]["tMs"]+=1
+        path.write_text(json.dumps(modified))
+        with pytest.raises(ValueError,match="checksum"):
+            inspect_archive_campaign(root,root/"reports"/"archive-pilot-v1")
+    finally:
+        path.write_text(original)
