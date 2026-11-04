@@ -25,7 +25,7 @@ def recover_semantic_frames(workspace: Path, asset_id: str, plan_file: Path,
     if (not isinstance(asset_id,str) or len(asset_id)!=64 or
             any(c not in "0123456789abcdef" for c in asset_id)):
         raise ValueError("Full lowercase source asset SHA-256 is required")
-    if provider not in {"owlv2","ecology-owlv2","siglip2","context"}:
+    if provider not in {"histogram","owlv2","ecology-owlv2","siglip2","context"}:
         raise ValueError("Unsupported semantic provider")
     if type(max_missing) is not int or not 1<=max_missing<=8:
         raise ValueError("max-missing must be 1..8")
