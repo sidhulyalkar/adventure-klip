@@ -47,6 +47,7 @@ from .archive_review import seed_archive_reviews
 from .archive_local_triage import run_local_triage
 from .archive_temporal_look import inspect_temporal_candidates
 from .judge_audit import compare_judge_policies, save_judge_audit
+from .archive_editorial_audit import audit_editorial_evidence, write_editorial_audit
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -123,6 +124,13 @@ def main(argv: list[str] | None = None) -> int:
     archive_audit.add_argument("--model",required=True)
     archive_audit.add_argument("--output-dir",type=Path,
         help="Optional new reports/ or exports/ folder for offline JSON+HTML audit")
+    editorial_audit=sub.add_parser("archive-editorial-audit",
+        help="Cache-only visual/relative-action quality audit; advisory deletion-review flags only")
+    editorial_audit.add_argument("--assignments",required=True,type=Path)
+    editorial_audit.add_argument("--model",default="gemma3:4b",
+        help="Previously cached adaptive-v2 visual model identifier; never calls the model")
+    editorial_audit.add_argument("--output-dir",type=Path,
+        help="Optional NEW reports/ or exports/ directory for JSON and HTML")
     temporal=sub.add_parser("archive-temporal-look",
         help="Budgeted seven-frame second look at locally verified short previews; no original video reads")
     temporal.add_argument("--assignments",required=True,type=Path)
@@ -517,6 +525,12 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 _print(save_judge_audit(root,args.assignments,
                     model=args.model,output_dir=args.output_dir))
+        elif args.command=="archive-editorial-audit":
+            if args.output_dir is None:
+                _print(audit_editorial_evidence(root,args.assignments,model=args.model))
+            else:
+                _print(write_editorial_audit(root,args.assignments,
+                    args.output_dir,model=args.model))
         elif args.command=="archive-temporal-look":
             report=inspect_temporal_candidates(root,args.assignments,
                 model=args.model,limit=args.limit,
