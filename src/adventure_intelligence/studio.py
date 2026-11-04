@@ -421,17 +421,26 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                         reviews=benchmark_feedback_status(workspace,benchmark["path"])
                         self._json(200,{
                             "benchmarkId":benchmark["benchmarkId"],
-                            "assignments":list(benchmark["assignments"].values()),
+                            "assignments":[
+                                ({k:v for k,v in a.items()
+                                  if k not in {"role","schedulerReasons",
+                                               "rankBasis","candidateScore"}}
+                                 if benchmark.get("blindReview") else a)
+                                for a in benchmark["assignments"].values()],
+                            "blindReview":benchmark.get("blindReview",False),
                             "criteria":CRITERIA,
                             "reviews":reviews["reviewEntries"],
                             "reviewedCount":reviews["reviewedAssignments"],
                             "warnings":reviews["limitations"],
-                            "localJudgeEnabled":local_judge_model is not None,
+                            "localJudgeEnabled":(
+                                local_judge_model is not None and
+                                not benchmark.get("blindReview",False)),
                             "localJudgeModel":local_judge_model,
                             "judgePolicy":judge_policy,
                             "temporalSecondLookEnabled":(
                                 local_judge_model is not None and
-                                judge_policy=="adaptive-v2"),
+                                judge_policy=="adaptive-v2" and
+                                not benchmark.get("blindReview",False)),
                             "previews":{a["reviewId"]:{
                                 "ready":_check_cached(
                                     *preview_paths(workspace,a["assetId"],
@@ -449,7 +458,8 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                                         preview_paths(workspace,a["assetId"],
                                                       a["startMs"],a["endMs"])[0],
                                         model=local_judge_model))
-                                    if local_judge_model else None,
+                                    if local_judge_model and not benchmark.get("blindReview",False)
+                                    else None,
                                 "temporalSuggestion":(
                                     cached_second_look(
                                         preview_paths(workspace,a["assetId"],
@@ -461,6 +471,7 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                                             model=local_judge_model,
                                             context=context_hint(a)))
                                     if local_judge_model and judge_policy=="adaptive-v2"
+                                    and not benchmark.get("blindReview",False)
                                     else None),
                             } for a in benchmark["assignments"].values()}})
                 elif path=="/api/benchmark/evaluation":
@@ -530,6 +541,10 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                 body=json.loads(self.rfile.read(length))
                 if not isinstance(body,dict):
                     raise ValueError("Expected a JSON object")
+                if (benchmark is not None and benchmark.get("blindReview") and
+                        parsed.path in ("/api/benchmark/temporal-look",
+                                        "/api/benchmark/local-judge")):
+                    raise ValueError("Local AI is hidden during blinded human review")
                 if parsed.path=="/api/benchmark/temporal-look":
                     if benchmark is None or not local_judge_model or judge_policy!="adaptive-v2":
                         raise ValueError("Start Studio with a selected benchmark and --judge-policy adaptive-v2")

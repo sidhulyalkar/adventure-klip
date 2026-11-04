@@ -75,6 +75,7 @@ def load_benchmark(workspace:Path,filename:Path)->dict:
         "path":str(path),
         "assignments":mapping,
         "version":VERSION,
+        "blindReview":document.get("blindReview") is True,
     }
 
 
