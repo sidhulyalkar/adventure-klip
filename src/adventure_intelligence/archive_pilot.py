@@ -228,59 +228,98 @@ def run_archive_pilot(workspace:Path,*,legacy:Path|None=None,
         raise ValueError("--coverage-seconds must be between 5 and 300")
     root=Path(workspace).expanduser().resolve()
     primary,accessible=inventory(root)
-    # Comparing the metadata of a legacy catalog does not authorize
-    # automatically ingesting or processing it.
     with _open_catalog(root) as db:
         primary_ids={row[0] for row in db.execute("SELECT id FROM assets")}
     comparison=_legacy_comparison(legacy,primary_ids)
-    proposals=_first_pass_proposals(root)
-    ordered=_order_assets(accessible,proposals)
-    start=(batch-1)*batch_size
-    chosen=ordered[start:start+batch_size]
-    if not chosen:
-        return {"version":VERSION,"status":"no_more_eligible_assets",
-                "inventory":primary,"comparison":comparison,
-                "batch":batch,"batchSize":batch_size,"sourceMediaModified":False}
     folder=(
         Path(output_dir).expanduser().resolve() if output_dir is not None else
         root/DEFAULT_OUTPUT/f"batch-{batch:04d}"
     )
-    if (not folder.is_relative_to(root) or folder==root
-            or folder.relative_to(root).parts[0] not in {"reports","exports"}):
+    if (not folder.is_relative_to(root) or folder==root or
+            folder.relative_to(root).parts[0] not in {"reports","exports"}):
         raise ValueError("Output directory must be under workspace reports/ or exports/")
+    campaign=folder.parent
+    roster_path=campaign/"roster.json"
+    campaign_config={"version":VERSION,"batchSize":batch_size,
+                     "coverageSeconds":step_seconds,"maxFrames":max_frames}
+    if roster_path.is_file():
+        roster=json.loads(roster_path.read_text(encoding="utf-8"))
+        if (roster.get("config")!=campaign_config or
+                not isinstance(roster.get("orderedAssets"),list)):
+            raise ValueError(
+                "Frozen archive campaign uses different settings; use the "
+                "original batch size/frame budget or a NEW output campaign")
+        ordered=roster["orderedAssets"]
+    else:
+        proposals=_first_pass_proposals(root)
+        ordered=_order_assets(accessible,proposals)
+        if not ordered:
+            return {"version":VERSION,"status":"no_eligible_assets",
+                    "inventory":primary,"legacyComparison":comparison}
+        campaign.mkdir(parents=True,exist_ok=True)
+        with roster_path.open("x",encoding="utf-8") as f:
+            json.dump({"config":campaign_config,
+                       "frozenSourceHashRoster":True,
+                       "createdAtUtc":datetime.now(timezone.utc).isoformat(),
+                       "orderedAssets":ordered,
+                       "legacyComparisonAtCreation":comparison,
+                       "note":"Never auto-label activities or merge legacy artifacts."},
+                      f,indent=2,sort_keys=True,allow_nan=False)
+            f.write("\n")
+    start=(batch-1)*batch_size
+    chosen=ordered[start:start+batch_size]
+    if not chosen:
+        return {"version":VERSION,"status":"no_more_eligible_assets",
+                "inventory":primary,"legacyComparison":comparison,
+                "batch":batch,"batchSize":batch_size,
+                "frozenRoster":str(roster_path),
+                "sourceMediaModified":False}
     ids=[a["assetId"] for a in chosen]
-    # Build using the SAME source/caches and signed schema as adaptive-scenes.
-    # The activity filter remains "all": unconfirmed hypotheses never become
-    # an indexed sport label.
-    plan=build_plan(root,coverage_seconds=step_seconds,interest_seconds=2,
-                    max_frames=max_frames,limit=batch_size,
-                    activity="all",asset_ids=ids)
-    schedule=validate_plan(plan)
-    if set(schedule)!=set(ids):
-        raise ValueError("Adaptive planner did not preserve exact selected assets")
-    settings={"version":VERSION,"batch":batch,"batchSize":batch_size,
-              "coverageSeconds":step_seconds,"maxFrames":max_frames,
-              "selectedAssetIds":ids,"planId":plan["planId"]}
+    live={x["assetId"]:x for x in accessible}
+    if any(a["assetId"] not in live or
+           a["durationMs"]!=live[a["assetId"]]["durationMs"] for a in chosen):
+        raise ValueError("One or more frozen-batch sources are inaccessible or changed "
+                         "duration; reconnect the SSD before proceeding")
     plan_path=folder/"plan.json"
     manifest_path=folder/"manifest.json"
     with connect(root) as db:
-        for path in (plan_path,manifest_path):
+        for path in (plan_path,manifest_path,roster_path):
             protect_source_output(db,path)
     if folder.exists():
         if (not folder.is_dir() or not plan_path.is_file() or
                 not manifest_path.is_file()):
             raise ValueError("Incomplete existing batch folder, refusing overwrite")
         saved=json.loads(manifest_path.read_text(encoding="utf-8"))
-        old_plan=json.loads(plan_path.read_text(encoding="utf-8"))
-        if saved.get("settings")!=settings or old_plan!=plan:
-            raise ValueError("Existing batch differs from current catalog or settings")
+        plan=json.loads(plan_path.read_text(encoding="utf-8"))
+        schedule=validate_plan(plan)
+        settings=saved.get("settings")
+        expected={"version":VERSION,"batch":batch,"batchSize":batch_size,
+                  "coverageSeconds":step_seconds,"maxFrames":max_frames,
+                  "selectedAssetIds":ids,"planId":plan["planId"]}
+        if settings!=expected or set(schedule)!=set(ids):
+            raise ValueError("Existing batch has a different frozen selection or plan")
+        for asset in plan["assets"]:
+            if asset["durationMs"]!=live[asset["assetId"]]["durationMs"]:
+                raise ValueError("Indexed duration has changed since this batch was frozen")
     else:
-        folder.mkdir(parents=True,mode=0o700)
+        # Generate the signed plan ONCE. Later cache changes cannot silently
+        # alter the sequence of sampled timestamps or the selected assets.
+        plan=build_plan(root,coverage_seconds=step_seconds,interest_seconds=2,
+                        max_frames=max_frames,limit=batch_size,
+                        activity="all",asset_ids=ids)
+        schedule=validate_plan(plan)
+        if set(schedule)!=set(ids):
+            raise ValueError("Adaptive planner did not preserve exact selected assets")
+        settings={"version":VERSION,"batch":batch,"batchSize":batch_size,
+                  "coverageSeconds":step_seconds,"maxFrames":max_frames,
+                  "selectedAssetIds":ids,"planId":plan["planId"]}
+        folder.mkdir(parents=True,mode=0o700,exist_ok=False)
         with plan_path.open("x",encoding="utf-8") as f:
             json.dump(plan,f,indent=2,sort_keys=True,allow_nan=False)
             f.write("\n")
         manifest={"settings":settings,"inventory":primary,
                   "legacyComparison":comparison,"selection":chosen,
+                  "frozenRoster":str(roster_path),
                   "selectionGroups":dict(sorted(Counter(
                       x["selectionGroup"] for x in chosen).items())),
                   "budget":{"scheduledFrames":plan["totals"]["scheduledFrames"],
@@ -304,6 +343,7 @@ def run_archive_pilot(workspace:Path,*,legacy:Path|None=None,
                 a["selectionGroup"] for a in chosen).items())),
             "selectedSourceNames":[a["basename"] for a in chosen],
             "plan":str(plan_path),"manifest":str(manifest_path),
+            "frozenRoster":str(roster_path),
             "scheduledFrames":plan["totals"]["scheduledFrames"],
             "legacyComparison":comparison,
             "sourceMediaModified":False,
