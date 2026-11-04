@@ -57,6 +57,21 @@ After the first batch, change only the batch number:
 caffeinate -i klip --workspace "$WS" archive-pilot --batch 2 --run
 ```
 
+To run several independent batches without babysitting each one, use a
+**bounded** multi-batch command. It stops at the first processing failure
+and never runs expensive semantic models:
+
+```bash
+caffeinate -i klip --workspace "$WS" archive-pilot \
+  --batch 1 --batch-count 4 --run
+```
+
+That covers up to 32 recordings (four batches of eight), depending on
+how many are available in the frozen roster. You can rerun the same command
+to reuse the original plans and saved per-frame checkpoints, or continue
+from `--batch 5`. The maximum automatic batch count is eight per
+invocation so a typo cannot unleash an unlimited run.
+
 Continue with `--batch 3`, etc. A frozen campaign roster ensures the
 underlying asset selection cannot shift as caches accumulate. A new
 activity label or cache result will not rewrite or reorder the original
