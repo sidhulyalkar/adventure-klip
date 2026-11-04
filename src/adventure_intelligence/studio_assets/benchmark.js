@@ -2,7 +2,7 @@
 (() => {
   const $=id=>document.getElementById(id);
   const token=document.querySelector('meta[name="klip-session"]').content;
-  const state={assignments:[],criteria:{},reviews:{},index:0,loading:true};
+  const state={assignments:[],criteria:{},reviews:{},index:0,loading:true,dirty:false};
   const player=$('player');
   const api=async(path,body)=>{
     const res=await fetch(path,{method:body?'POST':'GET',
@@ -70,7 +70,17 @@
       eventKind:$('eventKind').value||null,
       notes:$('notes').value,ratings};
   }
+  function canNavigate(){
+    return !state.dirty || window.confirm(
+      'You have unsaved observations. Leave this moment without saving?');
+  }
+  function move(delta){
+    const index=state.index+delta;
+    if(index<0||index>=state.assignments.length||!canNavigate())return;
+    state.index=index;render();
+  }
   function render(){
+    state.dirty=false;
     const a=state.assignments[state.index];
     if(!a)return;
     $('category').textContent=a.selectionGroup.toUpperCase().replaceAll('_',' ')+
@@ -119,6 +129,15 @@
     }
   }
   player.addEventListener('loadedmetadata',seekStart);
+  player.addEventListener('seeking',()=>{
+    const a=state.assignments[state.index];
+    if(!a)return;
+    const low=a.startMs/1000;
+    const high=a.endMs/1000;
+    if(player.currentTime<low-0.1||player.currentTime>high+0.1){
+      try{player.currentTime=low;}catch{}
+    }
+  });
   player.addEventListener('timeupdate',()=>{
     const a=state.assignments[state.index];
     if(a&&player.currentTime>=a.endMs/1000){
@@ -128,14 +147,23 @@
   player.addEventListener('error',()=>announce(
     'Video cannot play here. Check that the DJI SSD is attached and browser codec support.',true));
   $('replay').addEventListener('click',()=>{seekStart();player.play().catch(()=>{});});
-  $('previous').addEventListener('click',()=>{state.index--;render();});
-  $('next').addEventListener('click',()=>{state.index++;render();});
+  $('previous').addEventListener('click',()=>move(-1));
+  $('next').addEventListener('click',()=>move(1));
+  document.querySelector('.review-panel').addEventListener('input',()=>{
+    state.dirty=true;
+    $('saveStatus').textContent='Unsaved review changes';
+  });
+  document.querySelector('.review-panel').addEventListener('change',()=>{
+    state.dirty=true;
+    $('saveStatus').textContent='Unsaved review changes';
+  });
   $('save').addEventListener('click',async()=>{
     const payload=reviewPayload();if(!payload)return;
     $('save').disabled=true;$('saveStatus').textContent='Saving…';
     try{
       await api('/api/benchmark/review',payload);
       state.reviews[payload.reviewId]=payload;
+      state.dirty=false;
       $('saveStatus').textContent='Saved locally · append-only revision';
       $('counter').textContent=(state.index+1)+' / '+state.assignments.length+
         ' · '+Object.keys(state.reviews).length+' reviewed';
@@ -145,8 +173,8 @@
   });
   document.addEventListener('keydown',event=>{
     if(event.target.closest('input,textarea,select,button'))return;
-    if(event.key==='ArrowRight'&&!$('next').disabled){state.index++;render();}
-    if(event.key==='ArrowLeft'&&!$('previous').disabled){state.index--;render();}
+    if(event.key==='ArrowRight'&&!$('next').disabled)move(1);
+    if(event.key==='ArrowLeft'&&!$('previous').disabled)move(-1);
   });
   (async()=>{
     try{
