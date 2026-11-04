@@ -301,6 +301,7 @@ def latest_value_reviews(db,packet_id:str)->dict:
             "revisionId":row["revision_id"],"decision":row["decision"],
             "eventObserved":row["event_observed"],
             "ratings":json.loads(row["ratings_json"]),
+            "reviewedActivity":row["reviewed_activity"],
             "note":row["note"],"improvementNote":row["improvement_note"],
         }
         for row in db.execute(
@@ -329,6 +330,7 @@ def value_lab_state(workspace:Path,*,batch:int=1)->dict:
 
 def save_value_review(workspace:Path,*,batch:int,moment_id:str,
                       decision:str,event_observed:str,ratings:dict,
+                      reviewed_activity:str="unresolved",
                       note:str="",improvement_note:str="")->dict:
     packet=read_value_packet(workspace,batch=batch)
     moments={m["momentId"]:m for m in packet["moments"]}
@@ -336,6 +338,8 @@ def save_value_review(workspace:Path,*,batch:int,moment_id:str,
         raise ValueError("Moment does not belong to the frozen review packet")
     if decision not in DECISIONS or event_observed not in OUTCOMES:
         raise ValueError("Invalid review decision or observed event state")
+    if reviewed_activity not in ("unresolved","snorkeling","ski","bike","other"):
+        raise ValueError("Invalid independently reviewed activity")
     if not isinstance(ratings,dict) or set(ratings)-set(CRITERIA):
         raise ValueError("Only versioned rubric ratings are accepted")
     clean={}
@@ -363,6 +367,7 @@ def save_value_review(workspace:Path,*,batch:int,moment_id:str,
         if (previous is not None and previous["ratings_json"]==data
             and previous["decision"]==decision
             and previous["event_observed"]==event_observed
+            and previous["reviewed_activity"]==reviewed_activity
             and previous["note"]==note
             and previous["improvement_note"]==improvement_note):
             return {"status":"unchanged","revisionId":previous["revision_id"],
@@ -371,12 +376,13 @@ def save_value_review(workspace:Path,*,batch:int,moment_id:str,
         db.execute(
             "INSERT INTO moment_value_revisions "
             "(revision_id,packet_id,moment_id,previous_revision_id,asset_id,"
-            "start_ms,end_ms,decision,event_observed,ratings_json,note,improvement_note) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "start_ms,end_ms,decision,event_observed,reviewed_activity,"
+            "ratings_json,note,improvement_note) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (revision,packet["packetId"],moment_id,
              previous["revision_id"] if previous else None,aid,
              moments[moment_id]["startMs"],moments[moment_id]["endMs"],
-             decision,event_observed,data,note,improvement_note))
+             decision,event_observed,reviewed_activity,data,note,improvement_note))
     return {"status":"reviewed","momentId":moment_id,
             "revisionId":revision,"previousRevisionId":
             previous["revision_id"] if previous else None}
@@ -409,10 +415,12 @@ def value_report(workspace:Path,*,batch:int=1)->dict:
             # confirmed significance or human-verified outcome.
             signals["eventSignificance"]=None if not r or \
                 r["eventObserved"]=="uncertain" else 0.
-        sport=m["selectionGroup"]
+        # An activity selection hint is NOT a confirmed sport. A human
+        # may correct it while reviewing this exact source clip.
+        sport=(r["reviewedActivity"] if r and r["reviewedActivity"] in
+               ("ski","bike","snorkeling") else
+               m["selectionGroup"] if m["activityConfirmed"] else None)
         if sport not in ("ski","bike","snorkeling"):
-            # Preserve unresolved clips for study, but do not falsely
-            # assign them an activity to force a ranking score.
             continue
         raw={
             "momentId":m["momentId"],"assetId":m["assetId"],
@@ -442,7 +450,10 @@ def value_report(workspace:Path,*,batch:int=1)->dict:
         "ratedCriteriaCounts":dict(criteria_counts),
         "ranking":ranked,
         "unresolvedActivityExcludedFromRankings":
-            sum(m["selectionGroup"] not in ("ski","bike","snorkeling")
+            sum(not (m["activityConfirmed"] and
+                      m["selectionGroup"] in ("ski","bike","snorkeling")) and
+                (latest.get(m["momentId"],{}).get("reviewedActivity")
+                 not in ("ski","bike","snorkeling"))
                 for m in packet["moments"]),
         "warnings":[
             "Human-reviewed ordinal 0–4 ratings are inputs, not calibrated probabilities.",
