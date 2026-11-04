@@ -323,3 +323,20 @@ def test_independent_human_preference_targets_use_within_sport_pairs_only():
                                   target="personalMeaning")
     assert learning["comparablePairs"]==3
     assert learning["agreement"]<1.0
+
+
+
+def test_one_command_opens_private_lab_without_starting_inference(workspace,monkeypatch,capsys):
+    root,camera,originals,asset=workspace
+    opened=[]
+    monkeypatch.setattr("adventure_intelligence.cli.serve_studio",
+                        lambda ws,**kwargs:opened.append((ws,kwargs)))
+    assert main(["--workspace",str(root),"value-lab","--batch","1","--open"])==0
+    assert opened==[(root,{"open_path":"/value-lab?batch=1"})]
+    created=json.loads(capsys.readouterr().out)
+    assert created["videoDecoded"] is False
+    assert created["momentCount"]>0
+    assert {p.name:p.read_bytes() for p in camera.iterdir()}==originals
+    assert main(["--workspace",str(root),"value-lab","--open",
+                 "--output-dir",str(root/"reports"/"separate")])==2
+    assert "default Studio-visible" in capsys.readouterr().err
