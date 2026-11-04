@@ -45,13 +45,16 @@ source .venv/bin/activate
 python -m pip install -e '.[dev,semantic,images]'
 
 export WS="$HOME/AdventureAI-clean.QJnopt"
-klip --workspace "$WS" value-lab --batch 1
-klip --workspace "$WS" studio
+klip --workspace "$WS" value-lab --batch 1 --open
 ```
 
-The local Studio prints a `http://127.0.0.1:PORT/` address. Click
-**Value lab** in the header or visit the same local server's
-`/value-lab` page. The video server verifies source identity on the
+That single command freezes or reuses the review packet and starts the
+private local Studio directly in **Value Lab**. Close it with Ctrl+C
+after reviewing, without changing original recordings. Alternatively,
+run `value-lab` without `--open` to generate only the packet, then
+`klip --workspace "$WS" studio` and click **Value lab** in the header.
+
+The local Studio prints a `http://127.0.0.1:PORT/value-lab?batch=1` address. The video server verifies source identity on the
 first playback in each server session. The source SSD must be connected.
 The review packet itself is generated with **zero video decoding, hashing
 or model inference**.
