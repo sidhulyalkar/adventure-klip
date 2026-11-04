@@ -32,6 +32,7 @@ from .boundary_inspector import boundary_evidence
 from .transition_evidence import EdgeEvidence, VERSION as EDGE_VERSION
 from .examples import latest_examples
 from .benchmark_feedback import load_benchmark,save_human_review,benchmark_feedback_status
+from .archive_review import CRITERIA
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -348,8 +349,7 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
                         self._json(200,{
                             "benchmarkId":benchmark["benchmarkId"],
                             "assignments":list(benchmark["assignments"].values()),
-                            "criteria":__import__("adventure_intelligence.archive_review",
-                                                  fromlist=["CRITERIA"]).CRITERIA,
+                            "criteria":CRITERIA,
                             "reviews":reviews["reviewEntries"],
                             "reviewedCount":reviews["reviewedAssignments"],
                             "warnings":reviews["limitations"]})
