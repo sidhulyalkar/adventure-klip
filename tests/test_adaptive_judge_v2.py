@@ -79,6 +79,12 @@ def test_uncertain_temporal_action_prevents_ai_skip_and_unsupported_keep():
         recommendation="keep",observedEvent="uncertain",
         uncertainty="subject_not_visible",needsTemporalReview=True))
     assert overconfident["recommendation"]=="unsure"
+    visible_but_undervalued=v2.normalize_reply(example(
+        observedEvent="yes",recommendation="skip",
+        needsTemporalReview=False,
+        ratings={**example()["ratings"],"eventInterest":1}))
+    assert visible_but_undervalued["recommendation"]=="unsure"
+    assert visible_but_undervalued["rawModelRecommendation"]=="skip"
 
 
 def test_invalid_overconfident_or_non_numeric_responses_fail_closed():
