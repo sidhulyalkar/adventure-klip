@@ -93,6 +93,39 @@ def _random_window(aid:str,duration:int,plan_id:str,used:list[tuple[int,int]],
     return window,round(risk,4)
 
 
+def _cached_context_candidates(root:Path,aid:str,duration:int)->list[tuple]:
+    """Reuse existing bounded local event-context manifest candidates, if any.
+
+    These are detector hypotheses and never imply a verified animal encounter.
+    No media files are opened and no new inference occurs.
+    """
+    matches=[]
+    for path in sorted((root/"reports").glob("*event-context*/manifest.json"))[:64]:
+        if path.stat().st_size>8_000_000:
+            continue
+        try:
+            packet=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,ValueError,UnicodeError):
+            continue
+        if (packet.get("version")!="event-context-embedding-v1"
+            or packet.get("assetId")!=aid
+            or not isinstance(packet.get("events"),list)):
+            continue
+        for ev in packet["events"][:30]:
+            if not isinstance(ev,dict):
+                continue
+            a,b=ev.get("startMs"),ev.get("endMs")
+            if (type(a) is not int or type(b) is not int
+                or not 0<=a<b<=duration):
+                continue
+            if b-a>60000:
+                a,b=_window((a+b)//2,duration,30000)
+            if b-a>=2000:
+                matches.append((a,b,"cached_event_hypothesis",
+                                str(ev.get("group","unverified_subject"))[:70]))
+    return matches
+
+
 def make_value_packet(workspace:Path,campaign:Path,*,batch:int=1,
                       output_dir:Path|None=None,max_per_asset:int=3)->dict:
     """Create one immutable review packet; later reviews never mutate the packet."""
@@ -159,7 +192,19 @@ def make_value_packet(workspace:Path,campaign:Path,*,batch:int=1,
                               "reviewed_reference",review["label"]))
                 if len(prior)>=max_per_asset-1:
                     break
-            if not prior:
+            # The initial ray-like snorkeling pilot may already have
+            # source-backed event packets even if episodes are not indexed.
+            # Keep event labels unverified; selected intervals are for review.
+            existing_ids={(p[0],p[1]) for p in prior}
+            for ev in _cached_context_candidates(root,aid,duration):
+                if len(prior)>=max_per_asset-1:
+                    break
+                if (ev[0],ev[1]) in existing_ids or any(
+                    _overlap_ratio((ev[0],ev[1]),(x[0],x[1]))>.65
+                    for x in prior):
+                    continue
+                prior.append(ev)
+            if len(prior)<max_per_asset-1:
                 eps=list(db.execute(
                     "SELECT start_ms,end_ms,kind FROM episodes "
                     "WHERE asset_id=? AND kind!='recording_summary' "
@@ -180,7 +225,7 @@ def make_value_packet(workspace:Path,campaign:Path,*,batch:int=1,
                     prior.append((start,end,"episode_proposal",row["kind"]))
                     if len(prior)>=max_per_asset-1:
                         break
-            if not prior:
+            if len(prior)<max_per_asset-1:
                 # Planned coverage is NOT an event proposal or a negative.
                 times=schedules[aid]
                 for idx in sorted({0,len(times)//2})[:max_per_asset-1]:
