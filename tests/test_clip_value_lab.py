@@ -266,7 +266,7 @@ def test_unconfirmed_activity_needs_explicit_human_observation_for_sport_ranking
     packet=read_value_packet(root)
     unconfirmed=next(m for m in packet["moments"]
                      if not m["activityConfirmed"]
-                     and m["selectionGroup"] in ("ski","bike","snorkeling"))
+                     and m["selectionGroup"]=="unresolved")
     review=save_value_review(
         root,batch=1,moment_id=unconfirmed["momentId"],
         decision="keep",event_observed="observed",
@@ -288,7 +288,7 @@ def test_unconfirmed_activity_needs_explicit_human_observation_for_sport_ranking
     with connect(root) as db:
         assert db.execute(
             "SELECT activity FROM assets WHERE id=?",
-            (unconfirmed["assetId"],)).fetchone()[0]!="snorkeling" or not unconfirmed["activityConfirmed"]
+            (unconfirmed["assetId"],)).fetchone()[0]=="unknown"
     assert {p.name:p.read_bytes() for p in camera.iterdir()}==originals
 
 
