@@ -7,7 +7,8 @@ A stable batch path/plan makes the command safe to resume after interruptions.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -49,7 +50,7 @@ def _table(db,name):
 def inventory(root:Path)->tuple[dict,list[dict]]:
     """Metadata-only inventory, no workspaces initialized or modified."""
     root=Path(root).expanduser().resolve()
-    with _open_catalog(root) as db:
+    with closing(_open_catalog(root)) as db:
         if not _table(db,"assets"):
             raise ValueError(f"Invalid workspace catalog (assets missing): {root}")
         org=_table(db,"asset_organization")
@@ -202,7 +203,7 @@ def _legacy_comparison(legacy:Path|None,primary_ids:set[str])->dict|None:
         return {"workspace":str(root),"available":False}
     summary,items=inventory(root)
     ids=set()
-    with _open_catalog(root) as db:
+    with closing(_open_catalog(root)) as db:
         ids={row[0] for row in db.execute("SELECT id FROM assets")}
     return {"workspace":str(root),"available":True,
             "assetCount":summary["assetCount"],
@@ -228,7 +229,7 @@ def run_archive_pilot(workspace:Path,*,legacy:Path|None=None,
         raise ValueError("--coverage-seconds must be between 5 and 300")
     root=Path(workspace).expanduser().resolve()
     primary,accessible=inventory(root)
-    with _open_catalog(root) as db:
+    with closing(_open_catalog(root)) as db:
         primary_ids={row[0] for row in db.execute("SELECT id FROM assets")}
     comparison=_legacy_comparison(legacy,primary_ids)
     folder=(
