@@ -147,10 +147,12 @@
     const a=state.assignments[state.index];
     if(!a)return;
     $('category').textContent=a.selectionGroup.toUpperCase().replaceAll('_',' ')+
-      ' · '+(a.role==='control_systematic'?'SYSTEMATIC CONTROL':'CANDIDATE HYPOTHESIS');
+      (state.blindReview?' · BLIND REVIEW':
+       ' · '+(a.role==='control_systematic'?'SYSTEMATIC CONTROL':'CANDIDATE HYPOTHESIS'));
     $('clipTitle').textContent=a.basename;
-    $('clipContext').textContent='Sampled reason: '+
-      (a.schedulerReasons||[]).join(', ')+' · '+a.analysisCoverage;
+    $('clipContext').textContent=state.blindReview?
+      'Review the complete interval without seeing the model selection reason':
+      'Sampled reason: '+(a.schedulerReasons||[]).join(', ')+' · '+a.analysisCoverage;
     $('range').textContent=fmt(a.startMs)+' – '+fmt(a.endMs);
     $('counter').textContent=(state.index+1)+' / '+state.assignments.length+
       ' · '+Object.keys(state.reviews).length+' reviewed';
@@ -313,6 +315,7 @@
   (async()=>{
     try{
       const data=await api('/api/benchmark');
+      state.blindReview=data.blindReview===true;
       state.criteria=data.criteria;
       state.reviews=data.reviews;
       state.previews=data.previews||{};
@@ -346,7 +349,8 @@
         else if(other.length)queue.push(other.shift());
         else queue.push(controls.shift());
       }
-      state.assignments=[...queue,...completed];
+      state.assignments=state.blindReview?
+        data.assignments:[...queue,...completed];
       $('aiTriage').hidden=!data.localJudgeEnabled;
       $('temporalLook').hidden=!data.temporalSecondLookEnabled;
       renderCriteria();
