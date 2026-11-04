@@ -121,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     archive_triage.add_argument("--model",required=True,
         help="An explicitly installed local Ollama image-capable model")
     archive_triage.add_argument("--limit",type=int,default=8)
+    archive_triage.add_argument("--judge-policy",choices=["legacy","adaptive-v2"],
+        default="legacy",help="Opt-in adaptive evidence-rubric v2, separate from running legacy inference")
     archive_triage.add_argument("--run",action="store_true",
         help="Explicitly verify sources, prepare small H.264 previews and call Ollama on 127.0.0.1 only")
     archive_review=sub.add_parser("archive-review",
@@ -341,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
         help='Launch directly into source-backed archive review using assignments.json')
     studio.add_argument('--local-judge-model',
         help='Explicit opt-in: use an already installed Ollama vision model on localhost only')
+    studio.add_argument('--judge-policy',choices=['legacy','adaptive-v2'],
+        default='legacy',help='Use separate context-aware v2 rubric/cache; legacy remains unchanged')
     review=sub.add_parser("review",help="Create a local HTML report for video/event review")
     review.add_argument("--output",type=Path)
     mark=sub.add_parser('mark',help='Append one human-reviewed activity/incident label')
@@ -486,7 +490,8 @@ def main(argv: list[str] | None = None) -> int:
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
         elif args.command=="archive-local-triage":
             result=run_local_triage(root,args.assignments,
-                model=args.model,limit=args.limit,run=args.run)
+                model=args.model,limit=args.limit,run=args.run,
+                policy=args.judge_policy)
             _print(result)
             if result.get("status")=="partial_failure":
                 return 1
@@ -746,7 +751,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=='studio':
             serve_studio(root,port=args.port,open_browser=not args.no_browser,
                          benchmark_file=args.benchmark,
-                         local_judge_model=args.local_judge_model)
+                         local_judge_model=args.local_judge_model,
+                         judge_policy=args.judge_policy)
         elif args.command=="review":
             _print(write_report(root,args.output or root/"exports"/"review.html"))
         elif args.command=="plan":
