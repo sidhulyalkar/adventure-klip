@@ -78,6 +78,15 @@ def load_benchmark(workspace:Path,filename:Path)->dict:
     }
 
 
+# Explicitly human-observed technical defects, never AI-derived deletion labels.
+# An interval-level flag is NOT evidence that the full recording is disposable.
+QUALITY_FLAGS = frozenset({
+    "crooked_mount", "off_center_subject", "obscured_lens", "soft_focus",
+    "bad_exposure", "unstable_framing", "unusable_audio", "repeated_take",
+    "needs_rotation", "other_recording_defect",
+})
+
+
 def validate_human_review(benchmark:dict,payload:dict)->dict:
     if not isinstance(payload,dict):
         raise ValueError("Human review must be a JSON object")
@@ -102,6 +111,17 @@ def validate_human_review(benchmark:dict,payload:dict)->dict:
     notes=payload.get("notes","")
     if not isinstance(notes,str) or len(notes)>2000:
         raise ValueError("Notes must be a string of at most 2000 characters")
+    quality_flags=payload.get("qualityFlags",[])
+    if (not isinstance(quality_flags,list) or len(quality_flags)>10
+            or any(type(x) is not str or x not in QUALITY_FLAGS
+                   for x in quality_flags)
+            or len(set(quality_flags))!=len(quality_flags)):
+        raise ValueError("Unknown or duplicated human quality flags")
+    deletion_candidate=payload.get("deletionCandidate",False)
+    if type(deletion_candidate) is not bool:
+        raise ValueError("Deletion candidate must be a boolean")
+    if deletion_candidate and (decision!="skip" or not quality_flags):
+        raise ValueError("Deletion review needs a human Skip and a recording defect")
     values=payload.get("ratings",{})
     if not isinstance(values,dict) or set(values)-set(CRITERIA):
         raise ValueError("Invalid review rating fields")
@@ -114,7 +134,7 @@ def validate_human_review(benchmark:dict,payload:dict)->dict:
         numeric[key]=float(val) if val is not None else None
     if not (decision is not None or actual is not None or
             any(v is not None for v in numeric.values()) or
-            bool(notes.strip()) or bool(event_kind)):
+            bool(notes.strip()) or bool(event_kind) or quality_flags):
         raise ValueError("An empty review cannot be saved as completed evidence")
     # Bare claims of rare taxa are not verification; keep the benchmark's
     # species field unverified unless a future curated taxonomy workflow
@@ -134,6 +154,10 @@ def validate_human_review(benchmark:dict,payload:dict)->dict:
         "eventKind":event_kind or None,
         "notes":notes,
         "ratings":numeric,
+        "qualityFlags":sorted(quality_flags),
+        "deletionCandidate":deletion_candidate,
+        "deletionStatus":("interval_only_pending_full_source_review"
+                          if deletion_candidate else "not_flagged"),
         "rareTaxonVerified":False,
         "taxonReviewSource":None,
         "eventBoundaryAdjustmentMs":boundary,
