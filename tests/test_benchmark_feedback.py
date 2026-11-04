@@ -193,3 +193,18 @@ def test_studio_benchmark_api_is_token_protected_and_records_review(sample):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+
+def test_benchmark_identity_rejects_changed_time_even_when_review_id_unchanged(sample):
+    root,originals,bytes_before,filename=sample
+    original=filename.read_text()
+    doc=json.loads(original)
+    doc["assignments"][0]["startMs"]+=1000
+    filename.write_text(json.dumps(doc))
+    try:
+        with pytest.raises(ValueError,match="identity differs"):
+            load_benchmark(root,filename)
+    finally:
+        filename.write_text(original)
+    assert {p.name:p.read_bytes() for p in originals.iterdir()}==bytes_before
