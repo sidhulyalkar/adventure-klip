@@ -66,8 +66,17 @@ The output folder contains:
   role, inherited sport stratum, saved job coverage, sampled reasons.
 - `review-template.json`: the same stable review IDs with all ratings
   **null** until a person watches the source.
-- `index.html`: simple offline assignment cards and sport-specific
-  questions.
+- `index.html`: offline interactive review cards and sport-specific
+  prompts, with keep/skip/uncertain, actual activity and event presence,
+  12 independent value criteria, observations and a **local JSON export**.
+
+Open the HTML, review complete source intervals, and use **Export my
+reviews (JSON)** to save your human annotations. No server receives them.
+Browsers generally do not persist unfinished form values across reloads;
+export before closing the page. The downloaded `klip-human-reviews.json`
+is intended for the next benchmark-scoring and model-evaluation stage.
+Species-verification fields remain disabled in this UI until a separate
+taxonomic evidence and expert-review workflow exists.
 
 The two classes are intentionally **not** treated as confirmed positive
 and negative examples. A systematic control can contain a missed ray,
