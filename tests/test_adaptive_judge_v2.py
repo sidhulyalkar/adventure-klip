@@ -40,7 +40,6 @@ def test_context_prompts_are_distinct_and_evidence_grounded():
     assert "subject" in v2.prompt_for("snorkeling")
     assert "lift" in v2.prompt_for("ski")
     assert "landing" in v2.prompt_for("bike")
-    assert "unverified" not in v2.prompt_for("ski").lower() or True
     assert "rare" in v2.prompt_for("unresolved")
     for text in [v2.prompt_for(c) for c in v2.GROUPS]:
         assert "three" in text.lower() or "THREE" in text
