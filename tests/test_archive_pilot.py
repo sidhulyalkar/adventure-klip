@@ -210,8 +210,8 @@ def test_multi_batch_cli_stops_safely_when_roster_exhausted(archives,monkeypatch
     assert len(set(attempts))==2
     assert output["batches"][0]["batchSize"]==8
     assert output["batches"][1]["batchSize"]==5
-    with pytest.raises(ValueError,match="--batch-count"):
-        main(["--workspace",str(root),"archive-pilot","--batch-count","9"])
-    with pytest.raises(ValueError,match="ambiguous"):
-        main(["--workspace",str(root),"archive-pilot","--batch-count","2",
-              "--output-dir",str(root/"reports"/"other")])
+    assert main(["--workspace",str(root),"archive-pilot","--batch-count","9"])==2
+    assert "--batch-count" in capsys.readouterr().err
+    assert main(["--workspace",str(root),"archive-pilot","--batch-count","2",
+                 "--output-dir",str(root/"reports"/"other")])==2
+    assert "ambiguous" in capsys.readouterr().err
