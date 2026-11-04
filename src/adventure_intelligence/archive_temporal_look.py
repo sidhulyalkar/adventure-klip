@@ -22,7 +22,8 @@ VERSION="archive-temporal-second-look-v1"
 
 def inspect_temporal_candidates(workspace:Path,assignments:Path,*,model:str,
                                 limit:int=4,only_review_id:str|None=None,
-                                run:bool=False)->dict:
+                                run:bool=False,
+                                exclude_review_ids:tuple[str,...]=())->dict:
     if not valid_local_model(model):
         raise ValueError("Explicit installed local Ollama model required")
     if type(limit) is not int or not 1<=limit<=8:
@@ -32,9 +33,15 @@ def inspect_temporal_candidates(workspace:Path,assignments:Path,*,model:str,
     feedback=benchmark_feedback_status(root,assignments)
     seen=set(feedback["reviewEntries"])
     all_rows=list(bench["assignments"].values())
+    excluded=set(exclude_review_ids)
+    if excluded.difference(bench["assignments"]):
+        raise ValueError("Excluded review ID is not in the frozen assignment set")
     if only_review_id is not None and only_review_id not in bench["assignments"]:
         raise ValueError("Unknown frozen review ID")
-    scan=[bench["assignments"][only_review_id]] if only_review_id else all_rows
+    if only_review_id is not None and only_review_id in excluded:
+        raise ValueError("A targeted review cannot also be excluded")
+    scan=([bench["assignments"][only_review_id]] if only_review_id else
+          [row for row in all_rows if row["reviewId"] not in excluded])
     eligible=[]
     awaiting_first=0
     missing_preview=0
@@ -70,6 +77,8 @@ def inspect_temporal_candidates(workspace:Path,assignments:Path,*,model:str,
         "externalUploads":0,"humanApprovalRequired":True,
         "eligibleUnreviewed":len(eligible),"selected":len(selected),
         "reviewedHumanAlready":already_reviewed,
+        "excludedFromThisRun":len(excluded-seen),
+        "exclusionsAreOnlyForThisRun":True,
         "missingVerifiedPreviews":missing_preview,
         "awaitingAdaptiveV2":awaiting_first,
         "firstPassNotFlaggedForInvestigation":first_was_definitive,
@@ -98,6 +107,7 @@ def inspect_temporal_candidates(workspace:Path,assignments:Path,*,model:str,
     reused=0
     for item in selected:
         start=time.monotonic()
+        stage="verified_preview_recheck"
         try:
             # Validate the content-addressed receipt *again* before inference.
             p,receipt=preview_paths(root,item["assetId"],
@@ -105,6 +115,7 @@ def inspect_temporal_candidates(workspace:Path,assignments:Path,*,model:str,
             if not _check_cached(p,receipt,aid=item["assetId"],
                                  start_ms=item["startMs"],end_ms=item["endMs"]):
                 raise RuntimeError("The verified preview disappeared or changed")
+            stage="seven_frame_sampling_or_inference"
             answer=second_look(p,model=model,context=item["_context"],
                                first=item["_first"])
             newly_judged+=not answer["cached"]
@@ -125,12 +136,34 @@ def inspect_temporal_candidates(workspace:Path,assignments:Path,*,model:str,
             })
         except (RuntimeError,ValueError,OSError,subprocess.TimeoutExpired) as exc:
             failures+=1
-            # Private paths and untrusted model text are excluded from error reports.
+            # Report bounded categories, not private paths or raw model text.
+            message=str(exc).lower()
+            if stage=="verified_preview_recheck":
+                code="preview_cache_validation_error"
+            elif isinstance(exc,subprocess.TimeoutExpired):
+                code="frame_sampling_timeout"
+            elif "ollama timed out" in message:
+                code="local_model_timeout"
+            elif "frame" in message or "sample" in message or "duration" in message:
+                code="frame_sampling_error"
+            elif "json" in message or "response" in message or "assessment" in message:
+                code="model_response_error"
+            else:
+                code="local_model_error"
+            diagnostic={
+                "preview_cache_validation_error":"Verified short-preview receipt changed or disappeared.",
+                "frame_sampling_timeout":"FFmpeg timed out while sampling seven proxy frames.",
+                "local_model_timeout":"Ollama vision inference timed out; inspect memory and current model load.",
+                "frame_sampling_error":"A required frame could not be read from the verified proxy.",
+                "model_response_error":"Local model response failed strict JSON validation.",
+                "local_model_error":"Seven-frame local inference failed; review this interval manually.",
+            }[code]
             report["items"].append({
                 "reviewId":item["reviewId"],"filename":item["basename"],
                 "role":item["role"],"status":"failed",
                 "errorType":type(exc).__name__,
-                "diagnostic":"Seven-frame sampling or local model output failed; review manually.",
+                "failureStage":stage,"errorCode":code,
+                "diagnostic":diagnostic,
                 "elapsedSeconds":round(time.monotonic()-start,3),
                 "humanApprovalRequired":True,
             })
