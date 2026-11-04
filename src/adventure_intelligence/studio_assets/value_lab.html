@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="klip-session" content="KLIP_SESSION_TOKEN">
+<meta name="theme-color" content="#101827">
+<title>Klip · Clip Value Lab</title>
+<link rel="stylesheet" href="/value-lab.css">
+<script defer src="/value-lab.js"></script>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <a class="brand" href="/">k<span>.</span> <b>Klip</b></a>
+    <div class="trail">CLIP VALUE LAB <span class="sep">/</span> <span id="batchName">Batch 1</span></div>
+    <div class="topright"><span class="privacy">● Private workspace</span><a href="/">Review studio</a></div>
+  </header>
+  <main class="main">
+    <div class="overview">
+      <div>
+        <div class="eyebrow">HUMAN EVIDENCE · SOURCE VIDEO</div>
+        <h1>What makes a moment worth keeping?</h1>
+        <p>Watch the event and surrounding frames. Rate <em>what is visible</em>, not what a model guessed. A random interval may contain the best moment.</p>
+      </div>
+      <div class="progress"><strong id="progress">0 / 0</strong><span>Moments reviewed</span></div>
+    </div>
+    <div class="layout">
+      <section class="viewer" aria-label="Source clip preview">
+        <div class="cliphead">
+          <div><span class="eyebrow" id="sourceKind">CANDIDATE</span>
+          <h2 id="clipTitle">Choose a source moment</h2>
+          <p id="clipMeta">Original video remains read-only.</p></div>
+          <div class="controls">
+            <button id="prev" type="button" aria-label="Previous moment">←</button>
+            <span id="position">0 / 0</span>
+            <button id="next" type="button" aria-label="Next moment">→</button>
+          </div>
+        </div>
+        <div class="playerarea">
+          <video id="player" playsinline controls preload="metadata" aria-label="Reviewed source clip"></video>
+          <div id="empty" class="empty" hidden>No source candidates in this packet.</div>
+        </div>
+        <div class="playerfooter">
+          <span id="range">00:00 – 00:00</span>
+          <button type="button" id="replay">↻ Replay this interval</button>
+        </div>
+        <div class="context">
+          <strong>Review context</strong>
+          <p id="contextText">A proposed clip is not a verified action or animal encounter.</p>
+          <p class="hint">Source preview is verified when first opened. Klip never uploads or modifies the original DJI recording. Full-video playback remains possible; this review loop pauses at the proposed clip's end.</p>
+        </div>
+      </section>
+      <section class="review" aria-label="Moment value criteria">
+        <div class="reviewhead">
+          <span class="eyebrow">YOUR ASSESSMENT</span>
+          <h2>What did you actually see?</h2>
+          <p>Leave any criterion unrated if it cannot be determined from this footage.</p>
+        </div>
+        <form id="ratingsForm">
+          <div class="two-col">
+            <label>Event observation
+              <select id="observed" required>
+                <option value="uncertain">Uncertain or not yet inspected</option>
+                <option value="observed">Observable event occurred</option>
+                <option value="not_observed">No meaningful event observed</option>
+              </select>
+            </label>
+            <label>Keep decision
+              <select id="decision" required>
+                <option value="later">Decide later</option>
+                <option value="keep">Keep</option>
+                <option value="skip">Skip</option>
+              </select>
+            </label>
+          </div>
+          <label class="notes" style="margin-top:12px">Sport observed in the source
+            <select id="reviewedActivity">
+              <option value="unresolved">Unresolved / not sure</option>
+              <option value="snorkeling">Snorkeling / underwater activity</option>
+              <option value="ski">Skiing</option>
+              <option value="bike">Mountain biking</option>
+              <option value="other">Other / no supported sport</option>
+            </select>
+          </label>
+          <div class="facetheading">Event and evidence</div>
+          <div class="facets" id="facetsEvent"></div>
+          <div class="facetheading">Visual and narrative quality</div>
+          <div class="facets" id="facetsVisual"></div>
+          <div class="facetheading">Personal learning and audience value</div>
+          <div class="facets" id="facetsValue"></div>
+          <label class="notes">What makes this memorable? What happened?
+            <textarea id="note" rows="2" maxlength="1000" placeholder="Describe the actual encounter, action or why this clip is useful."></textarea>
+          </label>
+          <label class="notes">What could improve next time?
+            <textarea id="improvement" rows="2" maxlength="1000" placeholder="Framing, timing, technique, camera position, or none."></textarea>
+          </label>
+          <div class="savebar">
+            <button id="save" type="submit" class="primary">Save review</button>
+            <button id="saveNext" type="button">Save & next</button>
+            <span id="savedState" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+      </section>
+    </div>
+    <footer>Human labels are stored as append-only revisions. This pilot is not a calibrated event detector, species identifier, or automatic publishing system.</footer>
+  </main>
+</div>
+</body>
+</html>
