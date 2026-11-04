@@ -107,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     value_lab.add_argument("--campaign",type=Path)
     value_lab.add_argument("--batch",type=int,default=1)
     value_lab.add_argument("--max-per-asset",type=int,default=3)
+    value_lab.add_argument("--open",action="store_true",
+        help="Start the local Studio directly in the playable Value Lab review page")
     value_lab.add_argument("--output-dir",type=Path,
         help="Optional new folder; Studio uses default reports/clip-value-lab-v1/")
     value_report_cli=sub.add_parser("value-report",
@@ -459,11 +461,15 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=='history':
             _print(event_history(root,args.asset_id))
         elif args.command=="value-lab":
+            if args.open and args.output_dir is not None:
+                raise ValueError("--open requires the default Studio-visible review packet folder")
             with lock_workspace(root):
                 _print(make_value_packet(root,
                     args.campaign or root/"reports"/"archive-pilot-v1",
                     batch=args.batch,output_dir=args.output_dir,
                     max_per_asset=args.max_per_asset))
+            if args.open:
+                serve_studio(root,open_path=f"/value-lab?batch={args.batch}")
         elif args.command=="value-report":
             report=value_report(root,batch=args.batch)
             if args.output is not None:
