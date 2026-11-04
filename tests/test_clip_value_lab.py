@@ -257,3 +257,36 @@ def test_value_lab_authenticated_studio_review_route(workspace):
         server.server_close()
         thread.join(timeout=5)
     assert {p.name:p.read_bytes() for p in camera.iterdir()}==originals
+
+
+
+def test_unconfirmed_activity_needs_explicit_human_observation_for_sport_ranking(workspace):
+    root,camera,originals,asset=workspace
+    _packet(workspace)
+    packet=read_value_packet(root)
+    unconfirmed=next(m for m in packet["moments"]
+                     if not m["activityConfirmed"]
+                     and m["selectionGroup"] in ("ski","bike","snorkeling"))
+    review=save_value_review(
+        root,batch=1,moment_id=unconfirmed["momentId"],
+        decision="keep",event_observed="observed",
+        reviewed_activity="unresolved",ratings=_full_ratings())
+    assert review["status"]=="reviewed"
+    before=value_report(root)
+    assert unconfirmed["momentId"] not in {
+        x["momentId"] for x in before["ranking"]["moments"]}
+    update=save_value_review(
+        root,batch=1,moment_id=unconfirmed["momentId"],
+        decision="keep",event_observed="observed",
+        reviewed_activity="snorkeling",ratings=_full_ratings())
+    assert update["previousRevisionId"]==review["revisionId"]
+    after=value_report(root)
+    item=next(x for x in after["ranking"]["moments"]
+              if x["momentId"]==unconfirmed["momentId"])
+    assert item["activity"]=="snorkeling"
+    assert item["reviewEligibility"]["autoPublish"] is False
+    with connect(root) as db:
+        assert db.execute(
+            "SELECT activity FROM assets WHERE id=?",
+            (unconfirmed["assetId"],)).fetchone()[0]!="snorkeling" or not unconfirmed["activityConfirmed"]
+    assert {p.name:p.read_bytes() for p in camera.iterdir()}==originals
