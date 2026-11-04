@@ -113,9 +113,14 @@
       ['Learning',ratings.learningPotential],['Sharing',ratings.sharingPotential]
     ].filter(x=>x[1]!==null&&x[1]!==undefined)
       .map(x=>x[0]+' '+x[1]+'/3').join(' · ');
+    const isTemporal=value.policyVersion==='adaptive-temporal-second-look-v1';
     const rationale=value.policyVersion?
-      ' · '+(value.needsTemporalReview?'Needs temporal review':'Three-frame assessment')+
-      (value.uncertaintyReason?' · uncertainty: '+value.uncertaintyReason:'')+
+      ' · '+(isTemporal?
+        (value.needsContinuousVideoReview?
+          'Continuous-video review still needed':'Seven-frame sampled assessment'):
+        (value.needsTemporalReview?'Needs temporal review':'Three-frame assessment'))+
+      (isTemporal?(value.uncertainty?' · uncertainty: '+value.uncertainty:''):
+        (value.uncertaintyReason?' · uncertainty: '+value.uncertaintyReason:''))+
       (Number.isFinite(value.investigationScore)?
         ' · inspect priority '+value.investigationScore+'/100 (heuristic, not a probability)':'')+
       (axis?' · '+axis:'')+
