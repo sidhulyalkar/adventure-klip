@@ -70,6 +70,11 @@ def test_review_seed_is_read_only_deterministic_and_balanced(campaign,capsys):
     assert all(set(r["ratings"])==set(CRITERIA) for r in review)
     assert all(all(v is None for v in r["ratings"].values()) for r in review)
     assert (folder/"index.html").is_file()
+    html=(folder/"index.html").read_text()
+    assert "Export my reviews (JSON)" in html
+    assert "klip-human-reviews.json" in html
+    assert "data-criterion=\"subjectVisibility\"" in html
+    assert "data-field=\"reviewDecision\"" in html
     assert {p.name:p.read_bytes() for p in media.iterdir()}==originals
     assert main(["--workspace",str(root),"archive-review",
                  "--output-dir",str(folder)])==2
