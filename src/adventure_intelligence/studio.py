@@ -207,6 +207,21 @@ class SourceStream:
                 raise OSError("Source media changed since verification; playback blocked")
             return fd,st.st_size
 
+    def verified_path(self,asset_id: str):
+        """Source path and fixed identity after the same SHA-verification as streaming."""
+        fd,_size=self.open_asset(asset_id)
+        try:
+            stat=os.fstat(fd)
+            identity=(stat.st_dev,stat.st_ino,stat.st_size,
+                      stat.st_mtime_ns,stat.st_ctime_ns)
+            with self._lock:
+                path,fields=self._cache[asset_id]
+            if identity!=fields:
+                raise OSError("Original source identity changed")
+            return path,identity
+        finally:
+            os.close(fd)
+
 
 def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None):
     """Handler factory allows isolated HTTP regression tests using ephemeral ports."""
