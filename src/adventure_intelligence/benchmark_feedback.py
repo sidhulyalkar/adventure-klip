@@ -82,6 +82,8 @@ def validate_human_review(benchmark:dict,payload:dict)->dict:
     if not isinstance(payload,dict):
         raise ValueError("Human review must be a JSON object")
     rid=payload.get("reviewId")
+    if not isinstance(rid,str):
+        raise ValueError("Expected benchmark reviewId string")
     assignment=benchmark["assignments"].get(rid)
     if assignment is None:
         raise ValueError("Review ID absent from this frozen benchmark")
