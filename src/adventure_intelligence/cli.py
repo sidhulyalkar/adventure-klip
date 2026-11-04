@@ -42,6 +42,7 @@ from .semantic_recovery import recover_semantic_frames
 from .event_context import build_event_context
 from .moment_ranking import create_rank_report
 from .archive_pilot import run_archive_pilot
+from .archive_status import inspect_archive_campaign, write_archive_status
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -100,6 +101,14 @@ def main(argv: list[str] | None = None) -> int:
     timeline=sub.add_parser("timeline",help="Produce calibrated per-video event timelines")
     timeline.add_argument("--source",choices=["pixel-change","optical-flow"],default="pixel-change")
     timeline.add_argument("--bin-ms",type=int,default=2000)
+    archive_status=sub.add_parser("archive-status",
+        help="Read-only diagnosis of frozen archive batches, frame gaps and recoverable checkpoints")
+    archive_status.add_argument("--campaign",type=Path,
+        help="Frozen campaign folder (default: workspace reports/archive-pilot-v1)")
+    archive_status.add_argument("--provider",choices=["histogram","siglip2","owlv2",
+        "ecology-owlv2","context"],default="histogram")
+    archive_status.add_argument("--output-dir",type=Path,
+        help="Optional new reports/ or exports/ directory for offline HTML and JSON")
     archive=sub.add_parser("archive-pilot",
         help="Automatically inventory, select and plan a frozen stratified archive batch; --run executes cheap histogram inference")
     archive.add_argument("--legacy",type=Path,
@@ -158,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Recover checksum-verified partial marine frame evidence from a failed adaptive job")
     semantic_recover.add_argument("--asset",required=True)
     semantic_recover.add_argument("--plan",required=True,type=Path)
-    semantic_recover.add_argument("--provider",choices=["ecology-owlv2","owlv2","siglip2","context"],
+    semantic_recover.add_argument("--provider",choices=["histogram","ecology-owlv2","owlv2","siglip2","context"],
                                   default="ecology-owlv2")
     semantic_recover.add_argument("--max-missing",type=int,default=2)
     semantic_recover.add_argument("--min-fraction",type=float,default=.80)
@@ -436,6 +445,12 @@ def main(argv: list[str] | None = None) -> int:
                 _print(generate_timelines(root,source=args.source,bin_ms=args.bin_ms))
         elif args.command=='history':
             _print(event_history(root,args.asset_id))
+        elif args.command=="archive-status":
+            campaign=args.campaign or root/"reports"/"archive-pilot-v1"
+            report=inspect_archive_campaign(root,campaign,provider=args.provider)
+            if args.output_dir is not None:
+                report["saved"]=write_archive_status(root,report,args.output_dir)
+            _print(report)
         elif args.command=="archive-pilot":
             if not 1<=args.batch_count<=8:
                 raise ValueError("--batch-count must be between 1 and 8")
