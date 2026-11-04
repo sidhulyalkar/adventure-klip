@@ -296,7 +296,7 @@ def test_unconfirmed_activity_needs_explicit_human_observation_for_sport_ranking
 def test_independent_human_preference_targets_use_within_sport_pairs_only():
     scored=[
         {"momentId":"a","activity":"snorkeling",
-         "scores":{"share":.9,"learning":.7}},
+         "scores":{"share":.9,"learning":.9}},
         {"momentId":"b","activity":"snorkeling",
          "scores":{"share":.6,"learning":.8}},
         {"momentId":"c","activity":"snorkeling",
