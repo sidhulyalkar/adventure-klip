@@ -31,6 +31,7 @@ from .clip_rules import suggest_trim, exclusion_spans
 from .boundary_inspector import boundary_evidence
 from .transition_evidence import EdgeEvidence, VERSION as EDGE_VERSION
 from .examples import latest_examples
+from .clip_value_lab import value_lab_state, save_value_review, value_report
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -43,6 +44,8 @@ _RESOURCE={
     "/focus_refine.css":("focus_refine.css","text/css; charset=utf-8"),
     "/focus.js":("focus.js","text/javascript; charset=utf-8"),
     "/boundary_review.js":("boundary_review.js","text/javascript; charset=utf-8"),
+    "/value-lab.css":("value_lab.css","text/css; charset=utf-8"),
+    "/value-lab.js":("value_lab.js","text/javascript; charset=utf-8"),
 }
 
 
@@ -317,8 +320,9 @@ def make_handler(workspace:Path,token:str):
             if not self._origin_safe():
                 self._json(403,{"error":"Local host required"})
                 return
-            if path in {"/","/classic"}:
-                name="focus.html" if path=="/" else "index.html"
+            if path in {"/","/classic","/value-lab"}:
+                name=("focus.html" if path=="/" else
+                      "value_lab.html" if path=="/value-lab" else "index.html")
                 html=paths.joinpath(name).read_text(encoding="utf-8")
                 html=html.replace("KLIP_SESSION_TOKEN",token)
                 self._send(200,html.encode(),"text/html; charset=utf-8")
@@ -331,7 +335,17 @@ def make_handler(workspace:Path,token:str):
                 self._json(403,{"error":"Unauthorized studio session"})
                 return
             try:
-                if path=="/api/overview":
+                if path=="/api/value-lab":
+                    raw_batch=q.get("batch",["1"])[0]
+                    if not raw_batch.isdigit() or len(raw_batch)>5:
+                        raise ValueError("Invalid review batch")
+                    self._json(200,value_lab_state(workspace,batch=int(raw_batch)))
+                elif path=="/api/value-lab/report":
+                    raw_batch=q.get("batch",["1"])[0]
+                    if not raw_batch.isdigit() or len(raw_batch)>5:
+                        raise ValueError("Invalid review batch")
+                    self._json(200,value_report(workspace,batch=int(raw_batch)))
+                elif path=="/api/overview":
                     self._json(200,studio_overview(workspace))
                 elif path=="/api/sequence":
                     self._json(200,sequence_state(workspace))
@@ -390,7 +404,16 @@ def make_handler(workspace:Path,token:str):
                 body=json.loads(self.rfile.read(length))
                 if not isinstance(body,dict):
                     raise ValueError("Expected a JSON object")
-                if parsed.path=="/api/reviews":
+                if parsed.path=="/api/value-lab/review":
+                    with lock_workspace(workspace):
+                        result=save_value_review(workspace,
+                            batch=body["batch"],moment_id=body["momentId"],
+                            decision=body["decision"],
+                            event_observed=body["eventObserved"],
+                            ratings=body["ratings"],
+                            note=body.get("note",""),
+                            improvement_note=body.get("improvementNote",""))
+                elif parsed.path=="/api/reviews":
                     with lock_workspace(workspace):
                         result=review_example(
                             workspace,
