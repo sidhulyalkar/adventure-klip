@@ -49,7 +49,7 @@ def _validate_campaign(workspace:Path,campaign:Path):
 
 
 def _job_status(db,workspace:Path,aid:str,plan_id:str,times:list[int],
-                provider:str)->dict:
+                provider:str,duration_ms:int)->dict:
     jobs=[]
     for job in db.execute(
         "SELECT * FROM semantic_jobs WHERE asset_id=?",(aid,)):
@@ -129,7 +129,8 @@ def _job_status(db,workspace:Path,aid:str,plan_id:str,times:list[int],
     )
     # This is a diagnostic hint, NOT a root cause conclusion. An EOF seek
     # cannot be declared the cause without FFmpeg stderr/source inspection.
-    near_tail=bool(missing and missing[-1]==max(times) and
+    near_tail=bool(missing and missing[-1]==max(times)
+                   and 0<=duration_ms-missing[-1]<=1500 and
                    job["error"] and "FFmpeg" in job["error"])
     return {
         "status":status,
@@ -193,7 +194,7 @@ def inspect_archive_campaign(workspace:Path,campaign:Path,*,
             for asset in selected:
                 aid=asset["assetId"]
                 j=_job_status(db,root,aid,plan["planId"],
-                              scheduled[aid],provider)
+                              scheduled[aid],provider,asset["durationMs"])
                 name=asset.get("basename","unknown")
                 row={
                     "assetId":aid,"filename":name,
