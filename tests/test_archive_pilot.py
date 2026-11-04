@@ -187,3 +187,31 @@ def test_unconfirmed_activity_proposals_are_selection_hints_not_labels(archives)
             "SELECT COUNT(*) FROM assets WHERE activity='unknown'").fetchone()[0]==7
     for aid in suggestions:
         assert suggestions[aid]["catalogConfirmed"] is False
+
+
+
+def test_multi_batch_cli_stops_safely_when_roster_exhausted(archives,monkeypatch,capsys):
+    root,legacy,camera,ids=archives
+    attempts=[]
+    def fake_generate(*args,**kwargs):
+        attempts.append(kwargs["schedule_id"])
+        return {"processed":len(kwargs["asset_ids"]),"cached":0,"errors":[]}
+    monkeypatch.setattr("adventure_intelligence.archive_pilot.generate_semantics",
+                        fake_generate)
+    result=main(["--workspace",str(root),"archive-pilot","--batch-count","4",
+                 "--run"])
+    assert result==0
+    output=json.loads(capsys.readouterr().out)
+    assert output["status"]=="completed"
+    assert len(output["batches"])==3
+    assert [b["status"] for b in output["batches"]]==[
+        "completed","completed","no_more_eligible_assets"]
+    assert len(attempts)==2
+    assert len(set(attempts))==2
+    assert output["batches"][0]["batchSize"]==8
+    assert output["batches"][1]["batchSize"]==5
+    with pytest.raises(ValueError,match="--batch-count"):
+        main(["--workspace",str(root),"archive-pilot","--batch-count","9"])
+    with pytest.raises(ValueError,match="ambiguous"):
+        main(["--workspace",str(root),"archive-pilot","--batch-count","2",
+              "--output-dir",str(root/"reports"/"other")])
