@@ -258,10 +258,23 @@
   (async()=>{
     try{
       const data=await api('/api/benchmark');
-      state.assignments=data.assignments;
       state.criteria=data.criteria;
       state.reviews=data.reviews;
       state.previews=data.previews||{};
+      // Local AI suggestions are only preliminary *triage*. We prioritize
+      // high-potential/uncertain clips, retain systematic controls, and keep
+      // every AI-skipped interval accessible. Human-reviewed entries go last.
+      const priority=a=>{
+        if(state.reviews[a.reviewId])return 5;
+        const vote=state.previews[a.reviewId]?.suggestion?.recommendation;
+        if(vote==='keep')return 0;
+        if(vote==='unsure')return 1;
+        if(a.role==='control_systematic')return 2;
+        if(vote==='skip')return 4;
+        return 3;
+      };
+      state.assignments=[...data.assignments].sort((a,b)=>
+        priority(a)-priority(b));
       $('aiTriage').hidden=!data.localJudgeEnabled;
       renderCriteria();
       if(state.assignments.length){render();}
