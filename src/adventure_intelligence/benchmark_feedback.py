@@ -62,6 +62,11 @@ def load_benchmark(workspace:Path,filename:Path)->dict:
                 row.get("role") not in ROLES or
                 row.get("selectionGroup") not in ("snorkeling","ski","bike","unresolved")):
             raise ValueError("Invalid or duplicate benchmark interval")
+        expected=sha256((
+            f'{BENCHMARK_VERSION}:{aid}:{row["role"]}:{start}:{end}'
+        ).encode()).hexdigest()[:20]
+        if ident!=expected:
+            raise ValueError("Benchmark interval identity differs from source-backed assignment")
         mapping[ident]=row
     if document.get("reviewIntervalCount")!=len(mapping):
         raise ValueError("Review count differs from benchmark manifest")
