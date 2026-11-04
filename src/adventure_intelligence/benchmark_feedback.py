@@ -255,8 +255,59 @@ def benchmark_feedback_status(workspace:Path,benchmark_file:Path)->dict:
               "mean":round(v["sum"]/v["count"],4) if v["count"] else None}
         for name,v in sorted(criterion_totals.items())
     }
+    # This is merely ordering of human *observations*, not learned model
+    # performance on unreviewed footage. Unconfirmed activity is not promoted
+    # to ground truth and unattested species rarity always stays null.
+    from .moment_ranking import rank_moments
+    rated=[]
+    for rid,review in latest.items():
+        original=ids[rid]
+        activity=review["observedActivity"]
+        if activity not in ("snorkeling","ski","bike"):
+            activity=(original["selectionGroup"]
+                      if original.get("activityConfirmed") and
+                      original["selectionGroup"] in ("snorkeling","ski","bike")
+                      else None)
+        if activity is None:
+            continue
+        values=review["ratings"]
+        rated.append({
+            "momentId":rid,"activity":activity,
+            "assetId":original["assetId"],
+            "startMs":original["startMs"],"endMs":original["endMs"],
+            "subjectGroup":"human_reviewed_interval",
+            "taxonomyStatus":"unverified",
+            "humanReview":(review["reviewDecision"]
+                           if review["reviewDecision"] in ("keep","skip")
+                           else "unreviewed"),
+            "signals":{
+                "eventSignificance":values["eventSignificance"],
+                "visualNovelty":values["archiveNovelty"],
+                "subjectVisibility":values["subjectVisibility"],
+                "imageQuality":values["visualQuality"],
+                "narrativeCompleteness":values["narrativeCompleteness"],
+                "learningValue":values["learningValue"],
+                # No trained exploration utility or verified species rarity.
+                "investigationPotential":None,
+                "uncertainty":None,
+                "verifiedTaxonRarity":None,
+            },
+            "evidenceNotes":[
+                "Direct human review of this frozen source interval.",
+                "Heuristic score for reviewed moments only; not an automated model prediction.",
+            ],
+        })
+    human_rank=rank_moments(rated,limit=20)
     return {
         "schemaVersion":1,"version":VERSION,
+        "humanReviewedRanking":{
+            "status":"human_ratings_only_not_a_trained_ranker",
+            "included":len(rated),
+            "queues":human_rank["queues"],
+            "scoredMoments":human_rank["moments"],
+            "unverifiedTaxonomy":True,
+            "automaticallyPublished":False,
+        },
         "benchmarkId":benchmark["benchmarkId"],
         "benchmarkPath":benchmark["path"],
         "assignments":len(ids),"reviewedAssignments":len(latest),
@@ -273,6 +324,7 @@ def benchmark_feedback_status(workspace:Path,benchmark_file:Path)->dict:
             "A reviewed control with a useful event is a potential blind spot, not a measured false negative.",
             "Missing judgments are abstentions, never true negatives.",
             "Keep/skip is personal preference, not biological identity or verified action truth.",
+            "Human-reviewed score ordering is not a learned or validated prediction on unreviewed footage.",
             "No numeric rating is created by the system from histogram evidence.",
             "Sessions/days must be grouped before training or held-out generalization claims.",
         ],
