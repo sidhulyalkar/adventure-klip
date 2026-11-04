@@ -31,6 +31,11 @@ def compare_judge_policies(workspace:Path,assignments:Path,*,model:str)->dict:
                        "wouldKeepHumanSkip":0,"unsureOnHumanKeep":0},
     }
     by_sport=defaultdict(lambda:defaultdict(lambda:Counter()))
+    paired={"reviewedWithBoth":0,"humanKeepWithBoth":0,
+            "humanSkipWithBoth":0,
+            "legacyWouldSkipHumanKeep":0,"adaptiveWouldSkipHumanKeep":0,
+            "legacyWouldKeepHumanSkip":0,"adaptiveWouldKeepHumanSkip":0,
+            "adaptiveChangedSkipToUnsureOnHumanKeep":0}
     rows=[]
     both=0
     for item in benchmark["assignments"].values():
@@ -54,6 +59,22 @@ def compare_judge_policies(workspace:Path,assignments:Path,*,model:str)->dict:
         rows.append(row)
         if legacy and adaptive:
             both+=1
+            if user_decision in ("keep","skip"):
+                paired["reviewedWithBoth"]+=1
+                if user_decision=="keep":
+                    paired["humanKeepWithBoth"]+=1
+                    if legacy["recommendation"]=="skip":
+                        paired["legacyWouldSkipHumanKeep"]+=1
+                        if adaptive["recommendation"]=="unsure":
+                            paired["adaptiveChangedSkipToUnsureOnHumanKeep"]+=1
+                    if adaptive["recommendation"]=="skip":
+                        paired["adaptiveWouldSkipHumanKeep"]+=1
+                else:
+                    paired["humanSkipWithBoth"]+=1
+                    if legacy["recommendation"]=="keep":
+                        paired["legacyWouldKeepHumanSkip"]+=1
+                    if adaptive["recommendation"]=="keep":
+                        paired["adaptiveWouldKeepHumanSkip"]+=1
         for policy,vote in (("legacy",legacy),("adaptive-v2",adaptive)):
             if vote is None:
                 continue
@@ -77,6 +98,7 @@ def compare_judge_policies(workspace:Path,assignments:Path,*,model:str)->dict:
         "totalIntervals":len(rows),"humanReviews":len(reviews),
         "bothPolicyCachesAvailable":both,
         "byPolicy":counts,
+        "pairedHumanReviewComparison":paired,
         "bySport":{sport:{policy:dict(c) for policy,c in sorted(by.items())}
                    for sport,by in sorted(by_sport.items())},
         "intervals":rows,
