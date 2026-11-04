@@ -35,6 +35,8 @@ from .benchmark_feedback import load_benchmark,save_human_review,benchmark_feedb
 from .archive_review import CRITERIA
 from .studio_preview_judge import (generate_preview, preview_paths, _check_cached,
     cached_judgment, local_judgment)
+from .adaptive_judge_v2 import (context_hint, adaptive_judgment,
+    cached_adaptive_judgment)
 
 SHA_RE=re.compile(r"^[a-f0-9]{64}$")
 _RANGE_RE=re.compile(r"^bytes=(\d*)-(\d*)$")
@@ -226,9 +228,11 @@ class SourceStream:
 
 
 def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
-                 local_judge_model:str|None=None):
+                 local_judge_model:str|None=None,judge_policy:str="legacy"):
     """Handler factory allows isolated HTTP regression tests using ephemeral ports."""
     paths=files("adventure_intelligence").joinpath("studio_assets")
+    if judge_policy not in ("legacy","adaptive-v2"):
+        raise ValueError("Unsupported Studio judge policy")
     streamer=SourceStream(workspace)
     benchmark=(load_benchmark(workspace,benchmark_file)
                if benchmark_file is not None else None)
@@ -423,16 +427,24 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                             "warnings":reviews["limitations"],
                             "localJudgeEnabled":local_judge_model is not None,
                             "localJudgeModel":local_judge_model,
+                            "judgePolicy":judge_policy,
                             "previews":{a["reviewId"]:{
                                 "ready":_check_cached(
                                     *preview_paths(workspace,a["assetId"],
                                                   a["startMs"],a["endMs"]),
                                     aid=a["assetId"],start_ms=a["startMs"],
                                     end_ms=a["endMs"]),
-                                "suggestion":cached_judgment(
-                                    preview_paths(workspace,a["assetId"],
-                                                  a["startMs"],a["endMs"])[0],
-                                    model=local_judge_model)
+                                "suggestion":(
+                                    cached_adaptive_judgment(
+                                        preview_paths(workspace,a["assetId"],
+                                                      a["startMs"],a["endMs"])[0],
+                                        model=local_judge_model,
+                                        context=context_hint(a))
+                                    if judge_policy=="adaptive-v2" else
+                                    cached_judgment(
+                                        preview_paths(workspace,a["assetId"],
+                                                      a["startMs"],a["endMs"])[0],
+                                        model=local_judge_model))
                                     if local_judge_model else None,
                             } for a in benchmark["assignments"].values()}})
                 elif path=="/api/benchmark/evaluation":
@@ -519,8 +531,12 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                                      "?token="+token,
                         "sourceVideoModified":False}
                     if parsed.path=="/api/benchmark/local-judge":
-                        response["suggestion"]=local_judgment(
-                            Path(preview["path"]),model=local_judge_model)
+                        response["suggestion"]=(
+                            adaptive_judgment(Path(preview["path"]),
+                                model=local_judge_model,context=context_hint(a))
+                            if judge_policy=="adaptive-v2" else
+                            local_judgment(Path(preview["path"]),
+                                model=local_judge_model))
                         response["status"]="provisional_ai_suggestion"
                     result=response
                 elif parsed.path=="/api/benchmark/review":
@@ -581,7 +597,8 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
 
 
 def serve_studio(workspace:Path,port:int=0,open_browser:bool=True,
-                 benchmark_file:Path|None=None,local_judge_model:str|None=None):
+                 benchmark_file:Path|None=None,local_judge_model:str|None=None,
+                 judge_policy:str="legacy"):
     """Serve a private local UI, then block until Ctrl+C."""
     if not 0<=port<=65535:
         raise ValueError("Port must be 0..65535")
@@ -590,7 +607,7 @@ def serve_studio(workspace:Path,port:int=0,open_browser:bool=True,
         pass
     token=secrets.token_urlsafe(32)
     server=ThreadingHTTPServer(
-        ("127.0.0.1",port),make_handler(workspace,token,benchmark_file,local_judge_model))
+        ("127.0.0.1",port),make_handler(workspace,token,benchmark_file,local_judge_model,judge_policy))
     server.daemon_threads=True
     url=f"http://127.0.0.1:{server.server_port}/"
     if benchmark_file is not None:
