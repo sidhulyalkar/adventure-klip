@@ -104,6 +104,17 @@ event-observed and human-keep rates, assessed denominators, per-criterion
 means and potentially interesting moments in systematic controls. It
 does not reprocess videos.
 
+It also includes `humanReviewedRanking`: **audited, heuristic ordering
+of only the moments you have personally rated**, split into share-review
+and learning queues. For example, a human-observed ray-like encounter
+with modest water clarity can outrank a pristine but ordinary sandbar
+when its event significance, visible subject and narrative scores justify
+it. Unknown quality fields remain null, and no species rarity points
+are created without independent taxonomic verification. The discovery
+queue stays unscored until future investigation-potential and uncertainty
+measurements are actually supplied. These outputs are **not** evidence
+that Klip has learned to score previously unseen videos.
+
 **Interpretation:** a high-quality event found in a control window is
 a useful *potential blind spot*, but these controls are deterministic,
 not random samples. Therefore, neither true archive-wide recall nor
