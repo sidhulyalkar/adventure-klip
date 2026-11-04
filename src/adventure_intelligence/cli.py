@@ -48,6 +48,7 @@ from .archive_local_triage import run_local_triage
 from .archive_temporal_look import inspect_temporal_candidates
 from .judge_audit import compare_judge_policies, save_judge_audit
 from .archive_editorial_audit import audit_editorial_evidence, write_editorial_audit
+from .archive_value_study import save_value_study
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -118,6 +119,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    value_study=sub.add_parser("archive-value-study",
+        help="Create a cache-only archive-wide candidate and blinded-control human study")
+    value_study.add_argument("--output-dir",required=True,type=Path,
+        help="NEW private reports/ or exports/ directory")
+    value_study.add_argument("--max-assets",type=int,default=0,
+        help="Metadata-ranked assets to analyze, 0 uses all accessible recordings")
+    value_study.add_argument("--review-limit",type=int,default=96,
+        help="Maximum blind candidate/control intervals for human review (1..500)")
+    value_study.add_argument("--seed",type=int,default=104,
+        help="Deterministic asset and control sampling seed")
+    value_study.add_argument("--max-reel-seconds",type=int,default=900,
+        help="Per-sport shortlist duration budget, not an export request")
     archive_audit=sub.add_parser("archive-judge-audit",
         help="Compare saved legacy vs adaptive-v2 Ollama suggestions with human decisions, cache only")
     archive_audit.add_argument("--assignments",required=True,type=Path)
@@ -519,6 +532,10 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="archive-value-study":
+            _print(save_value_study(root,args.output_dir,seed=args.seed,
+                max_assets=args.max_assets,review_limit=args.review_limit,
+                max_reel_seconds=args.max_reel_seconds))
         elif args.command=="archive-judge-audit":
             if args.output_dir is None:
                 _print(compare_judge_policies(root,args.assignments,model=args.model))
