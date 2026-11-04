@@ -20,6 +20,9 @@ contains an unusual animal, or is worth revisiting.
 - A multi-dimensional rubric with explicit **0–4** anchors (0 none/very
   poor, 1 weak, 2 some, 3 strong, 4 exceptional) and a `Not assessed`
   option. Only a person who sees the source can assign these values.
+- A separate **observed sport** field for clips whose catalog activity is
+  unverified or mixed. An unknown video is never forced into skiing,
+  biking or snorkeling rankings based solely on the automated hypothesis.
 - Append-only SQLite `moment_value_revisions` with reviewer notes, source
   SHA, exact video-relative bounds, immutable packet ID and prior revision
   ID. The existing `example_revisions` and `pairwise_revisions` continue
@@ -124,6 +127,12 @@ might be too blurred or fragmented to explain technique.
   archive plans or old human decisions are overwritten.
 - Unknown/unresolved activity recordings remain reviewable, but they
   are not falsely forced into ski/bike/snorkeling cross-sport rankings.
+- A report compares reviewer-rated `audienceAppeal`, `watchAgain`,
+  and `personalMeaning` against the corresponding share/learning review
+  rankings **as independent human preference targets**, rather than putting
+  those targets into the scoring formula itself. It excludes cross-sport
+  comparisons and abstains if fewer than three comparable within-sport pairs.
+  Same-reviewer pilot agreement is descriptive, NOT generalization evidence.
 - No statistical performance claims are made from the very small first
   batch; a disjoint evaluation set across trips, days and source
   recordings will be required.
