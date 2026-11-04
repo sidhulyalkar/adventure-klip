@@ -45,6 +45,7 @@ from .archive_pilot import run_archive_pilot
 from .archive_status import inspect_archive_campaign, write_archive_status
 from .archive_review import seed_archive_reviews
 from .archive_local_triage import run_local_triage
+from .judge_audit import compare_judge_policies, save_judge_audit
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -115,6 +116,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    archive_audit=sub.add_parser("archive-judge-audit",
+        help="Compare saved legacy vs adaptive-v2 Ollama suggestions with human decisions, cache only")
+    archive_audit.add_argument("--assignments",required=True,type=Path)
+    archive_audit.add_argument("--model",required=True)
+    archive_audit.add_argument("--output-dir",type=Path,
+        help="Optional new reports/ or exports/ folder for offline JSON+HTML audit")
     archive_triage=sub.add_parser("archive-local-triage",
         help="Optionally judge a bounded balanced set of frozen review intervals with an installed localhost vision model")
     archive_triage.add_argument("--assignments",required=True,type=Path)
@@ -488,6 +495,12 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="archive-judge-audit":
+            if args.output_dir is None:
+                _print(compare_judge_policies(root,args.assignments,model=args.model))
+            else:
+                _print(save_judge_audit(root,args.assignments,
+                    model=args.model,output_dir=args.output_dir))
         elif args.command=="archive-local-triage":
             result=run_local_triage(root,args.assignments,
                 model=args.model,limit=args.limit,run=args.run,
