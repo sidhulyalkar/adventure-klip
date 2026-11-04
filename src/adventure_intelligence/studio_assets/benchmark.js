@@ -106,9 +106,22 @@
   function showSuggestion(value){
     const el=$('aiSuggestion');
     if(!value){el.textContent='AI triage is optional and never substitutes for human approval.';return;}
+    const ratings=value.ratings||{};
+    const axis=[
+      ['Event',ratings.eventInterest],['Subject',ratings.subjectVisibility],
+      ['Clarity',ratings.ambientClarity],['Story',ratings.narrativePotential],
+      ['Learning',ratings.learningPotential],['Sharing',ratings.sharingPotential]
+    ].filter(x=>x[1]!==null&&x[1]!==undefined)
+      .map(x=>x[0]+' '+x[1]+'/3').join(' · ');
+    const rationale=value.policyVersion?
+      ' · '+(value.needsTemporalReview?'Needs temporal review':'Three-frame assessment')+
+      (value.uncertaintyReason?' · uncertainty: '+value.uncertaintyReason:'')+
+      (axis?' · '+axis:'')+
+      (value.policyOverrides?.length?' · conservative gate applied':'')
+      :'';
     el.textContent='AI suggests '+value.recommendation.toUpperCase()+
-      ': '+value.summary+' · '+value.reason+
-      ' · Limited to three still frames; human review required.';
+      ': '+value.summary+' · '+value.reason+rationale+
+      ' · Uncalibrated opinion based on three still frames only; human approval required.';
   }
   function render(){
     state.dirty=false;
