@@ -108,7 +108,11 @@ def fingerprint(context:str)->str:
 
 
 def _samples(path:Path)->tuple[list[str],list[int]]:
-    """Decode seven JPEGs from short proxy, never original DJI media."""
+    """Sample seven JPEGs from the verified short proxy, never the DJI original.
+
+    A failed fast seek is retried once using accurate post-input seeking.
+    Decoder timeouts propagate for an actionable per-item diagnostic.
+    """
     duration=float(probe(path)["duration"])
     if not math.isfinite(duration) or duration<1 or duration>61:
         raise ValueError("Bounded H264 preview duration invalid")
@@ -118,19 +122,26 @@ def _samples(path:Path)->tuple[list[str],list[int]]:
     with tempfile.TemporaryDirectory(prefix="klip-temporal-private-") as folder:
         for i,fraction in enumerate(SAMPLE_FRACTIONS):
             seconds=duration*fraction
+            stamp=f"{seconds:.3f}"
             filename=Path(folder)/f"second-look-{i}.jpg"
-            args=[ffmpeg,"-hide_banner","-loglevel","error","-nostdin",
-                  "-ss",f"{seconds:.3f}","-i",str(path),
-                  "-frames:v","1","-vf","scale='min(384,iw)':-2",
-                  "-q:v","9","-y",str(filename)]
-            job=subprocess.run(args,stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE,timeout=30,check=False)
-            if (job.returncode or not filename.is_file() or
-                    not 100<filename.stat().st_size<=MAX_JPEG_BYTES):
+            for accurate_seek in (False,True):
+                filename.unlink(missing_ok=True)
+                seek=(["-i",str(path),"-ss",stamp] if accurate_seek else
+                      ["-ss",stamp,"-i",str(path)])
+                args=[ffmpeg,"-hide_banner","-loglevel","error","-nostdin",
+                      *seek,"-frames:v","1",
+                      "-vf","scale='min(384,iw)':-2",
+                      "-q:v","9","-y",str(filename)]
+                job=subprocess.run(args,stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE,timeout=30,check=False)
+                if (job.returncode==0 and filename.is_file()
+                        and 100<filename.stat().st_size<=MAX_JPEG_BYTES):
+                    encoded.append(base64.b64encode(filename.read_bytes()).decode("ascii"))
+                    stamps.append(int(round(seconds*1000)))
+                    break
+            else:
                 raise RuntimeError(
                     "Unable to decode one bounded second-look frame from the H264 proxy")
-            encoded.append(base64.b64encode(filename.read_bytes()).decode("ascii"))
-            stamps.append(int(round(seconds*1000)))
     return encoded,stamps
 
 

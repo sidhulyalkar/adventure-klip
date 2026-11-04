@@ -130,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
     temporal.add_argument("--limit",type=int,default=4)
     temporal.add_argument("--only-review-id",
         help="Investigate precisely one eligible frozen review interval")
+    temporal.add_argument("--exclude-review-id",action="append",default=[],
+        help="Omit this frozen ID from this run only; repeat to advance past failed items")
     temporal.add_argument("--run",action="store_true",
         help="Opt in to local Ollama inference using seven stills from verified cached H264 previews")
     archive_triage=sub.add_parser("archive-local-triage",
@@ -140,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     archive_triage.add_argument("--limit",type=int,default=8)
     archive_triage.add_argument("--only-review-id",
         help="Retry one exact unreviewed assignment; skip all other cached or completed intervals")
+    archive_triage.add_argument("--exclude-review-id",action="append",default=[],
+        help="Omit this frozen ID from this run only; not a label or permanent skip")
     archive_triage.add_argument("--judge-policy",choices=["legacy","adaptive-v2"],
         default="legacy",help="Opt-in adaptive evidence-rubric v2, separate from running legacy inference")
     archive_triage.add_argument("--run",action="store_true",
@@ -516,14 +520,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="archive-temporal-look":
             report=inspect_temporal_candidates(root,args.assignments,
                 model=args.model,limit=args.limit,
-                only_review_id=args.only_review_id,run=args.run)
+                only_review_id=args.only_review_id,
+                exclude_review_ids=tuple(args.exclude_review_id),run=args.run)
             _print(report)
             if report.get("status")=="partial_failure":
                 return 1
         elif args.command=="archive-local-triage":
             result=run_local_triage(root,args.assignments,
                 model=args.model,limit=args.limit,run=args.run,
-                policy=args.judge_policy,only_review_id=args.only_review_id)
+                policy=args.judge_policy,only_review_id=args.only_review_id,
+                exclude_review_ids=tuple(args.exclude_review_id))
             _print(result)
             if result.get("status")=="partial_failure":
                 return 1

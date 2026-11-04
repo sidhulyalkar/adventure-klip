@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 import json
+import subprocess
 import time
 
 from .benchmark_feedback import load_benchmark, benchmark_feedback_status
@@ -57,7 +58,8 @@ def _sample_unreviewed(rows:list[dict],reviewed:set[str],limit:int):
 
 def run_local_triage(workspace:Path,assignments:Path,*,model:str,
                      limit:int=8,run:bool=False,policy:str="legacy",
-                     only_review_id:str|None=None)->dict:
+                     only_review_id:str|None=None,
+                     exclude_review_ids:tuple[str,...]=())->dict:
     if not valid_local_model(model):
         raise ValueError("Specify a valid installed local vision model name")
     if type(limit) is not int or not 1<=limit<=24:
@@ -67,18 +69,27 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
     root=Path(workspace).expanduser().resolve()
     benchmark=load_benchmark(root,assignments)
     feedback=benchmark_feedback_status(root,assignments)
+    excluded=set(exclude_review_ids)
+    if excluded.difference(benchmark["assignments"]):
+        raise ValueError("Excluded review ID is not in the frozen assignment set")
+    if only_review_id is not None and only_review_id in excluded:
+        raise ValueError("A targeted review cannot also be excluded")
     if only_review_id is not None:
         if only_review_id not in benchmark["assignments"]:
             raise ValueError("Requested review ID is not in the frozen assignment set")
         selected=([benchmark["assignments"][only_review_id]]
                   if only_review_id not in feedback["reviewEntries"] else [])
     else:
-        selected=_sample_unreviewed(list(benchmark["assignments"].values()),
-                                     set(feedback["reviewEntries"]),limit)
+        candidates=[row for row in benchmark["assignments"].values()
+                    if row["reviewId"] not in excluded]
+        selected=_sample_unreviewed(candidates,
+                                    set(feedback["reviewEntries"]),limit)
     result={"version":VERSION,"judgePolicy":policy,
             "mode":"local_inference" if run else "dry_run",
             "model":model,"selected":len(selected),
             "reviewedHumanAlready":len(feedback["reviewEntries"]),
+            "excludedFromThisRun":len(excluded-set(feedback["reviewEntries"])),
+            "exclusionsAreOnlyForThisRun":True,
             "selectionRoles":dict(sorted(Counter(x["role"] for x in selected).items())),
             "items":[],"humanLabelsWritten":0,"externalUploads":0,
             "estimatedCost":"unknown; local CPU/GPU inference and source reads",
@@ -133,7 +144,7 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
                 "scoreMeaning":suggestion.get("scoreMeaning","unscored_legacy"),
                 "elapsedSeconds":round(time.perf_counter()-start_time,3),
                 "requiresHumanReview":True})
-        except (RuntimeError,ValueError,OSError) as exc:
+        except (RuntimeError,ValueError,OSError,subprocess.TimeoutExpired) as exc:
             failed+=1
             message=str(exc)
             # Avoid user source paths, model prompts or private raw frames in
@@ -144,6 +155,10 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
                 code="preview_cache_validation_error"
             elif stage=="source_verification_and_preview":
                 code="source_or_preview_error"
+            elif isinstance(exc,subprocess.TimeoutExpired):
+                code="judge_frame_sampling_timeout"
+            elif "ollama timed out" in message.lower():
+                code="judge_inference_timeout"
             elif "sample" in message.lower() or "frame" in message.lower():
                 code="judge_frame_sampling_error"
             elif "json" in message.lower() or "response" in message.lower():
@@ -155,6 +170,8 @@ def run_local_triage(workspace:Path,assignments:Path,*,model:str,
                 "preview_cache_validation_error":"A saved preview failed its checksum or source receipt.",
                 "source_or_preview_error":"Original source verification or short preview preparation failed.",
                 "judge_frame_sampling_error":"The local model's preview JPEG sampling failed.",
+                "judge_frame_sampling_timeout":"FFmpeg frame sampling timed out on the short local preview.",
+                "judge_inference_timeout":"Local Ollama vision inference timed out; inspect model load and memory pressure.",
                 "judge_response_validation_error":"The local model returned an invalid or unsupported response.",
                 "judge_inference_error":"Local model inference failed; inspect the local Ollama service.",
             }[code]
