@@ -261,8 +261,12 @@ def _send_local(body:dict,timeout:int=150,transport=None)->dict:
             if len(payload)>131072:
                 raise ValueError("Local model response too large")
             return json.loads(payload)
-    except (URLError,TimeoutError,HTTPError):
-        raise RuntimeError("Local Ollama is unavailable or timed out") from None
+    except TimeoutError:
+        raise RuntimeError("Local Ollama timed out") from None
+    except (URLError,HTTPError) as exc:
+        if isinstance(getattr(exc,"reason",None),TimeoutError):
+            raise RuntimeError("Local Ollama timed out") from None
+        raise RuntimeError("Local Ollama unavailable") from None
 
 
 def adaptive_judgment(preview:Path,*,model:str,context:str="unresolved",
