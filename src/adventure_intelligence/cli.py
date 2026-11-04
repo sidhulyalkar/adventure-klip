@@ -43,6 +43,7 @@ from .event_context import build_event_context
 from .moment_ranking import create_rank_report
 from .archive_pilot import run_archive_pilot
 from .archive_status import inspect_archive_campaign, write_archive_status
+from .archive_review import seed_archive_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
 from .diagnostics import write_diagnostics
@@ -101,6 +102,14 @@ def main(argv: list[str] | None = None) -> int:
     timeline=sub.add_parser("timeline",help="Produce calibrated per-video event timelines")
     timeline.add_argument("--source",choices=["pixel-change","optical-flow"],default="pixel-change")
     timeline.add_argument("--bin-ms",type=int,default=2000)
+    archive_review=sub.add_parser("archive-review",
+        help="Create a balanced source-grounded candidate and control review benchmark from frozen batches")
+    archive_review.add_argument("--campaign",type=Path,
+        help="Frozen campaign root; default reports/archive-pilot-v1")
+    archive_review.add_argument("--output-dir",required=True,type=Path,
+        help="New private reports/ or exports/ folder; never overwrites earlier reviews")
+    archive_review.add_argument("--max-assets",type=int,default=32)
+    archive_review.add_argument("--window-seconds",type=int,default=14)
     archive_status=sub.add_parser("archive-status",
         help="Read-only diagnosis of frozen archive batches, frame gaps and recoverable checkpoints")
     archive_status.add_argument("--campaign",type=Path,
@@ -445,6 +454,10 @@ def main(argv: list[str] | None = None) -> int:
                 _print(generate_timelines(root,source=args.source,bin_ms=args.bin_ms))
         elif args.command=='history':
             _print(event_history(root,args.asset_id))
+        elif args.command=="archive-review":
+            campaign=args.campaign or root/"reports"/"archive-pilot-v1"
+            _print(seed_archive_reviews(root,campaign,args.output_dir,
+                max_assets=args.max_assets,window_seconds=args.window_seconds))
         elif args.command=="archive-status":
             campaign=args.campaign or root/"reports"/"archive-pilot-v1"
             report=inspect_archive_campaign(root,campaign,provider=args.provider)
