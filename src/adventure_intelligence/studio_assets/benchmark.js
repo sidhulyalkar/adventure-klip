@@ -68,7 +68,10 @@
       observedEvent:event===''?null:event==='true',
       observedActivity:$('observedActivity').value||null,
       eventKind:$('eventKind').value||null,
-      notes:$('notes').value,ratings};
+      notes:$('notes').value,ratings,
+      qualityFlags:[...document.querySelectorAll('[data-quality-flag]:checked')]
+        .map(el=>el.value),
+      deletionCandidate:$('deletionCandidate').checked};
   }
   function canNavigate(){
     return !state.dirty || window.confirm(
@@ -161,6 +164,11 @@
     field('observedActivity',saved.observedActivity);
     field('eventKind',saved.eventKind);
     field('notes',saved.notes||'');
+    const savedFlags=new Set(saved.qualityFlags||[]);
+    for(const el of document.querySelectorAll('[data-quality-flag]')){
+      el.checked=savedFlags.has(el.value);
+    }
+    $('deletionCandidate').checked=saved.deletionCandidate===true;
     for(const el of document.querySelectorAll('[data-criterion]')){
       const val=saved.ratings?.[el.dataset.criterion];
       el.value=val===null||val===undefined?'':String(val);
