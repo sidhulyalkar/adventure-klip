@@ -53,6 +53,8 @@ def compare_judge_policies(workspace:Path,assignments:Path,*,model:str)->dict:
             "legacyRecommendation":legacy["recommendation"] if legacy else None,
             "adaptiveRecommendation":adaptive["recommendation"] if adaptive else None,
             "adaptiveUncertainty":adaptive.get("uncertaintyReason") if adaptive else None,
+            "adaptiveInvestigationScore":adaptive.get("investigationScore") if adaptive else None,
+            "adaptiveScoreMeaning":adaptive.get("scoreMeaning") if adaptive else None,
             "adaptivePolicyOverrides":adaptive.get("policyOverrides",[]) if adaptive else [],
             "modelCannotVerifySpeciesOrManeuver":True,
         }
@@ -132,9 +134,11 @@ def save_judge_audit(workspace:Path,assignments:Path,*,model:str,output_dir:Path
     for item in report["intervals"]:
         cells=(item["filename"],item["role"],item["contextHint"],
                item["humanDecision"],item["legacyRecommendation"],
-               item["adaptiveRecommendation"])
-        rows.append("<tr>"+"".join("<td>"+escape(str(v or "unassessed"))+"</td>"
-                                    for v in cells)+"</tr>")
+               item["adaptiveRecommendation"],
+               item["adaptiveInvestigationScore"])
+        rows.append("<tr>"+"".join(
+            "<td>"+escape(str("unassessed" if v is None else v))+"</td>"
+            for v in cells)+"</tr>")
     html=(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -151,7 +155,8 @@ def save_judge_audit(workspace:Path,assignments:Path,*,model:str,output_dir:Path
         '<p>Both caches available: '+str(report["bothPolicyCachesAvailable"])+
         '; human-reviewed intervals: '+str(report["humanReviews"])+'.</p>'
         '<table><thead><tr><th>Video</th><th>Role</th><th>Context hint</th>'
-        '<th>Human</th><th>Legacy</th><th>Adaptive v2</th></tr></thead>'
+        '<th>Human</th><th>Legacy</th><th>Adaptive v2</th>'
+        '<th>Investigation score</th></tr></thead>'
         '<tbody>'+''.join(rows)+'</tbody></table></body></html>'
     )
     with (folder/"index.html").open("x",encoding="utf-8") as f:

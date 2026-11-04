@@ -525,7 +525,16 @@ def make_handler(workspace:Path,token:str,benchmark_file:Path|None=None,
                     a=benchmark["assignments"][rid]
                     if parsed.path=="/api/benchmark/local-judge" and not local_judge_model:
                         raise ValueError("Start Studio with --local-judge-model first")
-                    preview=generate_preview(workspace,streamer,a)
+                    cached_path,cached_manifest=preview_paths(
+                        workspace,a["assetId"],a["startMs"],a["endMs"])
+                    if _check_cached(cached_path,cached_manifest,
+                                     aid=a["assetId"],
+                                     start_ms=a["startMs"],end_ms=a["endMs"]):
+                        # Previously source-verified private derivative; no need
+                        # to rehash the original simply to rejudge its frames.
+                        preview={"path":str(cached_path),"status":"cached"}
+                    else:
+                        preview=generate_preview(workspace,streamer,a)
                     response={"status":"preview_ready","reviewId":rid,
                         "previewUrl":"/api/benchmark/preview-file/"+rid+
                                      "?token="+token,

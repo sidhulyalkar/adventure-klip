@@ -58,7 +58,9 @@ def _check_cached(path:Path,manifest:Path,*,aid:str,start_ms:int,end_ms:int):
         return False
     try:
         j=json.loads(manifest.read_text())
-        return (j.get("assetId")==aid and j.get("startMs")==start_ms and
+        return (j.get("version")==VERSION and
+                j.get("originalSha256Verified") is True and
+                j.get("assetId")==aid and j.get("startMs")==start_ms and
                 j.get("endMs")==end_ms and
                 j.get("previewSha256")==sha256(path.read_bytes()).hexdigest())
     except (OSError,ValueError,TypeError):

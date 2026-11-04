@@ -116,6 +116,8 @@
     const rationale=value.policyVersion?
       ' · '+(value.needsTemporalReview?'Needs temporal review':'Three-frame assessment')+
       (value.uncertaintyReason?' · uncertainty: '+value.uncertaintyReason:'')+
+      (Number.isFinite(value.investigationScore)?
+        ' · inspect priority '+value.investigationScore+'/100 (heuristic, not a probability)':'')+
       (axis?' · '+axis:'')+
       (value.policyOverrides?.length?' · conservative gate applied':'')
       :'';
@@ -277,17 +279,34 @@
       // Local AI suggestions are only preliminary *triage*. We prioritize
       // high-potential/uncertain clips, retain systematic controls, and keep
       // every AI-skipped interval accessible. Human-reviewed entries go last.
+      // Preserve *all* assignments, even when the model labels a
+      // systematic control "Skip". Every fourth unreviewed slot remains
+      // available to investigate what the selector may have missed.
+      const pending=data.assignments.filter(a=>!state.reviews[a.reviewId]);
+      const completed=data.assignments.filter(a=>state.reviews[a.reviewId]);
       const priority=a=>{
-        if(state.reviews[a.reviewId])return 5;
         const vote=state.previews[a.reviewId]?.suggestion?.recommendation;
-        if(vote==='keep')return 0;
-        if(vote==='unsure')return 1;
-        if(a.role==='control_systematic')return 2;
-        if(vote==='skip')return 4;
-        return 3;
+        return vote==='keep'?0:vote==='unsure'?1:vote==='skip'?3:2;
       };
-      state.assignments=[...data.assignments].sort((a,b)=>
-        priority(a)-priority(b));
+      const compare=(a,b)=>{
+        const category=priority(a)-priority(b);
+        if(category)return category;
+        const sa=state.previews[a.reviewId]?.suggestion?.investigationScore;
+        const sb=state.previews[b.reviewId]?.suggestion?.investigationScore;
+        if(Number.isFinite(sa)&&Number.isFinite(sb))return sb-sa;
+        if(Number.isFinite(sa))return -1;
+        if(Number.isFinite(sb))return 1;
+        return 0;
+      };
+      const controls=pending.filter(a=>a.role==='control_systematic').sort(compare);
+      const other=pending.filter(a=>a.role!=='control_systematic').sort(compare);
+      const queue=[];
+      while(other.length||controls.length){
+        if(queue.length%4===3 && controls.length)queue.push(controls.shift());
+        else if(other.length)queue.push(other.shift());
+        else queue.push(controls.shift());
+      }
+      state.assignments=[...queue,...completed];
       $('aiTriage').hidden=!data.localJudgeEnabled;
       renderCriteria();
       if(state.assignments.length){render();}
