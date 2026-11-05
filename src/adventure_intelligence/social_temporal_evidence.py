@@ -24,7 +24,7 @@ from .editorial_quality import raw_motion_for_asset
 from .media import require_tool, probe
 from .scene_atlas import frames_for_asset, unit_vector, similarity
 from .social_action_lens import (
-    USER_VERSION, FEATURE_VERSION, FEATURES, _json, _new_folder,
+    USER_VERSION, FEATURE_VERSION, FEATURES, SPORTS, _json, _new_folder,
 )
 from .studio_preview_judge import preview_paths, _check_cached
 
@@ -73,7 +73,6 @@ def summarize_gray_frames(raw:bytes,*,width:int=WIDTH,height:int=HEIGHT,
     bright=[]
     spatial_gradient=[]
     differences=[]
-    max_differences=[]
     previous=None
     for i in range(n):
         frame=memoryview(raw)[i*area:(i+1)*area]
@@ -95,7 +94,6 @@ def summarize_gray_frames(raw:bytes,*,width:int=WIDTH,height:int=HEIGHT,
         if previous is not None:
             step=sum(abs(a-b) for a,b in zip(frame,previous))/(area*255)
             differences.append(step)
-            max_differences.append(step)
         previous=bytes(frame)
     # One second is 4 frames. We report continuity of an *image-change cue*,
     # not verified continuous downhill, turning, or animal motion.
@@ -260,6 +258,8 @@ def _validate_candidate(doc:dict)->list[dict]:
         seen.add(key)
         if row.get("featureVersion")!=FEATURE_VERSION:
             raise ValueError("Candidate raw-rubric version mismatch")
+        if row.get("sport") not in SPORTS:
+            raise ValueError("Unrecognized candidate activity group")
         # This run never overwrites human annotation or marks any rubric
         # feature as observed.
         rows.append({"assetId":aid,"startMs":start,"endMs":end,
