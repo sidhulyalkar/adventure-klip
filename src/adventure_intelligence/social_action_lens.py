@@ -313,6 +313,8 @@ def _identity(asset:str,start:int,end:int)->str:
 
 
 def feature_template(study:dict,*,limit:int=300)->dict:
+    if type(limit) is not int or not 1<=limit<=300:
+        raise ValueError("Feature review limit must be 1..300")
     if study.get("version")!="archive-value-study-v1":
         raise ValueError("Expected an archive value study report")
     rows=study.get("rankedCandidates",[])
@@ -499,10 +501,12 @@ def save_training(workspace:Path,corpus:Path,output_dir:Path,*,seed:int=23)->dic
             "sourceVideosDownloaded":0,"privateVideoUploads":0}
 
 
-def save_feature_template(workspace:Path,study_file:Path,output_dir:Path)->dict:
+def save_feature_template(workspace:Path,study_file:Path,output_dir:Path,
+                          *,limit:int=300)->dict:
     root=Path(workspace).expanduser().resolve()
     dest=_new_folder(root,output_dir)
-    doc=feature_template(_json(Path(study_file).expanduser().resolve()))
+    doc=feature_template(_json(Path(study_file).expanduser().resolve()),
+                         limit=limit)
     outputs=_write_folder(dest,{"feature-template.json":doc})
     return {"status":"unassessed_feature_template",
             "template":outputs["feature-template.json"],
