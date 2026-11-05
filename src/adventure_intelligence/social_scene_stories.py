@@ -446,6 +446,13 @@ def _make_story_row(db,root:Path,row:dict,model:str,*,run:bool,transport=None)->
     frames,stamps=_samples(preview)
     if len(frames)!=len(SAMPLE_FRACTIONS) or len(stamps)!=len(SAMPLE_FRACTIONS):
         raise RuntimeError("Local preview did not yield expected ordered frames")
+    # FFmpeg samples the same derivative that was SHA-verified beforehand.
+    # Reject races where another process changes the proxy or receipt during
+    # that operation, rather than attaching a trustworthy-looking citation
+    # to JPEGs from potentially different bytes.
+    if (sha256(preview.read_bytes()).hexdigest()!=preview_sha or
+            not _check_cached(preview,receipt,aid=aid,start_ms=start,end_ms=end)):
+        raise RuntimeError("Verified preview changed during frame sampling")
     prompt=_prompt(context,metrics,auxiliary)
     payload={"model":model,"stream":False,"format":_story_schema(),
              "options":{"temperature":0,"num_predict":2100},
@@ -456,6 +463,9 @@ def _make_story_row(db,root:Path,row:dict,model:str,*,run:bool,transport=None)->
     except (ValueError,TypeError,KeyError) as exc:
         raise ValueError("Local scene judge returned invalid structured JSON") from exc
     story=validate_story(raw,sample_count=len(frames))
+    if (sha256(preview.read_bytes()).hexdigest()!=preview_sha or
+            not _check_cached(preview,receipt,aid=aid,start_ms=start,end_ms=end)):
+        raise RuntimeError("Verified preview changed during narrative inference")
     evidence=[{"frameIndex":i,"relativeTimeMs":int(stamps[i]),
                "sourceTimeMs":start+int(stamps[i])}
               for i in range(len(stamps))]
