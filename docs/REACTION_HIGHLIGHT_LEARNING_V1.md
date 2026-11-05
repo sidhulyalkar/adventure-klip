@@ -253,3 +253,35 @@ files and clear grants exist, construct a **separate** licensed training
 corpus with event-level provenance and human-verified annotations. Do not
 flip the reference catalog's \`modelTrainingAllowed\` field to bypass this
 restriction.
+
+
+## Relevant research baselines and public benchmark references
+
+These are useful **research benchmarks**, not blanket licenses to download
+or train on every video linked by an academic dataset:
+
+- [PHD² personalized highlights dataset](https://github.com/gifs/personalized-highlights-dataset):
+  user-associated highlight timestamps; supports the hypothesis that
+  what counts as significant is observer-dependent. Its public files
+  are metadata and do not independently authorize copying source videos.
+- [QVHighlights / Moment-DETR (NeurIPS 2021)](https://proceedings.neurips.cc/paper_files/paper/2021/hash/62e0973455fd26eb03e91d5741a4a3bb-Abstract.html):
+  query-specific moment relevance and five-level clip salience,
+  helpful for conditioning value on an explicit objective.
+- [HighlightMe (ICCV 2021)](https://openaccess.thecvf.com/content/ICCV2021/html/Bhattacharya_HighlightMe_Detecting_Highlights_From_Human-Centric_Videos_ICCV_2021_paper.html):
+  an observable multimodal action/interaction highlight baseline.
+- [SVHighlights (KDD 2026)](https://leedongkyu2019.github.io/SVHighlights/):
+  full-length sports broadcasts paired with edited highlights.
+  Relevant for stress-testing long-video search, but the eight sports
+  in the benchmark are not equivalent to DJI POV skiing, MTB and wildlife.
+- [YouTube Highlights / Domain-Specific Highlights](https://github.com/aliensunmin/DomainSpecificHighlight):
+  public benchmark reference for domains including skiing, skating and
+  surfing; independently verify dataset license and media access.
+
+Avoid dataset "leakage by link": footage appearing in several uploads,
+reactions, remixes or frame crops must share a source-family split and
+cannot appear on both training and held-out evaluation sides.
+
+Reaction training adds value beyond these benchmarks only if it improves
+verified **reason-specific** human preferences on unseen original actions.
+A more fluent explanation without better action grounding or held-out
+selection accuracy is not a meaningful advance.
