@@ -24,6 +24,75 @@ not thousands of meaningless embedding coordinates. It receives neither
 Klip scores nor the user's votes, and has **no access to external social
 engagement, earlier Keep/Skip data or neighboring clips**.
 
+
+## Missing temporal report: recovery before running stories
+
+If `social-lens-stories` says `temporal-evidence.json` is absent,
+the **local temporal analysis has not been written at that path**.
+It is *not* a missing social-media training corpus and does **not**
+require `social-lens-corpus-init`. The feature template, temporal
+evidence, and optional A/B pair manifest are different inputs.
+
+Inspect the exact personal workflow without opening videos:
+
+```bash
+export WS="$HOME/AdventureAI-clean.QJnopt"
+export STUDY="$WS/reports/archive-value-study-pilot-v1/study.json"
+export FEATURES="$WS/reports/social-rubric-balanced40-v1/feature-template.json"
+export TEMPORAL="$WS/reports/temporal-proxy40-v1/temporal-evidence.json"
+export PAIRS="$WS/reports/social-pairs12-v1/pairs.json"
+
+klip --workspace "$WS" social-lens-workflow-status \
+  --study "$STUDY" --features "$FEATURES" \
+  --temporal "$TEMPORAL" --pairs "$PAIRS"
+```
+
+The doctor reports each stage's `exists`, schema/version, matching
+source-template fingerprint and the exact next available commands.
+It reads JSON only and cannot create any files. It intentionally
+does **not** claim to have re-verified video media receipts.
+
+If `FEATURES` exists but `TEMPORAL` is missing, run:
+
+```bash
+klip --workspace "$WS" social-lens-temporal \
+  --features "$FEATURES" --limit 40 --run --prepare-previews \
+  --output-dir "$WS/reports/temporal-proxy40-recovery-v1"
+export TEMPORAL="$WS/reports/temporal-proxy40-recovery-v1/temporal-evidence.json"
+```
+
+Use a NEW output directory if the example name already exists.
+The opt-in `--prepare-previews` command checksum-verifies and reads
+originals locally if a cached private H.264 proxy is missing. No
+source is overwritten or uploaded.
+
+You may immediately run **unpaired scene stories** by omitting `--pairs`:
+
+```bash
+klip --workspace "$WS" social-lens-stories \
+  --features "$FEATURES" --temporal "$TEMPORAL" \
+  --model gemma3:4b --limit 6 --run \
+  --output-dir "$WS/reports/scene-stories-independent6-v1"
+```
+
+If you want the *post-vote* A/B counter-audit, first create a matching
+blind pair manifest from exactly the same frozen `STUDY`, `FEATURES`
+and `TEMPORAL`:
+
+```bash
+klip --workspace "$WS" social-lens-pair-review \
+  --study "$STUDY" --features "$FEATURES" \
+  --temporal "$TEMPORAL" --max-pairs 12 --seed 104 \
+  --output-dir "$WS/reports/social-pairs12-recovery-v1"
+
+export PAIRS="$WS/reports/social-pairs12-recovery-v1/pairs.json"
+```
+
+Complete the blind votes before exposing any narrative output.
+Pair-targeted story batches should use the new `PAIRS` path.
+Do not combine a `pairs.json` from one temporal run with a different
+`temporal-evidence.json`; their fingerprints must agree.
+
 ## Narrative output
 
 Each record includes:
