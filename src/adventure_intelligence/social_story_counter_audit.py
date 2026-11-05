@@ -9,7 +9,11 @@ from __future__ import annotations
 from hashlib import sha256
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 import json
+import os
+
+from .studio_preview_judge import preview_paths, _check_cached
 
 from .social_action_lens import _json, _new_folder
 from .social_blind_pairs import VERSION as PAIR_VERSION, evaluate_pair_reviews
@@ -177,16 +181,40 @@ def story_counter_audit(workspace:Path,pair_file:Path,reviews_file:Path,
     }
 
 
-def _report_html(report:dict)->str:
+def _verified_media_link(root:Path,pairs_dir:Path,output_dir:Path,
+                         side:dict)->str|None:
+    aid,start,end=(side[k] for k in ("assetId","startMs","endMs"))
+    cached,receipt=preview_paths(root,aid,start,end)
+    if not _check_cached(cached,receipt,aid=aid,start_ms=start,end_ms=end):
+        return None
+    # A previous blind-pair report made independent, checked derivative
+    # links/copies for playback, never original source clips.
+    media=(pairs_dir/"media"/cached.name).resolve()
+    if not media.is_relative_to(pairs_dir.resolve()/"media") or not media.is_file():
+        return None
+    if media.stat().st_size!=cached.stat().st_size:
+        return None
+    if sha256(media.read_bytes()).hexdigest()!=sha256(cached.read_bytes()).hexdigest():
+        return None
+    return quote(os.path.relpath(media,output_dir),safe="/.")
+
+
+def _report_html(report:dict,*,media_links:dict|None=None)->str:
+    media_links=media_links or {}
     blocks=[]
     for item in report["pairs"]:
         sides=[]
         for side in ("a","b"):
             entry=item[side]
+            url=media_links.get((item["pairId"],side))
+            player=(
+                '<video controls preload="none" playsinline src="'+
+                escape(url,quote=True)+'"></video>'
+                if url else "<p class='muted'>Verified local preview unavailable.</p>")
             sides.append(
                 "<article><h3>"+side.upper()+" · "+
                 _safe_text(entry["modelEvidenceStatus"])+
-                "</h3>"+_render_story(
+                "</h3>"+player+_render_story(
                     entry["sceneStory"],entry["frameEvidence"],
                     entry.get("observedSignals"),entry.get("auxiliaryHypotheses"))+
                 "</article>")
@@ -212,6 +240,8 @@ def _report_html(report:dict)->str:
         'article{background:#1a293c;border:1px solid #36485c;'
         'border-radius:12px;padding:14px;overflow-wrap:anywhere}'
         'pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}'
+        'video{width:100%;max-height:340px;background:#070c12;'
+        'border-radius:9px;object-fit:contain}'
         'li{margin-bottom:9px}p{overflow-wrap:anywhere}'
         '@media(max-width:750px){.columns{grid-template-columns:1fr}}'
         '</style></head><body><h1>Scene understanding · after human vote</h1>'
@@ -236,8 +266,15 @@ def save_counter_audit(workspace:Path,pair_file:Path,reviews_file:Path,
     with (destination/"counter-audit.json").open("x",encoding="utf-8") as f:
         json.dump(report,f,sort_keys=True,indent=2,allow_nan=False)
         f.write("\n")
+    links={}
+    for item in report["pairs"]:
+        for side in ("a","b"):
+            link=_verified_media_link(root,Path(pair_file).expanduser().resolve().parent,
+                                      destination,item[side])
+            if link is not None:
+                links[(item["pairId"],side)]=link
     with (destination/"index.html").open("x",encoding="utf-8") as f:
-        f.write(_report_html(report))
+        f.write(_report_html(report,media_links=links))
     return {
         "status":"post_vote_scene_counter_audit_written",
         "json":str(destination/"counter-audit.json"),
@@ -245,5 +282,6 @@ def save_counter_audit(workspace:Path,pair_file:Path,reviews_file:Path,
         "votedPairs":report["votedPairsInReport"],
         "availableStories":report["narrativesAvailable"],
         "missingStories":report["narrativesMissing"],
+        "verifiedPlayablePreviews":len(links),
         "reviewsModified":False,"externalUploads":0,
     }
