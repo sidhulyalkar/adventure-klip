@@ -150,6 +150,13 @@ klip --workspace "$WS" social-lens-story-counter-audit \
 open "$WS/reports/scene-counter-audit-v1/index.html"
 ```
 
+For later runs, collect additional `stories.json` files by
+advancing `--offset 6`, `--offset 12` and so on, then pass them
+to the counter-audit with repeatable
+`--additional-stories "$WS/reports/scene-stories-next6-v1/stories.json"`.
+Only matching input feature/temporal evidence and Ollama model names
+can be consolidated. Duplicate clips or mixed model versions are refused.
+
 Replace the downloaded filename with the actual one. The post-vote
 report places A and B narratives side by side with your recorded vote,
 Klip's higher-ranked side, timeline evidence, alternative interpretations,
