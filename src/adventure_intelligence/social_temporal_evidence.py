@@ -369,6 +369,17 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
     resumed_successes=0
     skipped_prior_errors=0
     skipped_interrupted=0
+    quarantined_source_candidates=0
+    # A blocked full-file read may affect every interval from that source.
+    # After restart, never silently open another uncached window from the
+    # same source, even when that window had no previous checkpoint.
+    quarantined_assets=set()
+    if checkpoint is not None and checkpoint.resumed and not retry_interrupted:
+        for prior_index,prior_candidate in enumerate(candidates):
+            prior=checkpoint.read(prior_index,prior_candidate)
+            if (prior is not None and prior["state"]=="in_progress"
+                    and prior.get("originalSourceReadAttempted",False)):
+                quarantined_assets.add(prior_candidate["assetId"])
     with closing(_open_catalog(root)) as db:
         for index,c in enumerate(candidates):
             previous=checkpoint.read(index,c) if checkpoint is not None else None
@@ -413,6 +424,20 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
             source_attempt=bool(run and prepare_previews and
                 not _check_cached(preview,receipt,aid=c["assetId"],
                                   start_ms=c["startMs"],end_ms=c["endMs"]))
+            if source_attempt and c["assetId"] in quarantined_assets:
+                errors.append({
+                    "assetId":c["assetId"],"startMs":c["startMs"],
+                    "endMs":c["endMs"],"status":"failed_not_classified",
+                    "errorType":"QuarantinedSourceAfterInterruption",
+                    "error":"Another interval from this source previously stalled. "
+                            "Skipped to avoid reopening removable media. "
+                            "Fix storage and use a new report, or explicitly "
+                            "resume with --retry-interrupted before completion.",
+                })
+                quarantined_source_candidates+=1
+                if log_progress:
+                    _progress(index,len(candidates),c,"quarantined source; safely skipped")
+                continue
             if source_attempt:
                 original_read_attempts+=1
             if log_progress:
@@ -464,6 +489,7 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
             "reusedSuccessfulCandidates":resumed_successes,
             "retainedPreviousFailures":skipped_prior_errors,
             "interruptedCandidatesSkipped":skipped_interrupted,
+            "quarantinedUncachedSourceCandidates":quarantined_source_candidates,
         },
         "sourceOriginalReads":original_reads,
         "sourceOriginalReadAttempts":original_read_attempts,
