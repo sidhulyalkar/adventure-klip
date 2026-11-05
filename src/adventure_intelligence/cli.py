@@ -50,6 +50,7 @@ from .judge_audit import compare_judge_policies, save_judge_audit
 from .archive_editorial_audit import audit_editorial_evidence, write_editorial_audit
 from .archive_value_study import save_value_study
 from .social_action_lens import save_training, save_feature_template, save_comparison
+from .social_corpus_onboarding import init_corpus, preflight_corpus
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -120,6 +121,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    social_init=sub.add_parser("social-lens-corpus-init",
+        help="Create an EMPTY permissioned external social-reference corpus, never fake examples")
+    social_init.add_argument("--output",type=Path,required=True,
+        help="NEW .json file under workspace reports/ or exports/")
+    social_preflight=sub.add_parser("social-lens-preflight",
+        help="Audit external corpus existence, rights, observation completeness and matched pairs")
+    social_preflight.add_argument("--corpus",type=Path,required=True,
+        help="Local permissioned external social-video training JSON, NOT a Klip feature template")
+    social_preflight.add_argument("--seed",type=int,default=23)
     social_train=sub.add_parser("social-lens-train",
         help="Train rights-gated local social action ranking head from permitted feature corpus")
     social_train.add_argument("--corpus",type=Path,required=True,
@@ -132,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     social_template.add_argument("--study",type=Path,required=True,
         help="Archive-value-study study.json report")
     social_template.add_argument("--output-dir",type=Path,required=True)
+    social_template.add_argument("--limit",type=int,default=300,
+        help="Number of raw Klip candidates to request review for (1..300); fewer for a first pilot")
     social_compare=sub.add_parser("social-lens-compare",
         help="Compare frozen social head and Klip scores on exact same reviewed feature-complete moments")
     social_compare.add_argument("--model",type=Path,required=True)
@@ -552,10 +564,15 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="social-lens-corpus-init":
+            _print(init_corpus(root,args.output))
+        elif args.command=="social-lens-preflight":
+            _print(preflight_corpus(args.corpus,seed=args.seed))
         elif args.command=="social-lens-train":
             _print(save_training(root,args.corpus,args.output_dir,seed=args.seed))
         elif args.command=="social-lens-feature-template":
-            _print(save_feature_template(root,args.study,args.output_dir))
+            _print(save_feature_template(root,args.study,args.output_dir,
+                limit=args.limit))
         elif args.command=="social-lens-compare":
             _print(save_comparison(root,args.model,args.study,args.features,
                 args.output_dir,top_k=args.top_k))

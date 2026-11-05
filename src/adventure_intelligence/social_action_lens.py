@@ -41,8 +41,14 @@ ENGAGEMENT_WEIGHTS={"shareCount":1.0,"saveCount":1.5,
 
 
 def _json(path:Path,limit:int=20_000_000)->dict:
-    if not path.is_file() or path.stat().st_size>limit:
-        raise ValueError("Input file missing or oversized")
+    if not path.is_file():
+        raise ValueError(
+            f"Input JSON does not exist: {path}. A Klip feature-template is "
+            "not an external training corpus. For the social corpus, run "
+            "'klip social-lens-corpus-init --output PATH', then add only real "
+            "rights-cleared creator reference examples.")
+    if path.stat().st_size>limit:
+        raise ValueError(f"Input JSON exceeds {limit} bytes: {path}")
     document=json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document,dict):
         raise ValueError("JSON document must be an object")
@@ -134,7 +140,10 @@ def load_training_corpus(path:Path)->list[dict]:
     if data.get("version")!=DATA_VERSION or not isinstance(data.get("items"),list):
         raise ValueError("Expected versioned and licensed social corpus")
     if not 6<=len(data["items"])<=MAX_ITEMS:
-        raise ValueError("Training requires 6..5000 fully reviewed records")
+        raise ValueError(
+            "Training needs 6..5000 fully reviewed, independently authorized "
+            "real social-video records. An initialized empty manifest is not "
+            "training data. Run social-lens-preflight first.")
     records=[_social_record(x) for x in data["items"]]
     ids=[r["clipId"] for r in records]
     if len(set(ids))!=len(ids):
@@ -238,6 +247,10 @@ def train_social_head(corpus:Path,*,seed:int=23)->dict:
     test=[r for r in records if r["creatorGroup"] in test_ids]
     train_pairs=make_pairs(train)
     test_pairs=make_pairs(test)
+    if not test_pairs:
+        raise ValueError(
+            "No matched pairs in held-out creator group; gather more real "
+            "creator videos before interpreting a trained preference head.")
     center,scale=_mean_scale(train)
     weights=_fit(train_pairs,scale,seed)
     uniform=[1/len(FEATURES)]*len(FEATURES)
@@ -299,7 +312,51 @@ def _identity(asset:str,start:int,end:int)->str:
     return f"{asset}:{start}:{end}"
 
 
+def _rank_spread_indices(length:int)->list[int]:
+    """Deterministically expose both high and low ranking strata, not only hits."""
+    if length<=0:
+        return []
+    result=[0]
+    if length>1:
+        result.append(length-1)
+    intervals=[(0,length-1)]
+    while intervals:
+        intervals.sort(key=lambda x:(-(x[1]-x[0]),x[0]))
+        a,b=intervals.pop(0)
+        mid=(a+b)//2
+        if mid in result or mid<=a or mid>=b:
+            continue
+        result.append(mid)
+        intervals.extend(((a,mid),(mid,b)))
+    return result
+
+
+def _stratified_personal_review(rows:list[dict],limit:int)->list[dict]:
+    """Small annotation budgets include every represented sport and rank tier."""
+    if len(rows)<=limit:
+        return rows
+    buckets=defaultdict(list)
+    for row in rows:
+        buckets[row["sport"]].append(row)
+    # Each sport contributes high, low, then mid-ranked examples. The audit
+    # still reports selected candidate coverage; no archive recall is inferred.
+    ordered={sport:[items[i] for i in _rank_spread_indices(len(items))]
+             for sport,items in buckets.items()}
+    output=[]
+    for _ in range(limit):
+        available=[sport for sport in ("ski","bike","snorkeling","other")
+                   if ordered.get(sport)]
+        if not available:
+            break
+        sport=min(available,key=lambda x:(sum(v["sport"]==x for v in output),
+                                            ("ski","bike","snorkeling","other").index(x)))
+        output.append(ordered[sport].pop(0))
+    return output
+
+
 def feature_template(study:dict,*,limit:int=300)->dict:
+    if type(limit) is not int or not 1<=limit<=300:
+        raise ValueError("Feature review limit must be 1..300")
     if study.get("version")!="archive-value-study-v1":
         raise ValueError("Expected an archive value study report")
     rows=study.get("rankedCandidates",[])
@@ -324,11 +381,13 @@ def feature_template(study:dict,*,limit:int=300)->dict:
                        "featureVersion":FEATURE_VERSION,
                        "featureMethod":"unassessed",
                        "features":{name:None for name in FEATURES}})
-        if len(output)>=limit:
-            break
+    selected=_stratified_personal_review(output,limit)
     return {"version":USER_VERSION,"source":"archive-value-study-v1",
-            "featureVersion":FEATURE_VERSION,"items":output,
-            "note":"Nulls are UNKNOWN, not bad. Review or qualify a common extractor before ranking."}
+            "featureVersion":FEATURE_VERSION,"items":selected,
+            "samplingPolicy":("sport_and_rank_tier_spread"
+                              if len(output)>limit else "all_available_candidates"),
+            "studyCandidateCount":len(output),
+            "note":"Nulls are UNKNOWN, not bad. For smaller pilots sample across sport and ranking tiers. Observe or qualify a common extractor before scoring."}
 
 
 def _user_features(document:dict)->dict[str,dict]:
@@ -465,6 +524,15 @@ def _write_folder(destination:Path,documents:dict)->dict:
 
 
 def save_training(workspace:Path,corpus:Path,output_dir:Path,*,seed:int=23)->dict:
+    # Separate preflight from actual fitting so a missing corpus never creates
+    # a model directory or ambiguous "model failed" message.
+    from .social_corpus_onboarding import preflight_corpus
+    check=preflight_corpus(corpus,seed=seed)
+    if not check["trainingReady"]:
+        raise ValueError(
+            f"Social Lens cannot train: {check['status']}. "
+            f"{check['nextAction']} "
+            "Run 'klip social-lens-preflight --corpus PATH' for a full audit.")
     root=Path(workspace).expanduser().resolve()
     dest=_new_folder(root,output_dir)
     model=train_social_head(Path(corpus).expanduser().resolve(),seed=seed)
@@ -477,10 +545,12 @@ def save_training(workspace:Path,corpus:Path,output_dir:Path,*,seed:int=23)->dic
             "sourceVideosDownloaded":0,"privateVideoUploads":0}
 
 
-def save_feature_template(workspace:Path,study_file:Path,output_dir:Path)->dict:
+def save_feature_template(workspace:Path,study_file:Path,output_dir:Path,
+                          *,limit:int=300)->dict:
     root=Path(workspace).expanduser().resolve()
     dest=_new_folder(root,output_dir)
-    doc=feature_template(_json(Path(study_file).expanduser().resolve()))
+    doc=feature_template(_json(Path(study_file).expanduser().resolve()),
+                         limit=limit)
     outputs=_write_folder(dest,{"feature-template.json":doc})
     return {"status":"unassessed_feature_template",
             "template":outputs["feature-template.json"],
