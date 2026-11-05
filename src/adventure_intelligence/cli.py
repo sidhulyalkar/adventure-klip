@@ -49,6 +49,7 @@ from .archive_temporal_look import inspect_temporal_candidates
 from .judge_audit import compare_judge_policies, save_judge_audit
 from .archive_editorial_audit import audit_editorial_evidence, write_editorial_audit
 from .archive_value_study import save_value_study
+from .social_action_lens import save_training, save_feature_template, save_comparison
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -119,6 +120,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    social_train=sub.add_parser("social-lens-train",
+        help="Train rights-gated local social action ranking head from permitted feature corpus")
+    social_train.add_argument("--corpus",type=Path,required=True,
+        help="Local JSON with documented creator/license permission and observed features")
+    social_train.add_argument("--output-dir",type=Path,required=True,
+        help="NEW local reports/ or exports/ folder")
+    social_train.add_argument("--seed",type=int,default=23)
+    social_template=sub.add_parser("social-lens-feature-template",
+        help="Make a null-only common-rubric feature template for Klip candidates")
+    social_template.add_argument("--study",type=Path,required=True,
+        help="Archive-value-study study.json report")
+    social_template.add_argument("--output-dir",type=Path,required=True)
+    social_compare=sub.add_parser("social-lens-compare",
+        help="Compare frozen social head and Klip scores on exact same reviewed feature-complete moments")
+    social_compare.add_argument("--model",type=Path,required=True)
+    social_compare.add_argument("--study",type=Path,required=True)
+    social_compare.add_argument("--features",type=Path,required=True)
+    social_compare.add_argument("--output-dir",type=Path,required=True)
+    social_compare.add_argument("--top-k",type=int,default=20)
     value_study=sub.add_parser("archive-value-study",
         help="Create a cache-only archive-wide candidate and blinded-control human study")
     value_study.add_argument("--output-dir",required=True,type=Path,
@@ -532,6 +552,13 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="social-lens-train":
+            _print(save_training(root,args.corpus,args.output_dir,seed=args.seed))
+        elif args.command=="social-lens-feature-template":
+            _print(save_feature_template(root,args.study,args.output_dir))
+        elif args.command=="social-lens-compare":
+            _print(save_comparison(root,args.model,args.study,args.features,
+                args.output_dir,top_k=args.top_k))
         elif args.command=="archive-value-study":
             _print(save_value_study(root,args.output_dir,seed=args.seed,
                 max_assets=args.max_assets,review_limit=args.review_limit,
