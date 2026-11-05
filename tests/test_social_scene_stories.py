@@ -308,6 +308,49 @@ def test_bounded_story_batches_advance_and_do_not_repeat(tmp_path,monkeypatch):
         narrative.analyze_scene_stories(root,features,temporal,offset=-1)
 
 
+def test_combine_story_batches_only_when_same_model_and_evidence(tmp_path,monkeypatch):
+    root,features,temporal,study=dataset(tmp_path,num=4)
+    _,transport=fake_inference(monkeypatch)
+    pair_info=pairs.write_pair_study(
+        root,study,features,temporal,root/"reports"/"pair-batch",max_pairs=2)
+    frozen=json.loads(Path(pair_info["manifest"]).read_text())
+    # Use frozen pair order, so both batch windows cover a real 2-pair study.
+    file_one=root/"reports"/"story-batch-one.json"
+    file_two=root/"reports"/"story-batch-two.json"
+    a=narrative.analyze_scene_stories(root,features,temporal,
+        pairs_file=Path(pair_info["manifest"]),offset=0,
+        limit=2,run=True,transport=transport)
+    b=narrative.analyze_scene_stories(root,features,temporal,
+        pairs_file=Path(pair_info["manifest"]),offset=2,
+        limit=2,run=True,transport=transport)
+    file_one.write_text(json.dumps(a))
+    file_two.write_text(json.dumps(b))
+    exported=root/"reports"/"finished-votes.json"
+    exported.write_text(json.dumps({
+        "version":pairs.REVIEW_VERSION,
+        "manifestSha256":pair_info["manifestSha256"],
+        "reviews":[{"pairId":row["pairId"],"choice":"b",
+                    "reasons":[],"notes":""} for row in frozen["pairs"]],
+    }))
+    result=audit.story_counter_audit(
+        root,Path(pair_info["manifest"]),exported,file_one,
+        additional_stories=(file_two,))
+    assert result["votedPairsInReport"]==len(frozen["pairs"])
+    assert result["narrativesAvailable"]==4
+    assert len(result["storySourcesSha256"])==2
+    with pytest.raises(ValueError,match="Duplicate"):
+        audit.story_counter_audit(
+            root,Path(pair_info["manifest"]),exported,file_one,
+            additional_stories=(file_one,))
+    invalid=json.loads(file_two.read_text())
+    invalid["model"]="some-different-model"
+    file_two.write_text(json.dumps(invalid))
+    with pytest.raises(ValueError,match="different input evidence"):
+        audit.story_counter_audit(
+            root,Path(pair_info["manifest"]),exported,file_one,
+            additional_stories=(file_two,))
+
+
 def test_invalid_model_and_output_paths_do_not_train_or_write(tmp_path):
     root,features,temporal,_=dataset(tmp_path,num=3)
     with pytest.raises(ValueError,match="local"):
