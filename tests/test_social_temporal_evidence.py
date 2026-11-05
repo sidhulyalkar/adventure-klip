@@ -77,6 +77,7 @@ def test_plan_and_run_without_previews_do_not_open_originals(tmp_path,monkeypatc
     assert plan["mode"]=="cached_evidence_plan"
     assert plan["statusCounts"]=={"missing_verified_preview":1}
     assert plan["sourceOriginalReads"]==0
+    assert plan["sourceOriginalReadAttempts"]==0
     assert plan["humanRubricFeaturesAutoFilled"]==0
     execution=temporal.analyze_temporal_evidence(ws,template,limit=1,run=True)
     assert execution["statusCounts"]=={"missing_verified_preview":1}
@@ -112,6 +113,7 @@ def test_cached_verified_preview_is_analyzed_without_original_read(tmp_path,monk
     assert recorded==[preview]
     assert result["candidates"][0]["visualTemporal"]["frameCount"]==8
     assert result["sourceOriginalReads"]==0
+    assert result["sourceOriginalReadAttempts"]==0
     assert result["generatedVerifiedPreviews"]==0
     assert result["humanRubricFeaturesAutoFilled"]==0
     assert sha256(source.read_bytes()).hexdigest()==original_hash
@@ -226,6 +228,7 @@ def test_opt_in_prepares_verified_preview_from_synthetic_video_only(tmp_path):
     assert result["statusCounts"]=={"temporal_visual_metrics_observed":1}
     assert result["generatedVerifiedPreviews"]==1
     assert result["sourceOriginalReads"]==1
+    assert result["sourceOriginalReadAttempts"]==1
     assert result["humanRubricFeaturesAutoFilled"]==0
     visual=result["candidates"][0]["visualTemporal"]
     assert 5<=visual["frameCount"]<=24
@@ -235,4 +238,37 @@ def test_opt_in_prepares_verified_preview_from_synthetic_video_only(tmp_path):
     again=temporal.analyze_temporal_evidence(ws,feature_file,limit=1,run=True)
     assert again["failed"]==0
     assert again["sourceOriginalReads"]==0
+    assert again["sourceOriginalReadAttempts"]==0
     assert again["generatedVerifiedPreviews"]==0
+
+
+def test_offline_report_displays_only_checksum_verified_local_video(tmp_path,monkeypatch):
+    ws,source,aid,feature_file=_workspace(tmp_path)
+    preview,receipt=preview_paths(ws,aid,1000,21000)
+    preview.parent.mkdir(parents=True,exist_ok=True)
+    original=b"not an actual mp4 but receipt verified preview cache"
+    preview.write_bytes(original*4)
+    receipt.write_text(json.dumps({
+        "version":"studio-preview-local-judge-v1",
+        "assetId":aid,"startMs":1000,"endMs":21000,
+        "previewSha256":sha256(preview.read_bytes()).hexdigest(),
+        "originalSha256Verified":True,
+    }))
+    monkeypatch.setattr(temporal,"decode_proxy_frames",
+                        lambda path:temporal.summarize_gray_frames(
+                            fake_frames(width=32,height=20,count=8),
+                            width=32,height=20))
+    target=ws/"reports"/"with-local-playback"
+    saved=temporal.save_temporal_evidence(ws,feature_file,target,run=True)
+    html=Path(saved["html"]).read_text()
+    assert "Play verified interval" in html
+    assert "controls preload=" in html
+    assert "../studio-preview-cache-v1/" in html
+    assert "http://" not in html and "https://" not in html
+    assert str(source) not in html
+    assert "No calibrated" not in html
+    preview.write_bytes(b"tampered preview"*8)
+    no_video=temporal.save_temporal_evidence(
+        ws,feature_file,ws/"reports"/"without-local-playback",run=False)
+    blocked_html=Path(no_video["html"]).read_text()
+    assert "Play verified interval" not in blocked_html
