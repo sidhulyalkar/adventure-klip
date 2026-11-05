@@ -8,6 +8,8 @@ An interrupted item is NOT retried automatically (a removable drive may hang).
 from __future__ import annotations
 
 from hashlib import sha256
+from contextlib import contextmanager
+import fcntl
 from pathlib import Path
 import json
 import os
@@ -84,6 +86,22 @@ class TemporalCheckpoint:
             self.rows.mkdir(mode=0o700)
             _atomic_json(self.dest / "checkpoint.json", self.meta)
 
+    @contextmanager
+    def exclusive(self):
+        """Refuse simultaneous writers to the same unfinished report."""
+        lock = self.dest / "checkpoint.lock"
+        with lock.open("a+") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError(
+                    "This temporal checkpoint is already being processed by another Klip run"
+                ) from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
     def _path(self, index: int, candidate: dict) -> Path:
         key = _digest_json(_identity(candidate))[:16]
         return self.rows / f"{index:04d}-{key}.json"
@@ -111,7 +129,10 @@ class TemporalCheckpoint:
             if (not isinstance(row, dict)
                     or any(row.get(k) != candidate[k] for k in
                            ("assetId", "startMs", "endMs", "sport"))
-                    or type(row.get("previewVerified")) is not bool):
+                    or type(row.get("previewVerified")) is not bool
+                    or (row.get("previewVerified") is True and
+                        (type(record.get("previewSha256")) is not str or
+                         len(record["previewSha256"]) != 64))):
                 raise ValueError(f"Checkpoint {index} completed row is malformed")
         if record["state"] == "failure" and not isinstance(record.get("result"), dict):
             raise ValueError(f"Checkpoint {index} error row is malformed")
@@ -126,7 +147,13 @@ class TemporalCheckpoint:
         valid = _check_cached(path, receipt, aid=candidate["assetId"],
                               start_ms=candidate["startMs"],
                               end_ms=candidate["endMs"])
-        return valid == row["previewVerified"]
+        if valid != row["previewVerified"]:
+            return False
+        if not valid:
+            return True
+        # Re-check actual video identity, not only that *some* valid receipt
+        # exists. A replaced video + updated receipt must invalidate metrics.
+        return sha256(path.read_bytes()).hexdigest() == record["previewSha256"]
 
     def store(self, index: int, candidate: dict, state: str, result=None,
               *, original_attempt: bool = False) -> None:
@@ -143,4 +170,11 @@ class TemporalCheckpoint:
         }
         if result is not None:
             payload["result"] = result
+        if state == "success" and result["previewVerified"]:
+            preview, receipt = preview_paths(
+                self.root, candidate["assetId"], candidate["startMs"], candidate["endMs"])
+            if not _check_cached(preview, receipt, aid=candidate["assetId"],
+                                 start_ms=candidate["startMs"], end_ms=candidate["endMs"]):
+                raise RuntimeError("Preview changed during temporal inference; result not checkpointed")
+            payload["previewSha256"] = sha256(preview.read_bytes()).hexdigest()
         _atomic_json(self._path(index, candidate), payload)
