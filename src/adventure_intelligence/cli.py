@@ -49,6 +49,7 @@ from .archive_temporal_look import inspect_temporal_candidates
 from .judge_audit import compare_judge_policies, save_judge_audit
 from .archive_editorial_audit import audit_editorial_evidence, write_editorial_audit
 from .archive_value_study import save_value_study
+from .archive_discovery_coverage import save_discovery_coverage
 from .social_action_lens import save_training, save_feature_template, save_comparison
 from .social_corpus_onboarding import init_corpus, preflight_corpus
 from .social_temporal_evidence import save_temporal_evidence
@@ -234,6 +235,16 @@ def main(argv: list[str] | None = None) -> int:
     social_compare.add_argument("--features",type=Path,required=True)
     social_compare.add_argument("--output-dir",type=Path,required=True)
     social_compare.add_argument("--top-k",type=int,default=20)
+    discovery_audit=sub.add_parser("archive-discovery-audit",
+        help="Read-only catalog+frozen-study coverage audit; no SD-card access, no video decoding")
+    discovery_audit.add_argument("--study",required=True,type=Path,
+        help="Frozen archive value study JSON")
+    discovery_audit.add_argument("--features",required=True,type=Path,
+        help="Frozen personal feature-template JSON from that study")
+    discovery_audit.add_argument("--source-budget",type=int,default=32,
+        help="Number of unrepresented source identities to plan for exploration (1..200)")
+    discovery_audit.add_argument("--output-dir",required=True,type=Path,
+        help="NEW reports/ or exports/ directory for coverage.json and source-plan.json")
     value_study=sub.add_parser("archive-value-study",
         help="Create a cache-only archive-wide candidate and blinded-control human study")
     value_study.add_argument("--output-dir",required=True,type=Path,
@@ -682,6 +693,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="social-lens-compare":
             _print(save_comparison(root,args.model,args.study,args.features,
                 args.output_dir,top_k=args.top_k))
+        elif args.command=="archive-discovery-audit":
+            _print(save_discovery_coverage(root,args.study,args.features,
+                args.output_dir,source_budget=args.source_budget))
         elif args.command=="archive-value-study":
             _print(save_value_study(root,args.output_dir,seed=args.seed,
                 max_assets=args.max_assets,review_limit=args.review_limit,
