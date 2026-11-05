@@ -431,3 +431,98 @@ def test_invalid_model_and_output_paths_do_not_train_or_write(tmp_path):
     temporal.write_text(json.dumps(tampered))
     with pytest.raises(ValueError,match="matching"):
         narrative.analyze_scene_stories(root,features,temporal,run=False)
+
+
+def test_workflow_doctor_missing_temporal_explains_actual_dependency(tmp_path):
+    from adventure_intelligence.social_workflow_status import inspect_story_workflow
+    root,features,temporal,study=dataset(tmp_path,num=4)
+    temporal.unlink()
+    missing_pairs=root/"reports"/"absent-pairs"/"pairs.json"
+    watched=features.read_bytes()
+    report=inspect_story_workflow(root,features,temporal,pairs_file=missing_pairs,
+                                  study_file=study)
+    assert report["workflow"]=="personal_video_evidence_not_external_social_reference_training"
+    assert report["stage"]=="generate_matching_temporal_evidence"
+    assert report["features"]["status"]=="present"
+    assert report["temporal"]["status"]=="missing"
+    assert report["pairs"]["status"]=="missing"
+    assert report["readyForUnpairedStories"] is False
+    assert report["readyForPairTargetedStories"] is False
+    assert report["originalSourceVideoReads"]==report["videoFramesDecoded"]==0
+    assert report["ollamaCalls"]==report["externalUploads"]==0
+    assert report["filesWritten"]==0
+    commands="\n".join(report["suggestedCommands"])
+    assert "social-lens-temporal" in commands
+    assert "--prepare-previews" in commands
+    assert str(features) in commands
+    assert "social-lens-corpus-init" not in commands
+    assert features.read_bytes()==watched
+    assert not missing_pairs.exists()
+    assert not any(root.glob("reports/temporal-proxy40-recovery*"))
+
+
+def test_workflow_doctor_unpaired_ready_and_missing_pairs_not_required(tmp_path):
+    from adventure_intelligence.social_workflow_status import inspect_story_workflow
+    root,features,temporal,study=dataset(tmp_path,num=4)
+    status=inspect_story_workflow(root,features,temporal,
+                                  study_file=study)
+    assert status["stage"]=="ready_for_local_scene_story_pilot"
+    assert status["readyForUnpairedStories"] is True
+    assert status["readyForPairTargetedStories"] is False
+    assert status["counts"]["measuredWithVerifiedPreviewAtReportTime"]==4
+    assert status["pairs"]["status"]=="optional_not_requested"
+    commands="\n".join(status["suggestedCommands"])
+    assert "social-lens-stories" in commands
+    assert "--pairs" not in commands
+    missing=root/"reports"/"not-yet-paired"/"pairs.json"
+    status=inspect_story_workflow(root,features,temporal,pairs_file=missing,
+                                  study_file=study)
+    assert status["stage"]=="create_matching_blind_pairs_or_omit_pairs"
+    assert status["readyForUnpairedStories"] is True
+    assert status["pairs"]["status"]=="missing"
+    cmds="\n".join(status["suggestedCommands"])
+    assert "social-lens-pair-review" in cmds
+    assert "social-lens-stories" in cmds
+
+
+def test_workflow_doctor_pair_provenance_and_temporal_mismatch(tmp_path):
+    from adventure_intelligence.social_workflow_status import inspect_story_workflow
+    root,features,temporal,study=dataset(tmp_path,num=4)
+    destination=root/"reports"/"doctor-pairs"
+    saved=pairs.write_pair_study(root,study,features,temporal,destination,
+                                max_pairs=2)
+    assert saved["pairs"]>0
+    manifest=Path(saved["manifest"])
+    report=inspect_story_workflow(root,features,temporal,pairs_file=manifest,
+                                  study_file=study)
+    assert report["readyForPairTargetedStories"] is True
+    assert report["readyForUnpairedStories"] is True
+    assert report["counts"]["blindPairs"]==saved["pairs"]
+    commands="\n".join(report["suggestedCommands"])
+    assert "--pairs" in commands and "social-lens-stories" in commands
+    doc=json.loads(temporal.read_text())
+    doc["sourceTemplateSha256"]="f"*64
+    temporal.write_text(json.dumps(doc))
+    bad=inspect_story_workflow(root,features,temporal,pairs_file=manifest,
+                               study_file=study)
+    assert bad["temporal"]["status"]=="feature_template_fingerprint_mismatch"
+    assert bad["stage"]=="generate_matching_temporal_evidence"
+    assert bad["readyForUnpairedStories"] is False
+    assert bad["readyForPairTargetedStories"] is False
+
+
+def test_story_errors_explain_missing_temporal_and_optional_pairs(tmp_path):
+    root,features,temporal,study=dataset(tmp_path,num=3)
+    missing=temporal.with_name("no-temporal-evidence.json")
+    with pytest.raises(ValueError,match="Temporal evidence missing") as err:
+        narrative.analyze_scene_stories(root,features,missing)
+    assert "social-lens-temporal" in str(err.value)
+    assert "Do NOT run social-lens-corpus-init" in str(err.value)
+    missing_pairs=root/"reports"/"no-pairs"/"pairs.json"
+    with pytest.raises(ValueError,match="Blind pair manifest missing") as err:
+        narrative.analyze_scene_stories(root,features,temporal,
+                                        pairs_file=missing_pairs)
+    assert "omit --pairs" in str(err.value)
+    with pytest.raises(ValueError,match="Personal feature template missing"):
+        narrative.analyze_scene_stories(root,
+             features.with_name("no-feature-template.json"),temporal)
