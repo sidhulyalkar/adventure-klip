@@ -13,7 +13,9 @@ from hashlib import sha256
 from html import escape
 from pathlib import Path
 from statistics import median
+from urllib.parse import quote
 import json
+import os
 import math
 import subprocess
 
@@ -332,9 +334,18 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
     successes=[]
     errors=[]
     original_reads=0
+    original_read_attempts=0
     fresh_previews=0
     with closing(_open_catalog(root)) as db:
         for c in candidates:
+            if run and prepare_previews:
+                preview,receipt=preview_paths(root,c["assetId"],
+                                               c["startMs"],c["endMs"])
+                if not _check_cached(preview,receipt,aid=c["assetId"],
+                                     start_ms=c["startMs"],end_ms=c["endMs"]):
+                    # Count a potential original read before preview creation,
+                    # including failures during source identity verification.
+                    original_read_attempts+=1
             try:
                 entry=_analysis_row(db,root,c,run=run,
                                     prepare_previews=prepare_previews,
@@ -361,6 +372,7 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
         "requested":len(candidates),"reported":len(successes),
         "failed":len(errors),"statusCounts":dict(sorted(by_status.items())),
         "sourceOriginalReads":original_reads,
+        "sourceOriginalReadAttempts":original_read_attempts,
         "generatedVerifiedPreviews":fresh_previews,
         "ffmpegVideoDecodeRequests":(sum(x["status"]==
             "temporal_visual_metrics_observed" for x in successes) if run else 0),
@@ -380,7 +392,7 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
     }
 
 
-def render_html(report:dict)->str:
+def render_html(report:dict,*,root:Path,dest:Path)->str:
     rows=[]
     for item in report["candidates"]:
         visual=item.get("visualTemporal") or {}
@@ -395,12 +407,26 @@ def render_html(report:dict)->str:
             motion.get("audioRmsMedian"),
             semantic.get("samples"),semantic.get("medianAdjacentCosineSimilarity"),
         )
+        playback="Unavailable; no verified H.264 preview"
+        if item["previewVerified"]:
+            cached,_=preview_paths(root,item["assetId"],
+                                    item["startMs"],item["endMs"])
+            # Render only a derived workspace-local media URL. This isn't
+            # a trusted server endpoint; browsers can restrict file:// video.
+            relative=os.path.relpath(cached,dest)
+            if cached.is_relative_to(root/"reports"/"studio-preview-cache-v1"):
+                playback=(
+                    '<details><summary>Play verified interval</summary>'
+                    '<video controls preload="none" playsinline width="280" '
+                    'src="'+escape(quote(relative,safe="/."),quote=True)+'">'
+                    'Your browser cannot play this local preview.</video>'
+                    '</details>')
         rows.append("<tr>"+"".join(
             "<td>"+escape("unknown" if value is None else str(value))+"</td>"
-            for value in cells)+"</tr>")
+            for value in cells)+"<td>"+playback+"</td></tr>")
     heads=("Sport","Asset SHA","Window","Coverage","Decoded frames",
            "Proxy change","Median luma","Motion cache","Audio RMS",
-           "Semantic samples","Adjacent similarity")
+           "Semantic samples","Adjacent similarity","Playback")
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -416,7 +442,10 @@ def render_html(report:dict)->str:
         'or completed human rubric entries. Missing evidence remains unknown.</p>'
         '<p>Analyzed '+str(report["requested"])+' windows · '+
         str(report["failed"])+' failures · '+
-        str(report["sourceOriginalReads"])+' newly read original sources</p>'
+        str(report["sourceOriginalReadAttempts"])+' attempted source reads · '+
+        str(report["sourceOriginalReads"])+' successfully completed source reads</p>'
+        '<p>Video links use local verified derivatives only. If a browser '
+        'restricts local file playback, use Klip Studio instead.</p>'
         '<table><thead><tr>'+
         "".join("<th>"+escape(x)+"</th>" for x in heads)+
         "</tr></thead><tbody>"+"".join(rows)+"</tbody></table></body></html>"
@@ -435,7 +464,7 @@ def save_temporal_evidence(workspace:Path,feature_file:Path,output_dir:Path,*,
         json.dump(report,f,indent=2,sort_keys=True,allow_nan=False)
         f.write("\n")
     with (dest/"index.html").open("x",encoding="utf-8") as f:
-        f.write(render_html(report))
+        f.write(render_html(report,root=root,dest=dest))
     return {"status":"temporal_evidence_report_created",
             "json":str(dest/"temporal-evidence.json"),
             "html":str(dest/"index.html"),
@@ -445,6 +474,7 @@ def save_temporal_evidence(workspace:Path,feature_file:Path,output_dir:Path,*,
                 "temporal_visual_metrics_observed",0),
             "failed":report["failed"],
             "sourceOriginalReads":report["sourceOriginalReads"],
+            "sourceOriginalReadAttempts":report["sourceOriginalReadAttempts"],
             "generatedVerifiedPreviews":report["generatedVerifiedPreviews"],
             "humanRubricFeaturesAutoFilled":0,"externalUploads":0,
             "originalSourcesModified":False}
