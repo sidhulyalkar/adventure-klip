@@ -268,6 +268,9 @@ def test_targeted_blind_pairs_and_post_vote_reveal_only(tmp_path,monkeypatch):
     assert "<user hypothesis>" not in html
     assert "What is not established" in html
     assert "Frame-grounded chronology" in html
+    assert "Inspect input evidence and provenance" in html
+    assert "measuredSignals" in html
+    assert "unverifiedSemanticHypotheses" in html
     output=audit.save_counter_audit(
         root,Path(pair_result["manifest"]),review_file,stories_file,
         root/"reports"/"post-vote-audit")
