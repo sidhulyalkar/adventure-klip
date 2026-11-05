@@ -51,6 +51,7 @@ from .archive_editorial_audit import audit_editorial_evidence, write_editorial_a
 from .archive_value_study import save_value_study
 from .social_action_lens import save_training, save_feature_template, save_comparison
 from .social_corpus_onboarding import init_corpus, preflight_corpus
+from .reaction_reference_catalog import audit_reaction_references
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -204,6 +205,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Opt in to local FFmpeg decoding of existing verified H264 previews")
     social_temporal.add_argument("--prepare-previews",action="store_true",
         help="With --run only, checksum-verify and read original video to create absent H264 previews")
+    reaction_refs=sub.add_parser("reaction-reference-audit",
+        help="Validate a PUBLIC REFERENCE-ONLY action reaction URL catalog; no media, transcripts or training")
+    reaction_refs.add_argument("--catalog",required=True,type=Path,
+        help="Local JSON of manually scouted links, not a licensed training corpus")
     social_init=sub.add_parser("social-lens-corpus-init",
         help="Create an EMPTY permissioned external social-reference corpus, never fake examples")
     social_init.add_argument("--output",type=Path,required=True,
@@ -670,6 +675,8 @@ def main(argv: list[str] | None = None) -> int:
                 prepare_previews=args.prepare_previews,
                 resume=args.resume,retry_interrupted=args.retry_interrupted,
                 retry_failures=args.retry_failures))
+        elif args.command=="reaction-reference-audit":
+            _print(audit_reaction_references(args.catalog))
         elif args.command=="social-lens-corpus-init":
             _print(init_corpus(root,args.output))
         elif args.command=="social-lens-preflight":
