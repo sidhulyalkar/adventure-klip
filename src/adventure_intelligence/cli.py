@@ -52,6 +52,7 @@ from .archive_value_study import save_value_study
 from .social_action_lens import save_training, save_feature_template, save_comparison
 from .social_corpus_onboarding import init_corpus, preflight_corpus
 from .reaction_reference_catalog import audit_reaction_references
+from .highlight_curation_validate import audit_highlight_curation_manifest
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -205,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Opt in to local FFmpeg decoding of existing verified H264 previews")
     social_temporal.add_argument("--prepare-previews",action="store_true",
         help="With --run only, checksum-verify and read original video to create absent H264 previews")
+    curation=sub.add_parser("highlight-curation-preflight",
+        help="Validate source/outing splits and evidence/rights declarations in an annotation manifest, no video access")
+    curation.add_argument("--manifest",type=Path,required=True,
+        help="Versioned JSON manifest of locally curated annotation records")
     reaction_refs=sub.add_parser("reaction-reference-audit",
         help="Validate a PUBLIC REFERENCE-ONLY action reaction URL catalog; no media, transcripts or training")
     reaction_refs.add_argument("--catalog",required=True,type=Path,
@@ -675,6 +680,8 @@ def main(argv: list[str] | None = None) -> int:
                 prepare_previews=args.prepare_previews,
                 resume=args.resume,retry_interrupted=args.retry_interrupted,
                 retry_failures=args.retry_failures))
+        elif args.command=="highlight-curation-preflight":
+            _print(audit_highlight_curation_manifest(args.manifest))
         elif args.command=="reaction-reference-audit":
             _print(audit_reaction_references(args.catalog))
         elif args.command=="social-lens-corpus-init":
