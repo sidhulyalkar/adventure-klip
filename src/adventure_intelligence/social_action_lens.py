@@ -12,6 +12,7 @@ from contextlib import closing
 from datetime import date
 from hashlib import sha256
 from pathlib import Path
+from html import escape
 import json
 import math
 import random
@@ -387,10 +388,18 @@ def compare_to_klip(model:dict,study:dict,candidate_features:dict,
         if (type(klip_score) not in (float,int) or
                 not math.isfinite(klip_score) or not 0<=klip_score<=1):
             continue
+        observed=shared[key]["features"]
+        contributions=[
+            {"feature":name,"contribution":round(
+                model["weights"][i]*(observed[name]-model["featureMean"][i])
+                /model["featureScale"][i],6)}
+            for i,name in enumerate(FEATURES)]
+        contributions.sort(key=lambda x:(-abs(x["contribution"]),x["feature"]))
         rows.append({"clipId":key,"assetId":aid,"sport":sport,
                      "startMs":start,"endMs":end,
                      "klipHeuristicScore":round(float(klip_score),6),
-                     "socialLensScore":_score(shared[key]["features"],model)})
+                     "socialLensScore":_score(observed,model),
+                     "topSocialFeatureContributions":contributions[:4]})
     per_sport={}
     for sport in sorted(SPORTS):
         group=[r for r in rows if r["sport"]==sport]
@@ -416,6 +425,8 @@ def compare_to_klip(model:dict,study:dict,candidate_features:dict,
         "version":"social-action-lens-comparison-v1",
         "modelVersion":VERSION,"featureVersion":FEATURE_VERSION,
         "sourceStudyVersion":"archive-value-study-v1",
+        "socialHeadFeatureWeights":[{"feature":name,"weight":model["weights"][i]}
+                                    for i,name in enumerate(FEATURES)],
         "studyRankedCandidateCount":total,
         "featureCompleteComparableCount":len(rows),
         "featureMissingOrUnmatched":max(0,total-len(rows)),
@@ -477,6 +488,53 @@ def save_feature_template(workspace:Path,study_file:Path,output_dir:Path)->dict:
             "observedFeatures":0,"modelInferenceCalls":0}
 
 
+def render_social_comparison_html(report:dict)->str:
+    """Small, self-contained report without embedded media or external scripts."""
+    sections=[]
+    for sport,summary in sorted(report["bySport"].items()):
+        lines=[]
+        data={r["clipId"]:r for r in report["rows"]}
+        for ident in summary["socialLensTop"]:
+            row=data[ident]
+            top=", ".join(x["feature"] for x in
+                          row["topSocialFeatureContributions"][:2])
+            lines.append("<tr><td>"+escape(ident[:12])+"</td><td>"+
+                         escape(f'{row["startMs"]/1000:.1f}–'
+                                f'{row["endMs"]/1000:.1f}s')+
+                         "</td><td>"+escape(str(row["klipHeuristicScore"]))+
+                         "</td><td>"+escape(str(row["socialLensScore"]))+
+                         "</td><td>"+escape(top)+"</td></tr>")
+        sections.append(
+            "<section><h2>"+escape(sport.title())+"</h2><p>"+
+            f'{summary["comparableClips"]} matched candidates · '+
+            f'top-{summary["topK"]} overlap '+
+            f'{summary["topKOverlap"]}/{summary["topK"]}.'+
+            "</p><table><thead><tr><th>Asset SHA prefix</th>"
+            "<th>Review interval</th><th>Klip heuristic</th>"
+            "<th>Social margin</th><th>Largest score contributors</th>"
+            "</tr></thead><tbody>"+ "".join(lines)+"</tbody></table></section>")
+    if not sections:
+        sections.append("<p>No comparable feature-complete clips. "
+                        "Null inputs are not filled with guessed quality.</p>")
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Klip · Social Lens comparison</title><style>'
+        'body{background:#0f1723;color:#e8edf2;font:14px system-ui;'
+        'max-width:1150px;margin:32px auto;padding:0 18px;line-height:1.6}'
+        'h1{font-size:1.7rem}h2{color:#efb4a2;font-size:1.18rem}'
+        'p{color:#b9c9d5}table{width:100%;border-collapse:collapse}'
+        'td,th{text-align:left;padding:10px;border-bottom:1px solid #314256}'
+        'table{margin-bottom:30px;overflow-wrap:anywhere}</style></head><body>'
+        '<h1>Social Lens vs Klip · same candidate windows</h1><p>'
+        'Social margin is NOT a predicted view count. Klip is uncalibrated. '
+        'Ranking disagreement is a human-review hypothesis, not a winner. '
+        'Only clips with independently observed common-rubric features are compared. '
+        'All footage stays local and originals are unchanged.</p>'
+        +''.join(sections)+'</body></html>'
+    )
+
+
 def save_comparison(workspace:Path,model_file:Path,study_file:Path,
                     features_file:Path,output_dir:Path,*,top_k:int=20)->dict:
     root=Path(workspace).expanduser().resolve()
@@ -487,8 +545,11 @@ def save_comparison(workspace:Path,model_file:Path,study_file:Path,
         _json(Path(features_file).expanduser().resolve()),
         top_k=top_k)
     outputs=_write_folder(dest,{"comparison.json":result})
+    with (dest/"index.html").open("x",encoding="utf-8") as handle:
+        handle.write(render_social_comparison_html(result))
     return {"status":"paired_ranking_disagreement_audit",
             "report":outputs["comparison.json"],
+            "html":str(dest/"index.html"),
             "compared":result["featureCompleteComparableCount"],
             "bySport":{k:{"comparableClips":v["comparableClips"],
                           "topKOverlap":v["topKOverlap"],
