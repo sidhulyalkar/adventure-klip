@@ -433,6 +433,7 @@ def _make_story_row(db,root:Path,row:dict,model:str,*,run:bool,transport=None)->
                 "modelRequests":0,
                 "sampleTimesMs":raw["sampleTimesMs"],
                 "frameEvidence":raw["frameEvidence"],
+                "observedSignals":metrics,"auxiliaryHypotheses":auxiliary,
                 "promptFingerprint":key,"previewSha256":preview_sha}
     if not run:
         return {"assetId":aid,"startMs":start,"endMs":end,"sport":context,
@@ -470,6 +471,7 @@ def _make_story_row(db,root:Path,row:dict,model:str,*,run:bool,transport=None)->
             "status":"new_provisional_story","story":story,
             "modelRequests":1,
             "sampleTimesMs":list(stamps),"frameEvidence":evidence,
+            "observedSignals":metrics,"auxiliaryHypotheses":auxiliary,
             "promptFingerprint":key,"previewSha256":preview_sha}
 
 
