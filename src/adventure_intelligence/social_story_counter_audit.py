@@ -9,9 +9,7 @@ from __future__ import annotations
 from hashlib import sha256
 from html import escape
 from pathlib import Path
-from urllib.parse import quote
 import json
-import os
 
 from .social_action_lens import _json, _new_folder
 from .social_blind_pairs import VERSION as PAIR_VERSION, evaluate_pair_reviews
