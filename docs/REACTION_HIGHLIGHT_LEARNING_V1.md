@@ -232,3 +232,24 @@ separate from measured visual evidence and human outcomes.
 - [Video Third-Party Trainability API](https://developers.google.com/youtube/data/video-trainability)
 
 This is a research and technical design, not legal clearance advice.
+
+
+## Run the public scouting catalog audit locally
+
+In the Adventure-Klip repository checkout:
+
+    klip reaction-reference-audit \
+      --catalog research/reaction-highlight-reference-v1.json
+
+This command only reads the reference JSON and returns nine scouted URLs,
+counts by sport/perspective, and **zero training-eligible examples**. It
+does not load media, captions, API engagement data, audio or personal
+information. The command intentionally rejects attempts to change any
+reference URL into an apparently approved training item.
+
+The catalog is a seed for **human observation and permission outreach**,
+not the source of any training split. Once actual permissioned source
+files and clear grants exist, construct a **separate** licensed training
+corpus with event-level provenance and human-verified annotations. Do not
+flip the reference catalog's \`modelTrainingAllowed\` field to bypass this
+restriction.
