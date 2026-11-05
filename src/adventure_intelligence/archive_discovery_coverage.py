@@ -12,10 +12,11 @@ from hashlib import sha256
 from pathlib import Path
 import json
 import math
+import os
 
 from .archive_pilot import _open_catalog, _table
 from .archive_value_study import _valid_asset
-from .social_action_lens import _json, USER_VERSION, FEATURE_VERSION, _new_folder
+from .social_action_lens import _json, USER_VERSION, FEATURE_VERSION
 
 VERSION="archive-discovery-coverage-audit-v1"
 GROUPS=("ski","bike","snorkeling","unresolved")
@@ -242,11 +243,13 @@ def inspect_discovery_coverage(workspace:Path,study_file:Path,features_file:Path
             "sourceMediaModified":False,"humanReviewsModified":False,
             "sourceAccessibilityCheckedNow":False,
             "semanticArtifactsReverifiedNow":False,
+            "sourcePathSymlinksTraversed":False,
         },
         "limitations":[
             "A catalog semantic-job completed status is NOT a reverified model artifact.",
             "Unrepresented means absent from frozen ranked candidates, NOT absence of events.",
             "Catalog metadata cannot establish that removable source media is currently accessible.",
+            "Source-media paths are only lexically checked for report output safety: symlink aliases are not traversed. Workspace reports/exports should remain on a separate local disk.",
             "The original study's accessible count involved source-path checks; this audit deliberately does not repeat them.",
             "The plan is for source-level exploration, not a best-clip ranking or approved scene labels.",
             "Activity unresolved/other is not proof of no skiing, biking, or snorkeling.",
@@ -257,10 +260,34 @@ def inspect_discovery_coverage(workspace:Path,study_file:Path,features_file:Path
     return report
 
 
+def _safe_report_destination(root:Path,output_dir:Path)->Path:
+    """Validate against catalog source paths WITHOUT resolving removable media.
+
+    The report output itself is resolved (workspace-local); registered source
+    paths are only lexically compared, never stat()'d, opened, or resolved.
+    """
+    dest=Path(output_dir).expanduser().resolve()
+    if (dest==root or not dest.is_relative_to(root) or dest.exists()
+            or dest.relative_to(root).parts[0] not in ("reports","exports")):
+        raise ValueError("Output must be a NEW workspace reports/ or exports/ directory")
+    with closing(_open_catalog(root)) as db:
+        source_paths=[r[0] for r in db.execute("SELECT stored_path FROM assets")]
+        if _table(db,"imports"):
+            source_paths += [r[0] for r in db.execute("SELECT original_path FROM imports")]
+    for raw in source_paths:
+        if type(raw) is not str or not os.path.isabs(raw):
+            raise ValueError("Cannot safely place output with nonabsolute recorded media path")
+        # os.path.normpath does not access the SD card or resolve symlinks.
+        source=Path(os.path.normpath(raw))
+        if dest==source or dest.is_relative_to(source.parent):
+            raise ValueError("Refusing to write a report inside an indexed media directory")
+    return dest
+
+
 def save_discovery_coverage(workspace:Path,study_file:Path,features_file:Path,
                             output_dir:Path,*,source_budget:int=32)->dict:
     root=Path(workspace).expanduser().resolve()
-    dest=_new_folder(root,output_dir)
+    dest=_safe_report_destination(root,output_dir)
     report=inspect_discovery_coverage(root,study_file,features_file,
                                       source_budget=source_budget)
     dest.mkdir(mode=0o700,parents=True,exist_ok=False)
