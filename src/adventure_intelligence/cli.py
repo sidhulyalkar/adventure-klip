@@ -54,6 +54,7 @@ from .social_corpus_onboarding import init_corpus, preflight_corpus
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
+from .social_workflow_status import inspect_story_workflow
 from .social_story_counter_audit import save_counter_audit
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
@@ -125,6 +126,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    social_doctor=sub.add_parser("social-lens-workflow-status",
+        help="Read-only diagnosis of personal feature, temporal and blind pair artifacts; no models or media")
+    social_doctor.add_argument("--features",type=Path,required=True,
+        help="Expected personal feature-template.json")
+    social_doctor.add_argument("--temporal",type=Path,required=True,
+        help="Expected temporal-evidence.json")
+    social_doctor.add_argument("--pairs",type=Path,
+        help="Optional exact pairs.json for pair-targeted scene story evaluation")
+    social_doctor.add_argument("--study",type=Path,
+        help="Optional archive-value-study study.json for exact next-step command guidance")
     social_stories=sub.add_parser("social-lens-stories",
         help="Independently reconstruct local scene narratives from verified stills and temporal caches")
     social_stories.add_argument("--features",type=Path,required=True,
@@ -630,6 +641,9 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="social-lens-workflow-status":
+            _print(inspect_story_workflow(root,args.features,args.temporal,
+                pairs_file=args.pairs,study_file=args.study))
         elif args.command=="social-lens-stories":
             _print(save_scene_stories(root,args.features,args.temporal,args.output_dir,
                 model=args.model,limit=args.limit,offset=args.offset,
