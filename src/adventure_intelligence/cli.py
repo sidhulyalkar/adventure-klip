@@ -51,6 +51,7 @@ from .archive_editorial_audit import audit_editorial_evidence, write_editorial_a
 from .archive_value_study import save_value_study
 from .social_action_lens import save_training, save_feature_template, save_comparison
 from .social_corpus_onboarding import init_corpus, preflight_corpus
+from .social_temporal_evidence import save_temporal_evidence
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -121,6 +122,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    social_temporal=sub.add_parser("social-lens-temporal",
+        help="Plan or run bounded raw-video temporal measurements from verified Studio H264 previews")
+    social_temporal.add_argument("--features",type=Path,required=True,
+        help="Existing social-lens-feature-template file, NOT external social video corpus")
+    social_temporal.add_argument("--output-dir",type=Path,required=True,
+        help="NEW reports/ or exports/ directory")
+    social_temporal.add_argument("--limit",type=int,default=40,
+        help="Maximum inspected candidate intervals (1..300)")
+    social_temporal.add_argument("--run",action="store_true",
+        help="Opt in to local FFmpeg decoding of existing verified H264 previews")
+    social_temporal.add_argument("--prepare-previews",action="store_true",
+        help="With --run only, checksum-verify and read original video to create absent H264 previews")
     social_init=sub.add_parser("social-lens-corpus-init",
         help="Create an EMPTY permissioned external social-reference corpus, never fake examples")
     social_init.add_argument("--output",type=Path,required=True,
@@ -564,6 +577,10 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="social-lens-temporal":
+            _print(save_temporal_evidence(root,args.features,args.output_dir,
+                limit=args.limit,run=args.run,
+                prepare_previews=args.prepare_previews))
         elif args.command=="social-lens-corpus-init":
             _print(init_corpus(root,args.output))
         elif args.command=="social-lens-preflight":
