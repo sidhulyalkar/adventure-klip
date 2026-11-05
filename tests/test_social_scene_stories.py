@@ -276,6 +276,8 @@ def test_targeted_blind_pairs_and_post_vote_reveal_only(tmp_path,monkeypatch):
         root/"reports"/"post-vote-audit")
     assert Path(output["html"]).is_file()
     assert output["votedPairs"]==1
+    assert output["verifiedPlayablePreviews"]==2
+    assert 'controls preload="none"' in Path(output["html"]).read_text()
     assert output["reviewsModified"] is False
     review_bad=json.loads(review_file.read_text())
     review_bad["manifestSha256"]="0"*64
@@ -306,6 +308,23 @@ def test_bounded_story_batches_advance_and_do_not_repeat(tmp_path,monkeypatch):
     assert empty["countRequested"]==0
     with pytest.raises(ValueError,match="offset"):
         narrative.analyze_scene_stories(root,features,temporal,offset=-1)
+
+
+def test_post_vote_refuses_modified_report_media(tmp_path,monkeypatch):
+    root,features,temporal,study=dataset(tmp_path,num=4)
+    pair_info=pairs.write_pair_study(
+        root,study,features,temporal,root/"reports"/"pairs-tamper",max_pairs=2)
+    manifest=json.loads(Path(pair_info["manifest"]).read_text())
+    first=manifest["pairs"][0]
+    clip=first["a"]
+    original,_=preview_paths(
+        root,clip["assetId"],clip["startMs"],clip["endMs"])
+    derived=Path(pair_info["manifest"]).parent/"media"/original.name
+    derived.unlink()
+    derived.write_bytes(b"tampered local derivative")
+    assert audit._verified_media_link(
+        root,Path(pair_info["manifest"]).parent,
+        root/"reports"/"new-audit",clip) is None
 
 
 def test_combine_story_batches_only_when_same_model_and_evidence(tmp_path,monkeypatch):
