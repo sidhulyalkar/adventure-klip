@@ -1,0 +1,738 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sidhulyalkar/adventure-klip/blob/spec/highlight-dataset-curation-v1/research/highlight-curation-record-v1.schema.json",
+  "title": "Klip source-verified, multi-perspective action-highlight annotation",
+  "description": "DESIGN CONTRACT ONLY. Passing JSON Schema validation is not training rights verification. Public YouTube research references are not examples of this licensed corpus.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "recordId",
+    "source",
+    "event",
+    "filming",
+    "sportContext",
+    "observerJudgments",
+    "reactions",
+    "rights",
+    "split",
+    "evidenceStatus"
+  ],
+  "properties": {
+    "version": {
+      "const": "klip-highlight-curation-record-v1"
+    },
+    "recordId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assetSha256",
+        "sourceFamilyId",
+        "outingGroupId",
+        "cameraView",
+        "rawOrEdited",
+        "sourceDurationMs"
+      ],
+      "properties": {
+        "assetSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sourceFamilyId": {
+          "type": "string",
+          "minLength": 8
+        },
+        "outingGroupId": {
+          "type": "string",
+          "minLength": 8
+        },
+        "athleteGroupId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cameraView": {
+          "enum": [
+            "helmet_pov",
+            "chest_pov",
+            "action_camera_other",
+            "third_person",
+            "broadcast",
+            "unknown"
+          ]
+        },
+        "rawOrEdited": {
+          "enum": [
+            "raw",
+            "edited",
+            "unknown"
+          ]
+        },
+        "sourceDurationMs": {
+          "type": "integer",
+          "minimum": 1000
+        },
+        "resolution": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frameRate": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "cameraSensorNotes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "linkedVersionGroupId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startMs",
+        "endMs",
+        "eventClass",
+        "observedOutcome",
+        "phases",
+        "peakMs",
+        "outcomeVisible"
+      ],
+      "properties": {
+        "startMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "peakMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "eventClass": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "observedOutcome": {
+          "enum": [
+            "completed",
+            "failed",
+            "partial",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "outcomeVisible": {
+          "enum": [
+            "yes",
+            "no",
+            "ambiguous"
+          ]
+        },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "phase",
+              "startMs",
+              "endMs",
+              "visibility",
+              "evidenceKind"
+            ],
+            "properties": {
+              "phase": {
+                "enum": [
+                  "context",
+                  "preparation",
+                  "initiation",
+                  "action_peak",
+                  "resolution",
+                  "aftermath"
+                ]
+              },
+              "startMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "endMs": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "visibility": {
+                "enum": [
+                  "visible",
+                  "partially_visible",
+                  "not_visible",
+                  "ambiguous"
+                ]
+              },
+              "evidenceKind": {
+                "enum": [
+                  "human_direct_observation",
+                  "human_interpretation",
+                  "automated_hypothesis",
+                  "unknown"
+                ]
+              },
+              "annotatorId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 300
+              }
+            }
+          }
+        },
+        "observationCaveats": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          }
+        },
+        "measuredSpeedMps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "speedMeasurementMethod": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        }
+      }
+    },
+    "sportContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sport",
+        "executionEvidenceStatus"
+      ],
+      "properties": {
+        "sport": {
+          "enum": [
+            "ski",
+            "snowboard",
+            "mountain_bike",
+            "skateboard",
+            "longboard",
+            "surf",
+            "soccer",
+            "snorkeling",
+            "other",
+            "unknown"
+          ]
+        },
+        "subdiscipline": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "terrainOrEnvironment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actionDifficultyHumanOrdinal": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 5
+        },
+        "executionEvidenceStatus": {
+          "enum": [
+            "human_verified",
+            "human_interpretation",
+            "model_hypothesis",
+            "unknown"
+          ]
+        },
+        "expertRationale": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "sportSpecificTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 30
+        }
+      }
+    },
+    "filming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "technicalQuality",
+        "aestheticQuality",
+        "eventReadability",
+        "cameraMotionInterpretation"
+      ],
+      "properties": {
+        "technicalQuality": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 5
+        },
+        "aestheticQuality": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 5
+        },
+        "eventReadability": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 5
+        },
+        "cameraMotionInterpretation": {
+          "enum": [
+            "intentional",
+            "detrimental",
+            "mixed",
+            "not_assessed"
+          ]
+        },
+        "focalEventVisible": {
+          "enum": [
+            "yes",
+            "no",
+            "partial",
+            "unknown"
+          ]
+        },
+        "shotCompositionNotes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "editingNotes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "technicalReviewStatus": {
+          "enum": [
+            "human_verified",
+            "model_hypothesis",
+            "not_assessed"
+          ]
+        }
+      }
+    },
+    "observerJudgments": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "annotatorId",
+          "role",
+          "highlightGoal",
+          "blindActionOnly",
+          "preference",
+          "rationale",
+          "reviewStatus"
+        ],
+        "properties": {
+          "annotatorId": {
+            "type": "string",
+            "minLength": 4
+          },
+          "role": {
+            "enum": [
+              "athlete",
+              "expert_coach",
+              "casual_spectator",
+              "filmmaker",
+              "editor",
+              "nature_specialist",
+              "safety_reviewer",
+              "participant",
+              "other"
+            ]
+          },
+          "highlightGoal": {
+            "enum": [
+              "athletic_skill",
+              "story_payoff",
+              "visual_quality",
+              "humor",
+              "personal_memory",
+              "nature_encounter",
+              "technical_documentation",
+              "other"
+            ]
+          },
+          "blindActionOnly": {
+            "type": "boolean"
+          },
+          "preference": {
+            "enum": [
+              "keep",
+              "skip",
+              "tie",
+              "neither",
+              "cannot_tell",
+              "not_assessed"
+            ]
+          },
+          "rationale": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "reviewStatus": {
+            "enum": [
+              "human_verified",
+              "model_hypothesis",
+              "unverified"
+            ]
+          },
+          "reviewedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "reactions": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reactionId",
+          "observerId",
+          "reactionStartMs",
+          "reactionEndMs",
+          "sourceStartMs",
+          "sourceEndMs",
+          "mappingStatus",
+          "evidenceSupport",
+          "statement"
+        ],
+        "properties": {
+          "reactionId": {
+            "type": "string",
+            "minLength": 4
+          },
+          "observerId": {
+            "type": "string",
+            "minLength": 4
+          },
+          "reactionStartMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reactionEndMs": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceStartMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "sourceEndMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "mappingStatus": {
+            "enum": [
+              "human_verified",
+              "unverified",
+              "replay_ambiguous",
+              "unknown"
+            ]
+          },
+          "evidenceSupport": {
+            "enum": [
+              "visible_grounding",
+              "interpretation",
+              "contradicted",
+              "unknown"
+            ]
+          },
+          "statement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "observerRole": {
+            "type": "string"
+          },
+          "retimingOrReplay": {
+            "enum": [
+              "continuous",
+              "paused",
+              "replay",
+              "cut",
+              "unknown"
+            ]
+          }
+        }
+      }
+    },
+    "rights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rightsStatus",
+        "sourceAccessAuthorized",
+        "sourceTrainingAuthorized",
+        "embeddedMediaTrainingAuthorized",
+        "audioTrainingAuthorized",
+        "speakerVoiceConsent",
+        "sourcePermissionRecordId",
+        "revocationState"
+      ],
+      "properties": {
+        "rightsStatus": {
+          "enum": [
+            "research_reference_only",
+            "pending",
+            "approved_for_training",
+            "revoked"
+          ]
+        },
+        "sourceAccessAuthorized": {
+          "type": "boolean"
+        },
+        "sourceTrainingAuthorized": {
+          "type": "boolean"
+        },
+        "embeddedMediaTrainingAuthorized": {
+          "type": "boolean"
+        },
+        "audioTrainingAuthorized": {
+          "type": "boolean"
+        },
+        "speakerVoiceConsent": {
+          "type": "boolean"
+        },
+        "sourcePermissionRecordId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "trainingScope": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "revocationState": {
+          "enum": [
+            "active",
+            "revoked",
+            "unknown"
+          ]
+        },
+        "reviewedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "partition",
+        "sourceFamilyId",
+        "outingGroupId",
+        "frozenSplitVersion"
+      ],
+      "properties": {
+        "partition": {
+          "enum": [
+            "unassigned",
+            "train",
+            "validation",
+            "test"
+          ]
+        },
+        "sourceFamilyId": {
+          "type": "string",
+          "minLength": 8
+        },
+        "outingGroupId": {
+          "type": "string",
+          "minLength": 8
+        },
+        "frozenSplitVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "evidenceStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceSha256Reverified",
+        "humanEventAnnotationFrozen",
+        "humanRatingsFrozen",
+        "modelHypothesesStoredSeparately"
+      ],
+      "properties": {
+        "sourceSha256Reverified": {
+          "type": "boolean"
+        },
+        "humanEventAnnotationFrozen": {
+          "type": "boolean"
+        },
+        "humanRatingsFrozen": {
+          "type": "boolean"
+        },
+        "modelHypothesesStoredSeparately": {
+          "type": "boolean"
+        },
+        "dataCollectionProtocolVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "rights": {
+            "properties": {
+              "rightsStatus": {
+                "const": "approved_for_training"
+              }
+            },
+            "required": [
+              "rightsStatus"
+            ]
+          }
+        },
+        "required": [
+          "rights"
+        ]
+      },
+      "then": {
+        "properties": {
+          "rights": {
+            "properties": {
+              "sourceAccessAuthorized": {
+                "const": true
+              },
+              "sourceTrainingAuthorized": {
+                "const": true
+              },
+              "embeddedMediaTrainingAuthorized": {
+                "const": true
+              },
+              "audioTrainingAuthorized": {
+                "const": true
+              },
+              "speakerVoiceConsent": {
+                "const": true
+              },
+              "revocationState": {
+                "const": "active"
+              },
+              "sourcePermissionRecordId": {
+                "type": "string",
+                "minLength": 8
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
