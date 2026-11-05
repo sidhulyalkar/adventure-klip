@@ -228,6 +228,28 @@ def test_preview_tampering_and_missing_local_video_abstain(tmp_path,monkeypatch)
     assert r["originalVideoReads"]==0
 
 
+def test_preview_changed_during_sampling_abstains_without_model_call(tmp_path,monkeypatch):
+    root,features,temporal,_=dataset(tmp_path,num=2)
+    base,_receipt=preview_paths(root,f"{1:064x}",1000,21000)
+    model_requests=[]
+    def change_preview(path):
+        if path==base:
+            base.write_bytes(base.read_bytes()+b"changed-after-verification")
+        return (["b64_frame"]*7,[1400,4000,6800,10000,13200,16000,18600])
+    monkeypatch.setattr(narrative,"_samples",change_preview)
+    def should_not_call(body):
+        model_requests.append(body)
+        return {"message":{"content":json.dumps(story_payload())}}
+    result=narrative.analyze_scene_stories(
+        root,features,temporal,limit=2,run=True,transport=should_not_call)
+    assert result["countFailed"]==1
+    assert result["failures"][0]["errorType"]=="RuntimeError"
+    assert "changed during frame sampling" in result["failures"][0]["reason"]
+    assert result["modelRequests"]==1
+    assert len(model_requests)==1
+    assert result["originalVideoReads"]==0
+
+
 def test_targeted_blind_pairs_and_post_vote_reveal_only(tmp_path,monkeypatch):
     root,features,temporal,study=dataset(tmp_path,num=4)
     pair_dest=root/"reports"/"pairs"
