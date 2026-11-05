@@ -149,7 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     social_story_audit.add_argument("--reviews",type=Path,required=True,
         help="Previously exported A/B preference review JSON")
     social_story_audit.add_argument("--stories",type=Path,required=True,
-        help="Narrative stories.json from local inference")
+        help="First narrative stories.json from local inference")
+    social_story_audit.add_argument("--additional-stories",type=Path,action="append",
+        default=[],help="Additional matching stories.json batches; repeat for each new offset")
     social_story_audit.add_argument("--output-dir",type=Path,required=True)
     social_pairs=sub.add_parser("social-lens-pair-review",
         help="Build a locally playable, score-blinded A/B choice study from measured verified candidates")
@@ -634,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
                 run=args.run,pairs_file=args.pairs))
         elif args.command=="social-lens-story-counter-audit":
             _print(save_counter_audit(root,args.pairs,args.reviews,args.stories,
-                args.output_dir))
+                args.output_dir,additional_stories=tuple(args.additional_stories)))
         elif args.command=="social-lens-pair-review":
             _print(write_pair_study(root,args.study,args.features,
                 args.temporal,args.output_dir,max_pairs=args.max_pairs,
