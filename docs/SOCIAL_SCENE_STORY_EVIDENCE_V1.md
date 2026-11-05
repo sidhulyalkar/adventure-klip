@@ -160,7 +160,11 @@ can be consolidated. Duplicate clips or mixed model versions are refused.
 Replace the downloaded filename with the actual one. The post-vote
 report places A and B narratives side by side with your recorded vote,
 Klip's higher-ranked side, timeline evidence, alternative interpretations,
-and human verification questions. It never relabels the source clips
+and human verification questions. Each side also offers a playable
+previously checksum-verified short H.264 derivative from the local paired-review
+folder, making it possible to check the story against the clip. If the
+media derivative is missing or altered, playback is omitted instead of
+trusting an arbitrary file. It never relabels the source clips
 or reranks them automatically.
 
 ## Large-scale design, not a premature accuracy claim
