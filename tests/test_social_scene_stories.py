@@ -285,6 +285,29 @@ def test_targeted_blind_pairs_and_post_vote_reveal_only(tmp_path,monkeypatch):
             root,Path(pair_result["manifest"]),review_file,stories_file)
 
 
+def test_bounded_story_batches_advance_and_do_not_repeat(tmp_path,monkeypatch):
+    root,features,temporal,_=dataset(tmp_path,num=4)
+    _,transport=fake_inference(monkeypatch)
+    first=narrative.analyze_scene_stories(
+        root,features,temporal,limit=2,offset=0,run=True,transport=transport)
+    later=narrative.analyze_scene_stories(
+        root,features,temporal,limit=2,offset=2,run=True,transport=transport)
+    assert first["countSucceeded"]==2
+    assert later["countSucceeded"]==2
+    assert first["inputProvenance"]["totalEligibleForBatching"]==4
+    assert set(x["assetId"] for x in first["stories"]).isdisjoint(
+        x["assetId"] for x in later["stories"])
+    again=narrative.analyze_scene_stories(
+        root,features,temporal,limit=2,offset=0,run=True,transport=transport)
+    assert again["cachedStoryCount"]==2
+    assert again["modelRequests"]==0
+    empty=narrative.analyze_scene_stories(
+        root,features,temporal,limit=2,offset=4,run=False)
+    assert empty["countRequested"]==0
+    with pytest.raises(ValueError,match="offset"):
+        narrative.analyze_scene_stories(root,features,temporal,offset=-1)
+
+
 def test_invalid_model_and_output_paths_do_not_train_or_write(tmp_path):
     root,features,temporal,_=dataset(tmp_path,num=3)
     with pytest.raises(ValueError,match="local"):
