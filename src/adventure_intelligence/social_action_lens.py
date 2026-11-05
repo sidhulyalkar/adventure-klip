@@ -318,7 +318,8 @@ def feature_template(study:dict,*,limit:int=300)->dict:
             continue
         seen.add(ident)
         output.append({"assetId":aid,"startMs":start,"endMs":end,
-                       "sport":item.get("activityGroup"),
+                       "sport":("other" if item.get("activityGroup")=="unresolved"
+                                else item.get("activityGroup")),
                        "featureVersion":FEATURE_VERSION,
                        "featureMethod":"unassessed",
                        "features":{name:None for name in FEATURES}})
