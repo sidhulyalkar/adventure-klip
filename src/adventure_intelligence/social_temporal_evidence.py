@@ -18,6 +18,9 @@ import json
 import os
 import math
 import subprocess
+import sys
+
+from .social_temporal_checkpoint import TemporalCheckpoint, _atomic_json
 
 from .acoustics import AUDIO_VERSION
 from .archive_pilot import _open_catalog
@@ -313,8 +316,34 @@ def _analysis_row(db,root:Path,candidate:dict,*,run:bool,
     return evidence
 
 
+class _SourceReadProgress:
+    """Throttled, honest byte throughput reports for full original hashing."""
+    def __init__(self):
+        self._last = {}
+
+    def bytes(self, phase, done, total, filename):
+        key = (phase, filename)
+        previous = self._last.get(key, 0)
+        if done == total or done - previous >= 256 * 1024 * 1024:
+            self._last[key] = done
+            print(f"[temporal] source SHA-256 {filename}: "
+                  f"{done / (1024 ** 3):.2f}/{total / (1024 ** 3):.2f} GiB",
+                  file=sys.stderr, flush=True)
+
+
+def _progress(index:int,total:int,candidate:dict,event:str)->None:
+    print(f"[temporal] {index + 1}/{total} "
+          f"{candidate['sport']} {candidate['assetId'][:12]} "
+          f"{candidate['startMs']}..{candidate['endMs']}ms {event}",
+          file=sys.stderr, flush=True)
+
+
 def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
-                              run:bool=False,prepare_previews:bool=False)->dict:
+                              run:bool=False,prepare_previews:bool=False,
+                              checkpoint:TemporalCheckpoint|None=None,
+                              retry_interrupted:bool=False,
+                              retry_failures:bool=False,
+                              log_progress:bool=False)->dict:
     if type(limit) is not int or not 1<=limit<=300:
         raise ValueError("Temporal evidence limit must be 1..300")
     if prepare_previews and not run:
@@ -330,38 +359,96 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
     # Imported lazily: SourceStream uses full source SHA validation when new
     # derivatives are explicitly authorized, with no remote data transfer.
     from .studio import SourceStream
-    streamer=SourceStream(root) if prepare_previews else None
+    streamer=SourceStream(root, progress=_SourceReadProgress()
+                          if log_progress else None) if prepare_previews else None
     successes=[]
     errors=[]
     original_reads=0
     original_read_attempts=0
     fresh_previews=0
+    resumed_successes=0
+    skipped_prior_errors=0
+    skipped_interrupted=0
     with closing(_open_catalog(root)) as db:
-        for c in candidates:
-            if run and prepare_previews:
-                preview,receipt=preview_paths(root,c["assetId"],
-                                               c["startMs"],c["endMs"])
-                if not _check_cached(preview,receipt,aid=c["assetId"],
-                                     start_ms=c["startMs"],end_ms=c["endMs"]):
-                    # Count a potential original read before preview creation,
-                    # including failures during source identity verification.
-                    original_read_attempts+=1
+        for index,c in enumerate(candidates):
+            previous=checkpoint.read(index,c) if checkpoint is not None else None
+            if previous is not None:
+                state=previous["state"]
+                original_read_attempts+=int(
+                    previous.get("originalSourceReadAttempted",False))
+                if state=="success" and checkpoint.may_reuse_success(previous,c):
+                    entry=previous["result"]
+                    successes.append(entry)
+                    original_reads+=int(entry["sourceOriginalRead"])
+                    fresh_previews+=int(entry["previewPreparedThisRun"])
+                    resumed_successes+=1
+                    if log_progress:
+                        _progress(index,len(candidates),c,"reused verified checkpoint")
+                    continue
+                if state=="failure" and not retry_failures:
+                    errors.append(previous["result"])
+                    skipped_prior_errors+=1
+                    if log_progress:
+                        _progress(index,len(candidates),c,"prior error retained; --retry-failures to retry")
+                    continue
+                if state=="in_progress" and not retry_interrupted:
+                    errors.append({
+                        "assetId":c["assetId"],"startMs":c["startMs"],
+                        "endMs":c["endMs"],"status":"failed_not_classified",
+                        "errorType":"InterruptedBeforeCheckpoint",
+                        "error":"An earlier attempt stopped during this clip. "
+                                "Skipped for source safety; use --retry-interrupted "
+                                "only after checking removable storage.",
+                    })
+                    skipped_interrupted+=1
+                    if log_progress:
+                        _progress(index,len(candidates),c,"interrupted; safely skipped")
+                    continue
+                # If a formerly valid derivative was tampered with or removed,
+                # reconstruct rather than trusting its previous visual report.
+                original_read_attempts-=int(
+                    previous.get("originalSourceReadAttempted",False))
+            preview,receipt=preview_paths(root,c["assetId"],
+                                           c["startMs"],c["endMs"])
+            source_attempt=bool(run and prepare_previews and
+                not _check_cached(preview,receipt,aid=c["assetId"],
+                                  start_ms=c["startMs"],end_ms=c["endMs"]))
+            if source_attempt:
+                original_read_attempts+=1
+            if log_progress:
+                _progress(index,len(candidates),c,
+                          "verifying original source then preparing preview"
+                          if source_attempt else "analyzing cached preview")
+            if checkpoint is not None:
+                # Written BEFORE any external-card read, surviving SIGINT.
+                checkpoint.store(index,c,"in_progress",
+                                 original_attempt=source_attempt)
             try:
                 entry=_analysis_row(db,root,c,run=run,
                                     prepare_previews=prepare_previews,
                                     streamer=streamer)
+                if checkpoint is not None:
+                    checkpoint.store(index,c,"success",entry,
+                                     original_attempt=source_attempt)
                 successes.append(entry)
-                if entry["sourceOriginalRead"]:
-                    original_reads+=1
-                if entry["previewPreparedThisRun"]:
-                    fresh_previews+=1
+                original_reads+=int(entry["sourceOriginalRead"])
+                fresh_previews+=int(entry["previewPreparedThisRun"])
+                if log_progress:
+                    _progress(index,len(candidates),c,entry["status"])
             except (ValueError,RuntimeError,OSError,subprocess.TimeoutExpired) as exc:
-                errors.append({
+                failure={
                     "assetId":c["assetId"],"startMs":c["startMs"],
                     "endMs":c["endMs"],"status":"failed_not_classified",
                     "errorType":type(exc).__name__,
                     "error":str(exc)[:200],
-                })
+                }
+                if checkpoint is not None:
+                    checkpoint.store(index,c,"failure",failure,
+                                     original_attempt=source_attempt)
+                errors.append(failure)
+                if log_progress:
+                    _progress(index,len(candidates),c,
+                              "failure recorded: "+type(exc).__name__)
     by_status=Counter(x["status"] for x in successes)
     return {
         "version":VERSION,
@@ -371,6 +458,13 @@ def analyze_temporal_evidence(workspace:Path,feature_file:Path,*,limit:int=40,
                 else "cached_evidence_plan"),
         "requested":len(candidates),"reported":len(successes),
         "failed":len(errors),"statusCounts":dict(sorted(by_status.items())),
+        "checkpoint": {
+            "enabled":checkpoint is not None,
+            "resumed":checkpoint.resumed if checkpoint is not None else False,
+            "reusedSuccessfulCandidates":resumed_successes,
+            "retainedPreviousFailures":skipped_prior_errors,
+            "interruptedCandidatesSkipped":skipped_interrupted,
+        },
         "sourceOriginalReads":original_reads,
         "sourceOriginalReadAttempts":original_read_attempts,
         "generatedVerifiedPreviews":fresh_previews,
@@ -454,17 +548,42 @@ def render_html(report:dict,*,root:Path,dest:Path)->str:
 
 def save_temporal_evidence(workspace:Path,feature_file:Path,output_dir:Path,*,
                            limit:int=40,run:bool=False,
-                           prepare_previews:bool=False)->dict:
+                           prepare_previews:bool=False,
+                           resume:bool=False,
+                           retry_interrupted:bool=False,
+                           retry_failures:bool=False)->dict:
     root=Path(workspace).expanduser().resolve()
-    dest=_new_folder(root,output_dir)
-    report=analyze_temporal_evidence(root,feature_file,limit=limit,run=run,
-                                     prepare_previews=prepare_previews)
-    dest.mkdir(parents=True,mode=0o700,exist_ok=False)
-    with (dest/"temporal-evidence.json").open("x",encoding="utf-8") as f:
-        json.dump(report,f,indent=2,sort_keys=True,allow_nan=False)
-        f.write("\n")
-    with (dest/"index.html").open("x",encoding="utf-8") as f:
-        f.write(render_html(report,root=root,dest=dest))
+    if (retry_interrupted or retry_failures) and not resume:
+        raise ValueError("--retry-interrupted and --retry-failures require --resume")
+    if type(limit) is not int or not 1<=limit<=300:
+        raise ValueError("Temporal evidence limit must be 1..300")
+    if prepare_previews and not run:
+        raise ValueError("--prepare-previews requires --run")
+    path=Path(feature_file).expanduser().resolve()
+    if (path==root or not path.is_relative_to(root)
+            or path.relative_to(root).parts[0] not in ("reports","exports")):
+        raise ValueError("Feature template must be inside workspace reports/ or exports/")
+    fingerprint=sha256(path.read_bytes()).hexdigest()
+    candidates=_validate_candidate(_json(path))[:limit]
+    if not candidates:
+        raise ValueError("No candidate intervals in social-rubric template")
+    dest=Path(output_dir).expanduser().resolve() if resume else _new_folder(root,output_dir)
+    journal=TemporalCheckpoint(root,dest,fingerprint,candidates,run=run,
+                               prepare_previews=prepare_previews,resume=resume)
+    report=analyze_temporal_evidence(root,path,limit=limit,run=run,
+                                     prepare_previews=prepare_previews,
+                                     checkpoint=journal,
+                                     retry_interrupted=retry_interrupted,
+                                     retry_failures=retry_failures,
+                                     log_progress=True)
+    if sha256(path.read_bytes()).hexdigest()!=fingerprint:
+        raise ValueError("Feature template changed during analysis; checkpoint retained, no final report")
+    # JSON is the completion signal. Publish HTML first, then JSON atomically.
+    # An interrupt can never leave a misleading half-written final JSON.
+    html_tmp=dest/"index.html.tmp"
+    html_tmp.write_text(render_html(report,root=root,dest=dest),encoding="utf-8")
+    os.replace(html_tmp,dest/"index.html")
+    _atomic_json(dest/"temporal-evidence.json",report)
     return {"status":"temporal_evidence_report_created",
             "json":str(dest/"temporal-evidence.json"),
             "html":str(dest/"index.html"),
@@ -476,5 +595,6 @@ def save_temporal_evidence(workspace:Path,feature_file:Path,output_dir:Path,*,
             "sourceOriginalReads":report["sourceOriginalReads"],
             "sourceOriginalReadAttempts":report["sourceOriginalReadAttempts"],
             "generatedVerifiedPreviews":report["generatedVerifiedPreviews"],
+            "checkpoint":report["checkpoint"],
             "humanRubricFeaturesAutoFilled":0,"externalUploads":0,
             "originalSourcesModified":False}
