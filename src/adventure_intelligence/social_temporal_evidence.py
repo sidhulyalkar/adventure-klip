@@ -570,20 +570,21 @@ def save_temporal_evidence(workspace:Path,feature_file:Path,output_dir:Path,*,
     dest=Path(output_dir).expanduser().resolve() if resume else _new_folder(root,output_dir)
     journal=TemporalCheckpoint(root,dest,fingerprint,candidates,run=run,
                                prepare_previews=prepare_previews,resume=resume)
-    report=analyze_temporal_evidence(root,path,limit=limit,run=run,
-                                     prepare_previews=prepare_previews,
-                                     checkpoint=journal,
-                                     retry_interrupted=retry_interrupted,
-                                     retry_failures=retry_failures,
-                                     log_progress=True)
-    if sha256(path.read_bytes()).hexdigest()!=fingerprint:
-        raise ValueError("Feature template changed during analysis; checkpoint retained, no final report")
-    # JSON is the completion signal. Publish HTML first, then JSON atomically.
-    # An interrupt can never leave a misleading half-written final JSON.
-    html_tmp=dest/"index.html.tmp"
-    html_tmp.write_text(render_html(report,root=root,dest=dest),encoding="utf-8")
-    os.replace(html_tmp,dest/"index.html")
-    _atomic_json(dest/"temporal-evidence.json",report)
+    with journal.exclusive():
+        report=analyze_temporal_evidence(root,path,limit=limit,run=run,
+                                         prepare_previews=prepare_previews,
+                                         checkpoint=journal,
+                                         retry_interrupted=retry_interrupted,
+                                         retry_failures=retry_failures,
+                                         log_progress=True)
+        if sha256(path.read_bytes()).hexdigest()!=fingerprint:
+            raise ValueError("Feature template changed during analysis; checkpoint retained, no final report")
+        # JSON is the completion signal. Publish HTML first, then JSON atomically.
+        # An interrupt can never leave a misleading half-written final JSON.
+        html_tmp=dest/"index.html.tmp"
+        html_tmp.write_text(render_html(report,root=root,dest=dest),encoding="utf-8")
+        os.replace(html_tmp,dest/"index.html")
+        _atomic_json(dest/"temporal-evidence.json",report)
     return {"status":"temporal_evidence_report_created",
             "json":str(dest/"temporal-evidence.json"),
             "html":str(dest/"index.html"),
