@@ -136,7 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     social_stories.add_argument("--model",default="gemma3:4b",
         help="Installed image-capable local Ollama model name")
     social_stories.add_argument("--limit",type=int,default=8,
-        help="Maximum scene stories (1..24); run bounded pilot first")
+        help="Maximum scene stories per batch (1..24); run bounded pilot first")
+    social_stories.add_argument("--offset",type=int,default=0,
+        help="Deterministic start index for later bounded batches; first batch is 0")
     social_stories.add_argument("--run",action="store_true",
         help="Opt in to local Ollama inference over 7 verified preview frames; default is dry run")
     social_stories.add_argument("--output-dir",type=Path,required=True,
@@ -628,7 +630,8 @@ def main(argv: list[str] | None = None) -> int:
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
         elif args.command=="social-lens-stories":
             _print(save_scene_stories(root,args.features,args.temporal,args.output_dir,
-                model=args.model,limit=args.limit,run=args.run,pairs_file=args.pairs))
+                model=args.model,limit=args.limit,offset=args.offset,
+                run=args.run,pairs_file=args.pairs))
         elif args.command=="social-lens-story-counter-audit":
             _print(save_counter_audit(root,args.pairs,args.reviews,args.stories,
                 args.output_dir))
