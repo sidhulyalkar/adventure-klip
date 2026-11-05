@@ -272,3 +272,182 @@ def test_offline_report_displays_only_checksum_verified_local_video(tmp_path,mon
         ws,feature_file,ws/"reports"/"without-local-playback",run=False)
     blocked_html=Path(no_video["html"]).read_text()
     assert "Play verified interval" not in blocked_html
+
+
+def _second_candidate(template: Path):
+    doc=json.loads(template.read_text())
+    other=dict(doc["items"][0])
+    other["startMs"]=3000
+    other["endMs"]=16000
+    doc["items"].append(other)
+    template.write_text(json.dumps(doc))
+    return doc
+
+
+def test_interrupt_then_resume_skips_in_flight_source_without_reopening(tmp_path,monkeypatch):
+    ws,original,aid,template=_workspace(tmp_path)
+    _second_candidate(template)
+    saved=sha256(original.read_bytes()).hexdigest()
+    target=ws/"reports"/"temporal-interrupted"
+    calls=[]
+    def simulate(_db,_root,c,**kwargs):
+        calls.append(c["startMs"])
+        if c["startMs"]==3000:
+            raise KeyboardInterrupt("simulate stuck removable media")
+        return {
+            "assetId":c["assetId"],"sport":c["sport"],
+            "startMs":c["startMs"],"endMs":c["endMs"],
+            "previewVerified":False,"sourceOriginalRead":False,
+            "previewPreparedThisRun":False,"status":"missing_verified_preview",
+        }
+    monkeypatch.setattr(temporal,"_analysis_row",simulate)
+    with pytest.raises(KeyboardInterrupt):
+        temporal.save_temporal_evidence(ws,template,target,limit=2,run=True,
+                                        prepare_previews=True)
+    assert calls==[1000,3000]
+    assert not (target/"temporal-evidence.json").exists()
+    journal=list((target/"checkpoints").glob("*.json"))
+    assert len(journal)==2
+    assert {json.loads(x.read_text())["state"] for x in journal}=={
+        "success","in_progress"}
+    def never_reopen(*args,**kwargs):
+        pytest.fail("Safe resume must not reopen either source or completed item")
+    monkeypatch.setattr(temporal,"_analysis_row",never_reopen)
+    resumed=temporal.save_temporal_evidence(ws,template,target,limit=2,
+                                           run=True,prepare_previews=True,
+                                           resume=True)
+    result=json.loads(Path(resumed["json"]).read_text())
+    assert result["requested"]==2
+    assert result["reported"]==1
+    assert result["failed"]==1
+    assert result["checkpoint"]["resumed"] is True
+    assert result["checkpoint"]["reusedSuccessfulCandidates"]==1
+    assert result["checkpoint"]["interruptedCandidatesSkipped"]==1
+    assert result["failures"][0]["errorType"]=="InterruptedBeforeCheckpoint"
+    assert result["sourceOriginalReadAttempts"]==2
+    assert result["externalUploads"]==0
+    assert sha256(original.read_bytes()).hexdigest()==saved
+    with pytest.raises(ValueError,match="Completed report exists"):
+        temporal.save_temporal_evidence(ws,template,target,limit=2,
+                                       run=True,prepare_previews=True,resume=True)
+
+
+def test_explicit_retry_interrupted_runs_only_unfinished_candidate(tmp_path,monkeypatch):
+    ws,original,aid,template=_workspace(tmp_path)
+    _second_candidate(template)
+    target=ws/"reports"/"retry-interrupted"
+    attempts=[]
+    def fake(_db,_root,c,**kwargs):
+        attempts.append(c["startMs"])
+        if c["startMs"]==3000 and attempts.count(3000)==1:
+            raise KeyboardInterrupt()
+        return {"assetId":c["assetId"],"sport":c["sport"],
+                "startMs":c["startMs"],"endMs":c["endMs"],
+                "previewVerified":False,"sourceOriginalRead":False,
+                "previewPreparedThisRun":False,"status":"missing_verified_preview"}
+    monkeypatch.setattr(temporal,"_analysis_row",fake)
+    with pytest.raises(KeyboardInterrupt):
+        temporal.save_temporal_evidence(ws,template,target,limit=2,
+                                       run=True,prepare_previews=True)
+    result=temporal.save_temporal_evidence(ws,template,target,limit=2,
+                    run=True,prepare_previews=True,resume=True,retry_interrupted=True)
+    assert result["failed"]==0
+    assert result["checkpoint"]["reusedSuccessfulCandidates"]==1
+    assert attempts==[1000,3000,3000]
+    assert result["sourceOriginalReadAttempts"]==2
+
+
+def test_resume_rejects_changed_template_limit_or_flags_and_retains_journal(tmp_path,monkeypatch):
+    ws,_,_,template=_workspace(tmp_path)
+    _second_candidate(template)
+    target=ws/"reports"/"frozen-run"
+    def aborted(*args,**kwargs):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(temporal,"_analysis_row",aborted)
+    with pytest.raises(KeyboardInterrupt):
+        temporal.save_temporal_evidence(ws,template,target,limit=2,run=True)
+    original=(target/"checkpoint.json").read_bytes()
+    with pytest.raises(ValueError,match="differ"):
+        temporal.save_temporal_evidence(ws,template,target,limit=1,run=True,
+                                       resume=True)
+    with pytest.raises(ValueError,match="differ"):
+        temporal.save_temporal_evidence(ws,template,target,limit=2,run=False,
+                                       resume=True)
+    doc=json.loads(template.read_text())
+    doc["items"][0]["sport"]="bike"
+    template.write_text(json.dumps(doc))
+    with pytest.raises(ValueError,match="differ"):
+        temporal.save_temporal_evidence(ws,template,target,limit=2,run=True,
+                                       resume=True)
+    assert original==(target/"checkpoint.json").read_bytes()
+    assert not (target/"temporal-evidence.json").exists()
+    with pytest.raises(ValueError,match="require --resume"):
+        temporal.save_temporal_evidence(ws,template,ws/"reports"/"oops",
+                                       retry_interrupted=True)
+
+
+def test_resume_does_not_reuse_completed_metrics_from_tampered_preview(tmp_path,monkeypatch):
+    ws,source,aid,template=_workspace(tmp_path)
+    _second_candidate(template)
+    preview,receipt=preview_paths(ws,aid,1000,21000)
+    preview.parent.mkdir(parents=True,exist_ok=True)
+    data=b"valid-h264-placeholder"*20
+    preview.write_bytes(data)
+    receipt.write_text(json.dumps({
+        "version":"studio-preview-local-judge-v1",
+        "assetId":aid,"startMs":1000,"endMs":21000,
+        "previewSha256":sha256(data).hexdigest(),
+        "originalSha256Verified":True,
+    }))
+    monkeypatch.setattr(temporal,"decode_proxy_frames",
+                        lambda path:{"frameCount":8})
+    real=temporal._analysis_row
+    def interrupt_second(db,root,c,**kwargs):
+        if c["startMs"]==3000:
+            raise KeyboardInterrupt()
+        return real(db,root,c,**kwargs)
+    monkeypatch.setattr(temporal,"_analysis_row",interrupt_second)
+    target=ws/"reports"/"tamper-check"
+    with pytest.raises(KeyboardInterrupt):
+        temporal.save_temporal_evidence(ws,template,target,limit=2,run=True)
+    preview.write_bytes(data+b"tamper")
+    results=[]
+    def record_reanalyze(db,root,c,**kwargs):
+        results.append(c["startMs"])
+        return real(db,root,c,**kwargs)
+    monkeypatch.setattr(temporal,"_analysis_row",record_reanalyze)
+    resumed=temporal.save_temporal_evidence(ws,template,target,limit=2,
+                                            run=True,resume=True)
+    assert resumed["measured"]==0
+    assert resumed["checkpoint"]["reusedSuccessfulCandidates"]==0
+    assert resumed["checkpoint"]["interruptedCandidatesSkipped"]==1
+    assert results==[1000]
+    assert json.loads(Path(resumed["json"]).read_text())["candidates"][0][
+        "status"]=="missing_verified_preview"
+
+
+def test_explicit_retry_failures_is_separate_from_stalled_source_retry(tmp_path,monkeypatch):
+    ws,_,_,template=_workspace(tmp_path)
+    target=ws/"reports"/"record-failure"
+    counter={"n":0}
+    def one_failure(*args,**kwargs):
+        counter["n"]+=1
+        raise OSError("synthetic failure")
+    monkeypatch.setattr(temporal,"_analysis_row",one_failure)
+    with pytest.raises(KeyboardInterrupt):
+        # Save a failure checkpoint, then interrupt before the final report.
+        original=temporal._atomic_json
+        def interrupt_final(path,body):
+            if path.name=="temporal-evidence.json":
+                raise KeyboardInterrupt()
+            return original(path,body)
+        monkeypatch.setattr(temporal,"_atomic_json",interrupt_final)
+        temporal.save_temporal_evidence(ws,template,target,run=True)
+    assert counter["n"]==1
+    monkeypatch.setattr(temporal,"_atomic_json",original)
+    no_retry=temporal.save_temporal_evidence(ws,template,target,run=True,
+                                             resume=True)
+    assert no_retry["failed"]==1
+    assert counter["n"]==1
+    assert no_retry["checkpoint"]["retainedPreviousFailures"]==1
+    assert not Path(no_retry["json"]).read_text().find("synthetic failure")==-1
