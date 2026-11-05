@@ -346,6 +346,19 @@ def _bounded_source_rows(root:Path,features_file:Path,temporal_file:Path,
                 path.relative_to(root).parts[0] not in ("reports","exports")):
             raise ValueError("Story inputs must be inside workspace reports/ or exports/")
         paths.append(path)
+    if not paths[0].is_file():
+        raise ValueError(
+            f"Personal feature template missing: {paths[0]}. First run "
+            "'klip social-lens-feature-template --study STUDY.json --limit 40 "
+            "--output-dir NEW_FOLDER'. This is NOT an external social corpus.")
+    if not paths[1].is_file():
+        raise ValueError(
+            f"Temporal evidence missing: {paths[1]}. First run "
+            "'klip social-lens-temporal --features FEATURE_TEMPLATE.json "
+            "--limit 40 --run --prepare-previews --output-dir NEW_FOLDER' "
+            "then point --temporal to that folder's temporal-evidence.json. "
+            "Use 'klip social-lens-workflow-status' for specific next steps. "
+            "Do NOT run social-lens-corpus-init.")
     template=_json(paths[0])
     temporal=_json(paths[1])
     if (template.get("version")!=USER_VERSION
@@ -368,6 +381,13 @@ def _bounded_source_rows(root:Path,features_file:Path,temporal_file:Path,
         if not paired.is_relative_to(root) or (
                 paired.relative_to(root).parts[0] not in ("reports","exports")):
             raise ValueError("Blinded pair manifest must be inside workspace")
+        if not paired.is_file():
+            raise ValueError(
+                f"Blind pair manifest missing: {paired}. Run "
+                "'klip social-lens-pair-review --study STUDY.json "
+                "--features FEATURE_TEMPLATE.json --temporal TEMPORAL.json "
+                "--max-pairs 12 --output-dir NEW_FOLDER', or omit --pairs "
+                "to run independent scene narratives without A/B pairing.")
         frozen=_json(paired)
         if frozen.get("version")!="social-blind-pairs-v1":
             raise ValueError("Expected frozen blinded pair study")
