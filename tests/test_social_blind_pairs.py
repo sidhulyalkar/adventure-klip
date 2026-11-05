@@ -113,7 +113,10 @@ def test_browser_is_blind_playable_and_local_only(tmp_path):
     assert "Klip · A/B preference study" in html
     assert "Export JSON reviews" in html
     assert "Play verified interval" not in html
-    assert "../studio-preview-cache-v1/" in html
+    assert "media/" in html
+    assert "../studio-preview-cache-v1/" not in html
+    assert any((destination/"media").glob("*.mp4"))
+    assert saved["reportLocalVerifiedProxyMedia"]["hardlinkedProxies"]>=2
     assert "klipScore" not in html
     assert "higherKlipSide" not in html
     assert "localhost" not in html
@@ -223,3 +226,19 @@ def test_corrupted_reviews_and_invalid_pair_budget_abstain(tmp_path):
     reviews.write_text(json.dumps(wrong))
     with pytest.raises(ValueError,match="Invalid"):
         pairs.evaluate_pair_reviews(output["manifest"],reviews)
+
+
+def test_browser_preview_copy_fallback_is_only_derived_media(tmp_path,monkeypatch):
+    root,study,features,temporal=fixture_study(tmp_path)
+    def deny_link(_src,_dst):
+        raise OSError("Filesystem does not permit hardlinks")
+    monkeypatch.setattr(pairs.os,"link",deny_link)
+    dest=root/"reports"/"copied-proxies"
+    report=pairs.write_pair_study(root,study,features,temporal,dest,
+                                  seed=7,max_pairs=3)
+    assert report["pairs"]>0
+    assert report["originalVideosRead"]==0
+    assert report["reportLocalVerifiedProxyMedia"]["copiedProxies"]>=2
+    assert any((dest/"media").glob("*.mp4"))
+    html=Path(report["html"]).read_text()
+    assert "media/" in html
