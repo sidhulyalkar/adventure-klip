@@ -128,3 +128,28 @@ VADB professional aesthetic ratings: https://proceedings.neurips.cc/paper_files/
 QVHighlights query-specific salience: https://proceedings.neurips.cc/paper_files/paper/2021/file/62e0973455fd26eb03e91d5741a4a3bb-Paper.pdf
 SVHighlights long-form source-to-edit alignment: https://leedongkyu2019.github.io/SVHighlights/
 YouTube developer policy: https://developers.google.com/youtube/terms/developer-policies
+
+
+## Machine-readable annotation contract
+
+The companion file at research/highlight-curation-record-v1.schema.json
+is a JSON Schema draft 2020-12 contract for source families, phase spans,
+camera and sport labels, human opinions, dual reaction/action time axes,
+rights and frozen split lineage. The schema is a planning contract, not
+evidence that permission has actually been granted.
+
+For a local JSON manifest of annotated records, run:
+
+    klip highlight-curation-preflight --manifest path/to/curation-manifest.json
+
+The manifest has top-level version klip-highlight-curation-manifest-v1
+and a records array of objects following the per-record schema.
+
+The command reports counts and checks candidate/source/outing grouping,
+timeline boundaries, reaction alignment, observed outcomes and declared
+training fields. It never opens audiovisual files, verifies licenses,
+assesses actual frames, trains a model or upgrades unlicensed records.
+A structurally eligible record is NOT independently legally authorized:
+the real agreement, owner chain and participant permission must be
+verified separately. Tests use fabricated string-only synthetic records,
+not real human annotations.
