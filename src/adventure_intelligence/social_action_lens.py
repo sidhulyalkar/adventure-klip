@@ -312,6 +312,48 @@ def _identity(asset:str,start:int,end:int)->str:
     return f"{asset}:{start}:{end}"
 
 
+def _rank_spread_indices(length:int)->list[int]:
+    """Deterministically expose both high and low ranking strata, not only hits."""
+    if length<=0:
+        return []
+    result=[0]
+    if length>1:
+        result.append(length-1)
+    intervals=[(0,length-1)]
+    while intervals:
+        intervals.sort(key=lambda x:(-(x[1]-x[0]),x[0]))
+        a,b=intervals.pop(0)
+        mid=(a+b)//2
+        if mid in result or mid<=a or mid>=b:
+            continue
+        result.append(mid)
+        intervals.extend(((a,mid),(mid,b)))
+    return result
+
+
+def _stratified_personal_review(rows:list[dict],limit:int)->list[dict]:
+    """Small annotation budgets include every represented sport and rank tier."""
+    if len(rows)<=limit:
+        return rows
+    buckets=defaultdict(list)
+    for row in rows:
+        buckets[row["sport"]].append(row)
+    # Each sport contributes high, low, then mid-ranked examples. The audit
+    # still reports selected candidate coverage; no archive recall is inferred.
+    ordered={sport:[items[i] for i in _rank_spread_indices(len(items))]
+             for sport,items in buckets.items()}
+    output=[]
+    for _ in range(limit):
+        available=[sport for sport in ("ski","bike","snorkeling","other")
+                   if ordered.get(sport)]
+        if not available:
+            break
+        sport=min(available,key=lambda x:(sum(v["sport"]==x for v in output),
+                                            ("ski","bike","snorkeling","other").index(x)))
+        output.append(ordered[sport].pop(0))
+    return output
+
+
 def feature_template(study:dict,*,limit:int=300)->dict:
     if type(limit) is not int or not 1<=limit<=300:
         raise ValueError("Feature review limit must be 1..300")
@@ -339,11 +381,13 @@ def feature_template(study:dict,*,limit:int=300)->dict:
                        "featureVersion":FEATURE_VERSION,
                        "featureMethod":"unassessed",
                        "features":{name:None for name in FEATURES}})
-        if len(output)>=limit:
-            break
+    selected=_stratified_personal_review(output,limit)
     return {"version":USER_VERSION,"source":"archive-value-study-v1",
-            "featureVersion":FEATURE_VERSION,"items":output,
-            "note":"Nulls are UNKNOWN, not bad. Review or qualify a common extractor before ranking."}
+            "featureVersion":FEATURE_VERSION,"items":selected,
+            "samplingPolicy":("sport_and_rank_tier_spread"
+                              if len(output)>limit else "all_available_candidates"),
+            "studyCandidateCount":len(output),
+            "note":"Nulls are UNKNOWN, not bad. For smaller pilots sample across sport and ranking tiers. Observe or qualify a common extractor before scoring."}
 
 
 def _user_features(document:dict)->dict[str,dict]:
