@@ -41,8 +41,14 @@ ENGAGEMENT_WEIGHTS={"shareCount":1.0,"saveCount":1.5,
 
 
 def _json(path:Path,limit:int=20_000_000)->dict:
-    if not path.is_file() or path.stat().st_size>limit:
-        raise ValueError("Input file missing or oversized")
+    if not path.is_file():
+        raise ValueError(
+            f"Input JSON does not exist: {path}. A Klip feature-template is "
+            "not an external training corpus. For the social corpus, run "
+            "'klip social-lens-corpus-init --output PATH', then add only real "
+            "rights-cleared creator reference examples.")
+    if path.stat().st_size>limit:
+        raise ValueError(f"Input JSON exceeds {limit} bytes: {path}")
     document=json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document,dict):
         raise ValueError("JSON document must be an object")
@@ -134,7 +140,10 @@ def load_training_corpus(path:Path)->list[dict]:
     if data.get("version")!=DATA_VERSION or not isinstance(data.get("items"),list):
         raise ValueError("Expected versioned and licensed social corpus")
     if not 6<=len(data["items"])<=MAX_ITEMS:
-        raise ValueError("Training requires 6..5000 fully reviewed records")
+        raise ValueError(
+            "Training needs 6..5000 fully reviewed, independently authorized "
+            "real social-video records. An initialized empty manifest is not "
+            "training data. Run social-lens-preflight first.")
     records=[_social_record(x) for x in data["items"]]
     ids=[r["clipId"] for r in records]
     if len(set(ids))!=len(ids):
@@ -238,6 +247,10 @@ def train_social_head(corpus:Path,*,seed:int=23)->dict:
     test=[r for r in records if r["creatorGroup"] in test_ids]
     train_pairs=make_pairs(train)
     test_pairs=make_pairs(test)
+    if not test_pairs:
+        raise ValueError(
+            "No matched pairs in held-out creator group; gather more real "
+            "creator videos before interpreting a trained preference head.")
     center,scale=_mean_scale(train)
     weights=_fit(train_pairs,scale,seed)
     uniform=[1/len(FEATURES)]*len(FEATURES)
@@ -465,6 +478,15 @@ def _write_folder(destination:Path,documents:dict)->dict:
 
 
 def save_training(workspace:Path,corpus:Path,output_dir:Path,*,seed:int=23)->dict:
+    # Separate preflight from actual fitting so a missing corpus never creates
+    # a model directory or ambiguous "model failed" message.
+    from .social_corpus_onboarding import preflight_corpus
+    check=preflight_corpus(corpus,seed=seed)
+    if not check["trainingReady"]:
+        raise ValueError(
+            f"Social Lens cannot train: {check['status']}. "
+            f"{check['nextAction']} "
+            "Run 'klip social-lens-preflight --corpus PATH' for a full audit.")
     root=Path(workspace).expanduser().resolve()
     dest=_new_folder(root,output_dir)
     model=train_social_head(Path(corpus).expanduser().resolve(),seed=seed)
