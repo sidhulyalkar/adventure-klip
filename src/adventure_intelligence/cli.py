@@ -667,7 +667,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="social-lens-temporal":
             _print(save_temporal_evidence(root,args.features,args.output_dir,
                 limit=args.limit,run=args.run,
-                prepare_previews=args.prepare_previews))
+                prepare_previews=args.prepare_previews,
+                resume=args.resume,retry_interrupted=args.retry_interrupted,
+                retry_failures=args.retry_failures))
         elif args.command=="social-lens-corpus-init":
             _print(init_corpus(root,args.output))
         elif args.command=="social-lens-preflight":
