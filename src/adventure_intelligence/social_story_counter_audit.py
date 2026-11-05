@@ -74,36 +74,55 @@ def _render_story(story:dict|None,frames:list|None,
 
 
 def story_counter_audit(workspace:Path,pair_file:Path,reviews_file:Path,
-                        story_file:Path)->dict:
+                        story_file:Path,*,additional_stories:tuple[Path,...]=())->dict:
     root=Path(workspace).expanduser().resolve()
-    for file in (pair_file,story_file):
+    story_paths=(story_file,*additional_stories)
+    if len(story_paths)>30:
+        raise ValueError("At most 30 independent bounded story batches supported")
+    for file in (pair_file,*story_paths):
         path=Path(file).expanduser().resolve()
         if not path.is_relative_to(root) or (
                 path.relative_to(root).parts[0] not in ("reports","exports")):
             raise ValueError("Pair and narrative reports must be inside private workspace")
     pair_path=Path(pair_file).expanduser().resolve()
-    story_path=Path(story_file).expanduser().resolve()
     audited=evaluate_pair_reviews(pair_path,reviews_file)
     frozen=_json(pair_path)
-    document=_json(story_path)
-    if (frozen.get("version")!=PAIR_VERSION or
-            document.get("version")!=STORY_VERSION or
-            document.get("mode")!="local_ollama"):
-        raise ValueError("Expected frozen pair study and completed local model story report")
-    if not isinstance(document.get("stories"),list):
-        raise ValueError("Invalid source story report")
+    if frozen.get("version")!=PAIR_VERSION:
+        raise ValueError("Expected frozen pair study")
     by_id={}
-    for r in document["stories"]:
-        if not isinstance(r,dict) or not isinstance(r.get("assetId"),str):
-            continue
-        key=_identity(r)
-        if key in by_id:
-            raise ValueError("Duplicate story candidate identity")
-        if r.get("story") is not None:
-            if (r["story"].get("status")!="provisional_story_hypotheses"
-                    or not r["story"].get("frameReferencesValidated")):
-                raise ValueError("Unvalidated story content cannot be revealed")
-        by_id[key]=r
+    report_shas=[]
+    evidence_fingerprint=None
+    model_name=None
+    for file in story_paths:
+        path=Path(file).expanduser().resolve()
+        document=_json(path)
+        if (document.get("version")!=STORY_VERSION or
+                document.get("mode")!="local_ollama"
+                or not isinstance(document.get("stories"),list)):
+            raise ValueError("Expected completed local model story batch")
+        provenance=document.get("inputProvenance") or {}
+        batch_key=provenance.get("featureTemplateSha256")
+        temporal_key=provenance.get("temporalEvidenceSha256")
+        if not isinstance(batch_key,str) or not isinstance(temporal_key,str):
+            raise ValueError("Story batch missing input provenance")
+        if evidence_fingerprint is None:
+            evidence_fingerprint=(batch_key,temporal_key)
+            model_name=document.get("model")
+        elif (batch_key,temporal_key)!=evidence_fingerprint or (
+                document.get("model")!=model_name):
+            raise ValueError("Cannot combine stories from different input evidence or models")
+        report_shas.append(sha256(path.read_bytes()).hexdigest())
+        for r in document["stories"]:
+            if not isinstance(r,dict) or not isinstance(r.get("assetId"),str):
+                continue
+            key=_identity(r)
+            if key in by_id:
+                raise ValueError("Duplicate story candidate across batches")
+            if r.get("story") is not None:
+                if (r["story"].get("status")!="provisional_story_hypotheses"
+                        or not r["story"].get("frameReferencesValidated")):
+                    raise ValueError("Unvalidated story content cannot be revealed")
+            by_id[key]=r
     reviews=_json(Path(reviews_file).expanduser().resolve(),limit=250000)
     votes={r["pairId"]:r for r in reviews["reviews"]}
     output=[]
@@ -135,7 +154,7 @@ def story_counter_audit(workspace:Path,pair_file:Path,reviews_file:Path,
     return {
         "version":"social-story-counter-audit-v1",
         "blindPairSha256":sha256(pair_path.read_bytes()).hexdigest(),
-        "storySourceSha256":sha256(story_path.read_bytes()).hexdigest(),
+        "storySourcesSha256":report_shas,
         "votedPairsOnly":True,
         "votedPairsInReport":len(output),"narrativesAvailable":available,
         "narrativesMissing":len(output)*2-available,
@@ -207,10 +226,12 @@ def _report_html(report:dict)->str:
 
 
 def save_counter_audit(workspace:Path,pair_file:Path,reviews_file:Path,
-                       story_file:Path,output_dir:Path)->dict:
+                       story_file:Path,output_dir:Path,*,
+                       additional_stories:tuple[Path,...]=())->dict:
     root=Path(workspace).expanduser().resolve()
     destination=_new_folder(root,output_dir)
-    report=story_counter_audit(root,pair_file,reviews_file,story_file)
+    report=story_counter_audit(root,pair_file,reviews_file,story_file,
+                               additional_stories=additional_stories)
     destination.mkdir(parents=True,mode=0o700,exist_ok=False)
     with (destination/"counter-audit.json").open("x",encoding="utf-8") as f:
         json.dump(report,f,sort_keys=True,indent=2,allow_nan=False)
