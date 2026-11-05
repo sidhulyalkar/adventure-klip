@@ -169,3 +169,29 @@ def test_smaller_personal_template_requires_actual_feature_review():
     for n in (0,-1,301):
         with pytest.raises(ValueError):
             lens.feature_template(study,limit=n)
+
+
+def test_small_pilot_spreads_sports_and_rank_tiers():
+    sport_names=["ski","bike","snorkeling","unresolved"]
+    rows=[]
+    for n in range(80):
+        rows.append({
+            "sourceAssetId":f"{n+1:064x}",
+            "startMs":n*1000,
+            "endMs":n*1000+20000,
+            "activityGroup":sport_names[n%4],
+            "score":round(1-n/100,3),
+        })
+    study={"version":"archive-value-study-v1","rankedCandidates":rows}
+    a=lens.feature_template(study,limit=16)
+    b=lens.feature_template(study,limit=16)
+    assert a==b
+    assert a["samplingPolicy"]=="sport_and_rank_tier_spread"
+    assert a["studyCandidateCount"]==80
+    assert len(a["items"])==16
+    sports={r["sport"] for r in a["items"]}
+    assert sports=={"ski","bike","snorkeling","other"}
+    chosen=[int(x["assetId"],16)-1 for x in a["items"]]
+    assert any(i<8 for i in chosen)
+    assert any(i>=68 for i in chosen)
+    assert len({x["assetId"] for x in a["items"]})==16
