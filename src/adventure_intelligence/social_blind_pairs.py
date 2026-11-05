@@ -108,20 +108,39 @@ def _ready_clips(workspace:Path,study:dict,features:dict,
         if row["sport"]!=template[key] or key not in scores:
             dropped["notComparableToFrozenKlipRanking"]+=1
             continue
+        visual=row.get("visualTemporal")
         if (row.get("status")!="temporal_visual_metrics_observed"
-                or not row.get("previewVerified")
-                or not isinstance(row.get("visualTemporal"),dict)
-                or row["visualTemporal"].get("frameCount",0)<5):
+                or row.get("previewVerified") is not True
+                or not isinstance(visual,dict)
+                or type(visual.get("frameCount")) is not int
+                or visual["frameCount"]<5):
             dropped["noMeasuredVerifiedTemporalFrames"]+=1
             continue
         video,receipt=preview_paths(workspace,aid,start,end)
         if not _check_cached(video,receipt,aid=aid,start_ms=start,end_ms=end):
             dropped["staleOrTamperedPreview"]+=1
             continue
+        observations={}
+        source_metrics=row.get("cachedMotionAcoustics")
+        embeddings=row.get("semanticTemporal")
+        for label,container,keyname in (
+            ("frameChangeMedian",visual,"frameChangeMedian"),
+            ("frameChangeP90",visual,"frameChangeP90"),
+            ("longestHighChangeRunSec",visual,"longestHighChangeRunSec"),
+            ("spatialGradientEnergyMedian",visual,"spatialGradientEnergyMedian"),
+            ("darkPixelFractionMedian",visual,"darkPixelFractionMedian"),
+            ("brightPixelFractionMedian",visual,"brightPixelFractionMedian"),
+            ("sourceMotionMedian",source_metrics,"motionChangeMedian"),
+            ("sourceAudioRmsMedian",source_metrics,"audioRmsMedian"),
+            ("semanticAdjacentCosine",embeddings,"medianAdjacentCosineSimilarity"),
+        ):
+            value=container.get(keyname) if isinstance(container,dict) else None
+            observations[label]=round(float(value),6) if (
+                type(value) in (int,float) and math.isfinite(value)) else None
         by_sport[row["sport"]].append({
             "clipId":key,"assetId":aid,"startMs":start,"endMs":end,
             "sport":row["sport"],"klipScore":round(scores[key],6),
-            "verifiedPreview":str(video),
+            "verifiedPreview":str(video),"observedEvidence":observations,
         })
     return by_sport,{
         "templateCandidates":len(template),"rankedTemplateCandidates":len(scores),
@@ -348,6 +367,13 @@ async function loadReviews(ev){
 }
 for(const b of document.querySelectorAll('[data-choice]'))
  b.addEventListener("click",()=>choose(b.dataset.choice));
+function updateChosenFields(){
+ const entry=decisions.get(pairs[active]?.pairId);
+ if(entry)choose(entry.choice);
+}
+for(const el of document.querySelectorAll('.reason'))
+ el.addEventListener('change',updateChosenFields);
+$('note').addEventListener('change',updateChosenFields);
 $('previous').addEventListener("click",()=>move(-1));
 $('next').addEventListener("click",()=>move(1));
 $('export').addEventListener("click",exportReviews);
@@ -517,11 +543,20 @@ def evaluate_pair_reviews(manifest_file:Path,reviews_file:Path)->dict:
         top_reason.update(record["reasons"])
         clips_seen.update((pair["a"]["assetId"],pair["b"]["assetId"]))
         if label=="disagrees_with_klip":
+            preferred_item=pair[choice]
+            nonpreferred_item=pair["b" if choice=="a" else "a"]
+            differences={}
+            for field,value in preferred_item.get("observedEvidence",{}).items():
+                other=nonpreferred_item.get("observedEvidence",{}).get(field)
+                differences[field]=(round(value-other,6)
+                                    if type(value) in (int,float)
+                                    and type(other) in (int,float) else None)
             disagreement.append({
                 "pairId":pid,"sport":sport,
                 "chosenSide":choice,"klipHigherSide":preferred,
                 "scoreDifference":round(abs(pair["a"]["klipScore"]-
                                             pair["b"]["klipScore"]),6),
+                "observedCueDeltasChosenMinusRejected":differences,
                 "reasons":record["reasons"],
                 "notes":record["notes"],
             })
@@ -560,6 +595,7 @@ def evaluate_pair_reviews(manifest_file:Path,reviews_file:Path)->dict:
             "The baseline already influenced candidate nomination; true discovery recall is not measured",
             "Small, sport-specific denominators and ambiguous ties must be shown without statistical claims",
             "Reviewer votes are personal preferences, not observed external social engagement",
+            "Observed cue differences in a disagreement are descriptive uncalibrated proxies, not explanations of preference or causal mechanisms",
             "The disagreement list is a prioritization queue, not evidence the model should be reweighted automatically",
         ],
     }
