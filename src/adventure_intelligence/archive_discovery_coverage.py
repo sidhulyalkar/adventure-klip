@@ -163,7 +163,7 @@ def inspect_discovery_coverage(workspace:Path,study_file:Path,features_file:Path
             "sizeBytesRecorded":asset["size_bytes"],
             "originalStudyMetadataValid":original_valid,
             "metadataIssues":issues,
-            "rankedCandidateWindows":by_asset[aid],
+            "rankedCandidateWindows":by_asset.get(aid,0),
             "pilotWindows":sum(r["assetId"]==aid for r in selected),
             "cachedEpisodeRows":episode_counts[aid],
             "completedAnalysisStagesReported":sorted(stages[aid]),
