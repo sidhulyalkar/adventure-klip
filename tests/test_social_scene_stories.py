@@ -250,6 +250,30 @@ def test_preview_changed_during_sampling_abstains_without_model_call(tmp_path,mo
     assert result["originalVideoReads"]==0
 
 
+def test_preview_changed_during_inference_cannot_be_saved_as_story(tmp_path,monkeypatch):
+    root,features,temporal,_=dataset(tmp_path,num=1)
+    preview,receipt=preview_paths(root,f"{1:064x}",1000,21000)
+    monkeypatch.setattr(narrative,"_samples",
+        lambda path:(["b64_frame"]*7,
+                     [1400,4000,6800,10000,13200,16000,18600]))
+    requests=[]
+    def mutate_during_local_model(body):
+        requests.append(body)
+        preview.write_bytes(preview.read_bytes()+b"racing-preview-change")
+        return {"message":{"content":json.dumps(story_payload())}}
+    report=narrative.analyze_scene_stories(
+        root,features,temporal,limit=1,run=True,
+        transport=mutate_during_local_model)
+    assert len(requests)==1
+    assert report["countFailed"]==1
+    assert report["modelRequests"]==0
+    assert "changed during narrative inference" in report["failures"][0]["reason"]
+    # A failed race must not yield an accepted story or a validated cache.
+    assert report["stories"]==[]
+    assert list((root/"reports"/"social-story-cache-v1").glob("*.json"))==[]
+    assert report["originalVideoReads"]==0
+
+
 def test_targeted_blind_pairs_and_post_vote_reveal_only(tmp_path,monkeypatch):
     root,features,temporal,study=dataset(tmp_path,num=4)
     pair_dest=root/"reports"/"pairs"
