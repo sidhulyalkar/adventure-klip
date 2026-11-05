@@ -11,9 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import closing
 from hashlib import sha256
-from html import escape
 from pathlib import Path
-from urllib.parse import quote
 import json
 import math
 import os
@@ -32,7 +30,6 @@ from .temporal_second_look import _samples, SAMPLE_FRACTIONS
 VERSION="social-scene-story-evidence-v1"
 POLICY="social-scene-story-7frames-auxmetrics-v1"
 MAX_STORIES=24
-MAX_TEXT=7000
 MAX_CACHE=40000
 PHASES={"opening","development","notable_moment","aftermath","unclear"}
 CLAIMS={"visibly_observed","possible_interpretation","unknown"}
