@@ -52,6 +52,7 @@ from .archive_value_study import save_value_study
 from .social_action_lens import save_training, save_feature_template, save_comparison
 from .social_corpus_onboarding import init_corpus, preflight_corpus
 from .social_temporal_evidence import save_temporal_evidence
+from .social_blind_pairs import write_pair_study, write_pair_results
 from .benchmark_feedback import write_benchmark_feedback,import_human_reviews
 from .acoustics import analyze_audio
 from .submersion import continuity_report
@@ -122,6 +123,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Versioned archive review assignments.json")
     archive_results.add_argument("--output-dir",required=True,type=Path,
         help="New private evaluation report folder")
+    social_pairs=sub.add_parser("social-lens-pair-review",
+        help="Build a locally playable, score-blinded A/B choice study from measured verified candidates")
+    social_pairs.add_argument("--study",required=True,type=Path,
+        help="Existing archive-value-study study.json")
+    social_pairs.add_argument("--features",required=True,type=Path,
+        help="Exact personal feature-template used for temporal extraction")
+    social_pairs.add_argument("--temporal",required=True,type=Path,
+        help="Completed temporal-evidence.json from a --run analysis")
+    social_pairs.add_argument("--output-dir",required=True,type=Path,
+        help="NEW reports/ or exports/ folder")
+    social_pairs.add_argument("--max-pairs",type=int,default=20,
+        help="Maximum same-sport, different-source blind comparisons (1..40)")
+    social_pairs.add_argument("--seed",type=int,default=104,
+        help="Deterministic candidate and A/B randomization")
+    social_pair_results=sub.add_parser("social-lens-pair-results",
+        help="Evaluate downloaded private A/B preference votes without changing models or source media")
+    social_pair_results.add_argument("--manifest",required=True,type=Path,
+        help="Frozen pairs.json in the private pair-review report directory")
+    social_pair_results.add_argument("--reviews",required=True,type=Path,
+        help="Exported review JSON from the browser; may reside in Downloads")
+    social_pair_results.add_argument("--output-dir",required=True,type=Path,
+        help="NEW reports/ or exports/ folder")
     social_temporal=sub.add_parser("social-lens-temporal",
         help="Plan or run bounded raw-video temporal measurements from verified Studio H264 previews")
     social_temporal.add_argument("--features",type=Path,required=True,
@@ -577,6 +600,13 @@ def main(argv: list[str] | None = None) -> int:
                 _print(import_human_reviews(root,args.assignments,args.reviews))
         elif args.command=="archive-review-results":
             _print(write_benchmark_feedback(root,args.assignments,args.output_dir))
+        elif args.command=="social-lens-pair-review":
+            _print(write_pair_study(root,args.study,args.features,
+                args.temporal,args.output_dir,max_pairs=args.max_pairs,
+                seed=args.seed))
+        elif args.command=="social-lens-pair-results":
+            _print(write_pair_results(root,args.manifest,args.reviews,
+                args.output_dir))
         elif args.command=="social-lens-temporal":
             _print(save_temporal_evidence(root,args.features,args.output_dir,
                 limit=args.limit,run=args.run,
