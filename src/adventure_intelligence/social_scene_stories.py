@@ -334,7 +334,8 @@ def _write_cache(path:Path,record:dict):
 
 
 def _bounded_source_rows(root:Path,features_file:Path,temporal_file:Path,
-                         limit:int,*,pairs_file:Path|None=None)->tuple[list[dict],dict]:
+                         limit:int,*,offset:int=0,
+                         pairs_file:Path|None=None)->tuple[list[dict],dict]:
     paths=[]
     for file in (features_file,temporal_file):
         path=Path(file).expanduser().resolve()
@@ -400,8 +401,11 @@ def _bounded_source_rows(root:Path,features_file:Path,temporal_file:Path,
             if key in lookup and key not in ordered:
                 ordered.add(key)
                 selected.append(lookup[key])
-    selected=selected[:limit]
+    total_selected=len(selected)
+    selected=selected[offset:offset+limit]
     return selected,{
+        "totalEligibleForBatching":total_selected,
+        "offset":offset,"limit":limit,
         "featureTemplateSha256":sha256(paths[0].read_bytes()).hexdigest(),
         "temporalEvidenceSha256":sha256(paths[1].read_bytes()).hexdigest(),
         "availableTemporalRows":len(temporal.get("candidates",[])),
@@ -476,16 +480,18 @@ def _make_story_row(db,root:Path,row:dict,model:str,*,run:bool,transport=None)->
 
 
 def analyze_scene_stories(workspace:Path,features:Path,temporal:Path,*,
-                          model:str="gemma3:4b",limit:int=8,
+                          model:str="gemma3:4b",limit:int=8,offset:int=0,
                           run:bool=False,pairs_file:Path|None=None,
                           transport=None)->dict:
     if not valid_local_model(model):
         raise ValueError("Only a named local image-capable Ollama model is allowed")
     if type(limit) is not int or not 1<=limit<=MAX_STORIES:
         raise ValueError("Scene story limit must be 1..24")
+    if type(offset) is not int or not 0<=offset<=5000:
+        raise ValueError("Scene story offset must be 0..5000")
     root=Path(workspace).expanduser().resolve()
     candidates,provenance=_bounded_source_rows(
-        root,features,temporal,limit,pairs_file=pairs_file)
+        root,features,temporal,limit,offset=offset,pairs_file=pairs_file)
     results=[]
     errors=[]
     with _CACHE_LOCK:
@@ -502,6 +508,7 @@ def analyze_scene_stories(workspace:Path,features:Path,temporal:Path,*,
                     })
     return {
         "version":VERSION,"model":model,"mode":"local_ollama" if run else "dry_run",
+        "offset":offset,
         "countRequested":len(candidates),"countSucceeded":len(results),
         "countFailed":len(errors),
         "outcomes":dict(sorted(Counter(x["status"] for x in results).items())),
@@ -524,12 +531,12 @@ def analyze_scene_stories(workspace:Path,features:Path,temporal:Path,*,
 
 
 def save_scene_stories(workspace:Path,features:Path,temporal:Path,output_dir:Path,*,
-                       model:str="gemma3:4b",limit:int=8,run:bool=False,
-                       pairs_file:Path|None=None)->dict:
+                       model:str="gemma3:4b",limit:int=8,offset:int=0,
+                       run:bool=False,pairs_file:Path|None=None)->dict:
     root=Path(workspace).expanduser().resolve()
     dest=_new_folder(root,output_dir)
     result=analyze_scene_stories(root,features,temporal,model=model,limit=limit,
-                                 run=run,pairs_file=pairs_file)
+                                 offset=offset,run=run,pairs_file=pairs_file)
     dest.mkdir(mode=0o700,parents=True,exist_ok=False)
     file=dest/"stories.json"
     with file.open("x",encoding="utf-8") as f:
@@ -538,6 +545,9 @@ def save_scene_stories(workspace:Path,features:Path,temporal:Path,output_dir:Pat
     return {
         "status":"local_scene_story_report_written",
         "stories":str(file),"run":run,
+        "offset":offset,
+        "remaining":max(0,result["inputProvenance"]["totalEligibleForBatching"]-
+                        offset-result["countRequested"]),
         "candidates":result["countRequested"],
         "inferred":result["outcomes"].get("new_provisional_story",0),
         "cached":result["cachedStoryCount"],
