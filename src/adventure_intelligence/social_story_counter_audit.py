@@ -24,7 +24,8 @@ def _safe_text(value)->str:
     return escape(str(value)) if value is not None else "Unknown"
 
 
-def _render_story(story:dict|None,frames:list|None)->str:
+def _render_story(story:dict|None,frames:list|None,
+                  signals:dict|None=None,hypotheses:dict|None=None)->str:
     if not isinstance(story,dict):
         return "<p>No independent story evidence available for this clip.</p>"
     if story.get("status")!="provisional_story_hypotheses":
@@ -60,6 +61,13 @@ def _render_story(story:dict|None,frames:list|None)->str:
         "<h4>Alternative explanations</h4>"+list_items("alternativeInterpretations")+
         "<h4>What is not established</h4>"+list_items("uncertainties")+
         "<h4>Questions for human playback</h4>"+list_items("questionsForHuman")+
+        "<details><summary>Inspect input evidence and provenance</summary>"
+        "<p class='muted'>Numeric cues describe pixels and cached signals, not actions. "
+        "Text-image and object proposals are unverified and model-dependent.</p>"
+        "<pre>"+_safe_text(json.dumps({
+            "measuredSignals":signals,
+            "unverifiedSemanticHypotheses":hypotheses,
+        },sort_keys=True,indent=2,ensure_ascii=True))+"</pre></details>"
         "<p class='muted'>Provisional local model interpretation; seven stills "
         "and limited temporal measurements, not observed continuous behavior.</p>"
     )
@@ -112,6 +120,8 @@ def story_counter_audit(workspace:Path,pair_file:Path,reviews_file:Path,
                 "startMs":clip["startMs"],"endMs":clip["endMs"],
                 "sceneStory":scene.get("story") if scene else None,
                 "frameEvidence":scene.get("frameEvidence") if scene else None,
+                "observedSignals":scene.get("observedSignals") if scene else None,
+                "auxiliaryHypotheses":scene.get("auxiliaryHypotheses") if scene else None,
                 "modelEvidenceStatus":scene.get("status") if scene else "not_analyzed",
             }
         output.append({
@@ -157,7 +167,9 @@ def _report_html(report:dict)->str:
             sides.append(
                 "<article><h3>"+side.upper()+" · "+
                 _safe_text(entry["modelEvidenceStatus"])+
-                "</h3>"+_render_story(entry["sceneStory"],entry["frameEvidence"])+
+                "</h3>"+_render_story(
+                    entry["sceneStory"],entry["frameEvidence"],
+                    entry.get("observedSignals"),entry.get("auxiliaryHypotheses"))+
                 "</article>")
         blocks.append(
             "<section><h2>"+_safe_text(item["sport"])+
@@ -180,6 +192,7 @@ def _report_html(report:dict)->str:
         'section{border-bottom:1px solid #425264;padding:12px 0 28px}'
         'article{background:#1a293c;border:1px solid #36485c;'
         'border-radius:12px;padding:14px;overflow-wrap:anywhere}'
+        'pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}'
         'li{margin-bottom:9px}p{overflow-wrap:anywhere}'
         '@media(max-width:750px){.columns{grid-template-columns:1fr}}'
         '</style></head><body><h1>Scene understanding · after human vote</h1>'
