@@ -144,6 +144,8 @@ def fake_inference(monkeypatch):
 def test_strict_scene_story_requires_frame_grounded_uncertainty():
     validated=narrative.validate_story(story_payload())
     assert validated["frameReferencesValidated"]
+    assert validated["frameReferenceIndicesSyntacticallyValid"] is True
+    assert validated["frameObservationContentIndependentlyVerified"] is False
     assert validated["sourceVideoAndAudioSemanticallyReviewed"] is False
     assert validated["personalImportanceVerified"] is False
     assert validated["mayModifyHumanKeepOrSkip"] is False
