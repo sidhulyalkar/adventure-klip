@@ -337,7 +337,7 @@ def _write_cache(path:Path,record:dict):
 
 
 def _bounded_source_rows(root:Path,features_file:Path,temporal_file:Path,
-                         limit:int)->tuple[list[dict],dict]:
+                         limit:int,*,pairs_file:Path|None=None)->tuple[list[dict],dict]:
     paths=[]
     for file in (features_file,temporal_file):
         path=Path(file).expanduser().resolve()
@@ -361,6 +361,23 @@ def _bounded_source_rows(root:Path,features_file:Path,temporal_file:Path,
         if type(aid) is not str or type(start) is not int or type(end) is not int:
             raise ValueError("Malformed personal candidate identity")
         permitted.add((aid,start,end))
+    pair_identity=None
+    if pairs_file is not None:
+        paired=Path(pairs_file).expanduser().resolve()
+        if not paired.is_relative_to(root) or (
+                paired.relative_to(root).parts[0] not in ("reports","exports")):
+            raise ValueError("Blinded pair manifest must be inside workspace")
+        frozen=_json(paired)
+        if frozen.get("version")!="social-blind-pairs-v1":
+            raise ValueError("Expected frozen blinded pair study")
+        pair_identity=[]
+        for pair in frozen.get("pairs",[]):
+            for side in ("a","b"):
+                clip=pair.get(side)
+                if not isinstance(clip,dict):
+                    raise ValueError("Malformed blinded pair")
+                pair_identity.append((clip.get("assetId"),clip.get("startMs"),
+                                      clip.get("endMs")))
     selected=[]
     seen=set()
     for row in temporal.get("candidates",[]):
@@ -376,12 +393,22 @@ def _bounded_source_rows(root:Path,features_file:Path,temporal_file:Path,
             continue
         seen.add(key)
         selected.append(row)
-        if len(selected)>=limit:
-            break
+    if pair_identity is not None:
+        lookup={(r["assetId"],r["startMs"],r["endMs"]):r for r in selected}
+        # Stable pair order. Do not pass any ranking score or human vote to
+        # the local narrative model; the manifest is a candidate locator only.
+        selected=[]
+        ordered=set()
+        for key in pair_identity:
+            if key in lookup and key not in ordered:
+                ordered.add(key)
+                selected.append(lookup[key])
+    selected=selected[:limit]
     return selected,{
         "featureTemplateSha256":sha256(paths[0].read_bytes()).hexdigest(),
         "temporalEvidenceSha256":sha256(paths[1].read_bytes()).hexdigest(),
         "availableTemporalRows":len(temporal.get("candidates",[])),
+        "pairTargeted":pair_identity is not None,
     }
 
 
@@ -451,13 +478,15 @@ def _make_story_row(db,root:Path,row:dict,model:str,*,run:bool,transport=None)->
 
 def analyze_scene_stories(workspace:Path,features:Path,temporal:Path,*,
                           model:str="gemma3:4b",limit:int=8,
-                          run:bool=False,transport=None)->dict:
+                          run:bool=False,pairs_file:Path|None=None,
+                          transport=None)->dict:
     if not valid_local_model(model):
         raise ValueError("Only a named local image-capable Ollama model is allowed")
     if type(limit) is not int or not 1<=limit<=MAX_STORIES:
         raise ValueError("Scene story limit must be 1..24")
     root=Path(workspace).expanduser().resolve()
-    candidates,provenance=_bounded_source_rows(root,features,temporal,limit)
+    candidates,provenance=_bounded_source_rows(
+        root,features,temporal,limit,pairs_file=pairs_file)
     results=[]
     errors=[]
     with _CACHE_LOCK:
@@ -496,10 +525,12 @@ def analyze_scene_stories(workspace:Path,features:Path,temporal:Path,*,
 
 
 def save_scene_stories(workspace:Path,features:Path,temporal:Path,output_dir:Path,*,
-                       model:str="gemma3:4b",limit:int=8,run:bool=False)->dict:
+                       model:str="gemma3:4b",limit:int=8,run:bool=False,
+                       pairs_file:Path|None=None)->dict:
     root=Path(workspace).expanduser().resolve()
     dest=_new_folder(root,output_dir)
-    result=analyze_scene_stories(root,features,temporal,model=model,limit=limit,run=run)
+    result=analyze_scene_stories(root,features,temporal,model=model,limit=limit,
+                                 run=run,pairs_file=pairs_file)
     dest.mkdir(mode=0o700,parents=True,exist_ok=False)
     file=dest/"stories.json"
     with file.open("x",encoding="utf-8") as f:
