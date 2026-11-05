@@ -114,6 +114,7 @@ klip --workspace "$WS" social-lens-stories \
   --pairs "$PAIRS" \
   --model gemma3:4b \
   --limit 6 \
+  --offset 0 \
   --run \
   --output-dir "$WS/reports/scene-stories6-v1"
 ```
@@ -125,7 +126,12 @@ recordings. Model requests and story caches are independent of the
 earlier three-frame judge and never update the human review table.
 
 The local model may be fallible, and processing is bounded to
-`--limit 1..24`. Each inference has a strict schema, temperature zero,
+`--limit 1..24` **per run**. To process the next batch, run the same
+command with `--offset 6 --limit 6` and a new output directory (e.g.
+`scene-stories-next6-v1`). Continue at offset 12, 18 and so on.
+Each clip has a fingerprinted private cache, so re-running the same
+batch does not repeatedly query Ollama when inputs are unchanged.
+Each inference has a strict schema, temperature zero,
 source/preview SHA and narrative prompt fingerprint. Cached results
 are reused only if the verified preview and all prompt inputs match.
 If the installed model tag points to new weights, cache identity might
