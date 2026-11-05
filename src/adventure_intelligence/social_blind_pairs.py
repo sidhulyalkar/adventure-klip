@@ -16,6 +16,7 @@ import json
 import math
 import os
 import random
+import shutil
 
 from .social_action_lens import USER_VERSION, FEATURE_VERSION, _json, _new_folder
 from .social_temporal_evidence import VERSION as TEMPORAL_VERSION
@@ -278,7 +279,51 @@ def make_pair_study(workspace:Path,study_file:Path,features_file:Path,
     return report,selected
 
 
-def _review_html(report:dict,*,root:Path,dest:Path,manifest_sha:str)->str:
+def _local_preview_links(root:Path,dest:Path,pairs:list[dict])->tuple[dict[str,str],dict]:
+    """Keep file:// preview playback in the HTML's own directory tree.
+
+    Use a same-volume hard link (no extra video storage) if permitted; else
+    copy the bounded verified *derivative* only. Never link an original video.
+    """
+    media=dest/"media"
+    media.mkdir(mode=0o700,exist_ok=False)
+    linked={}
+    stats=Counter()
+    for pair in pairs:
+        for side in ("a","b"):
+            clip=pair[side]
+            source=Path(clip["verifiedPreview"])
+            aid,start,end=(clip[k] for k in ("assetId","startMs","endMs"))
+            expected,receipt=preview_paths(root,aid,start,end)
+            if source!=expected or not source.is_relative_to(
+                    root/"reports"/"studio-preview-cache-v1"):
+                raise ValueError("Cannot present a video outside verified private preview cache")
+            if not _check_cached(source,receipt,aid=aid,start_ms=start,end_ms=end):
+                raise ValueError("A selected H264 preview changed before local presentation")
+            key=str(source)
+            if key in linked:
+                continue
+            target=media/source.name
+            if target.exists() or target.is_symlink():
+                raise ValueError("Unexpected duplicate local media path")
+            try:
+                os.link(source,target)
+                stats["hardlinkedProxies"]+=1
+            except OSError:
+                # Same workspace usually permits hardlinks; a permission or
+                # unusual filesystem may require bounded private derivatives.
+                shutil.copyfile(source,target,follow_symlinks=False)
+                stats["copiedProxies"]+=1
+            if (not target.is_file() or target.stat().st_size!=source.stat().st_size
+                    or sha256(target.read_bytes()).hexdigest()!=
+                        json.loads(receipt.read_text())["previewSha256"]):
+                raise ValueError("Local media derivative differs from verified preview receipt")
+            linked[key]="media/"+quote(source.name,safe=".")
+    return linked,dict(sorted(stats.items()))
+
+
+def _review_html(report:dict,*,root:Path,dest:Path,manifest_sha:str,
+                 media_urls:dict[str,str])->str:
     blind=[]
     for item in report["pairs"]:
         sides={}
@@ -287,8 +332,9 @@ def _review_html(report:dict,*,root:Path,dest:Path,manifest_sha:str)->str:
             source=Path(row["verifiedPreview"])
             if not source.is_relative_to(root/"reports"/"studio-preview-cache-v1"):
                 raise ValueError("Pair preview escaped private verified cache")
-            relative=os.path.relpath(source,dest)
-            sides[side]=quote(relative,safe="/.")
+            if str(source) not in media_urls:
+                raise ValueError("Missing verified report-local video derivative")
+            sides[side]=media_urls[str(source)]
         blind.append({
             "pairId":item["pairId"],
             "sport":item["sport"],
@@ -465,14 +511,17 @@ def write_pair_study(workspace:Path,study_file:Path,features_file:Path,
     with (dest/"pairs.json").open("x",encoding="utf-8") as f:
         f.write(payload)
     fingerprint=sha256(payload.encode()).hexdigest()
+    media_urls,media_stats=_local_preview_links(root,dest,pairs)
     with (dest/"index.html").open("x",encoding="utf-8") as f:
-        f.write(_review_html(report,root=root,dest=dest,manifest_sha=fingerprint))
+        f.write(_review_html(report,root=root,dest=dest,
+                             manifest_sha=fingerprint,media_urls=media_urls))
     return {
         "status":"blind_paired_review_created" if pairs else "no_comparable_verified_pairs",
         "manifest":str(dest/"pairs.json"),"html":str(dest/"index.html"),
         "manifestSha256":fingerprint,"pairs":len(pairs),
         "pairsBySport":report["pairsBySport"],
         "coverage":report["coverage"],
+        "reportLocalVerifiedProxyMedia":media_stats,
         "originalVideosRead":0,"newModelCalls":0,"externalUploads":0,
         "humanLabelsWritten":0,
     }
