@@ -43,10 +43,11 @@ ENGAGEMENT_WEIGHTS={"shareCount":1.0,"saveCount":1.5,
 def _json(path:Path,limit:int=20_000_000)->dict:
     if not path.is_file():
         raise ValueError(
-            f"Input JSON does not exist: {path}. A Klip feature-template is "
-            "not an external training corpus. For the social corpus, run "
-            "'klip social-lens-corpus-init --output PATH', then add only real "
-            "rights-cleared creator reference examples.")
+            f"Input JSON does not exist: {path}. Check the workflow stage "
+            "and generate this exact input before running its dependent command. "
+            "For Social Lens feature/temporal/pair files, run "
+            "'klip social-lens-workflow-status' for a non-destructive diagnosis. "
+            "External social reference corpora are a separate workflow.")
     if path.stat().st_size>limit:
         raise ValueError(f"Input JSON exceeds {limit} bytes: {path}")
     document=json.loads(path.read_text(encoding="utf-8"))
