@@ -178,6 +178,8 @@ def test_save_train_template_compare_are_local_non_destructive(tmp_path):
     report=lens.save_comparison(workspace,Path(training["model"]),study_file,
                                 reviewed,workspace/"reports"/"compare",top_k=2)
     assert report["compared"]==4
+    assert Path(report["html"]).exists()
+    assert "Social Lens vs Klip" in Path(report["html"]).read_text()
     assert not report["rankingAccuracyClaim"]
     assert report["sourceVideosRead"]==0
     assert sha256(original.read_bytes()).hexdigest()==original_digest
