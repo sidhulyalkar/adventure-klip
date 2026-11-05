@@ -450,4 +450,54 @@ def test_explicit_retry_failures_is_separate_from_stalled_source_retry(tmp_path,
     assert no_retry["failed"]==1
     assert counter["n"]==1
     assert no_retry["checkpoint"]["retainedPreviousFailures"]==1
-    assert not Path(no_retry["json"]).read_text().find("synthetic failure")==-1
+    assert "synthetic failure" in Path(no_retry["json"]).read_text()
+
+
+def test_source_quarantine_skips_other_uncached_windows_after_sdcard_hang(tmp_path,monkeypatch):
+    ws,source,aid,template=_workspace(tmp_path)
+    _second_candidate(template)
+    doc=json.loads(template.read_text())
+    third=dict(doc["items"][0])
+    third["startMs"]=17000
+    third["endMs"]=27000
+    doc["items"].append(third)
+    template.write_text(json.dumps(doc))
+    dest=ws/"reports"/"quarantined-media"
+    called=[]
+    def fake(_db,_root,c,**kwargs):
+        called.append(c["startMs"])
+        if c["startMs"]==3000:
+            raise KeyboardInterrupt()
+        return {"assetId":c["assetId"],"sport":c["sport"],
+                "startMs":c["startMs"],"endMs":c["endMs"],
+                "previewVerified":False,"sourceOriginalRead":False,
+                "previewPreparedThisRun":False,"status":"missing_verified_preview"}
+    monkeypatch.setattr(temporal,"_analysis_row",fake)
+    with pytest.raises(KeyboardInterrupt):
+        temporal.save_temporal_evidence(ws,template,dest,limit=3,
+                                       run=True,prepare_previews=True)
+    assert called==[1000,3000]
+    monkeypatch.setattr(temporal,"_analysis_row",
+        lambda *_args,**_kwargs: pytest.fail("Quarantine must not open this source"))
+    after=temporal.save_temporal_evidence(ws,template,dest,limit=3,
+                         run=True,prepare_previews=True,resume=True)
+    data=json.loads(Path(after["json"]).read_text())
+    assert data["checkpoint"]["reusedSuccessfulCandidates"]==1
+    assert data["checkpoint"]["interruptedCandidatesSkipped"]==1
+    assert data["checkpoint"]["quarantinedUncachedSourceCandidates"]==1
+    assert [f["errorType"] for f in data["failures"]]==[
+        "InterruptedBeforeCheckpoint","QuarantinedSourceAfterInterruption"]
+    assert data["reported"]==1 and data["failed"]==2
+    assert data["originalSourcesModified"] is False
+
+
+def test_source_verification_emits_throttled_byte_progress(tmp_path,capsys):
+    from adventure_intelligence.studio import SourceStream
+    ws,source,aid,_=_workspace(tmp_path)
+    # Stubbed source is small, but it really is SHA-checked and immutable.
+    streamer=SourceStream(ws,progress=temporal._SourceReadProgress())
+    assert streamer.verified_path(aid)[0]==source
+    err=capsys.readouterr().err
+    assert "source SHA-256" in err
+    assert source.name in err
+    assert source.read_bytes().startswith(b"untouched-original")
