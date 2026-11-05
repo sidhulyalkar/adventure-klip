@@ -16,7 +16,13 @@ The immediate path to a better editor is to test an actionable hypothesis:
 This v1 generates **same-sport, different-source A/B comparisons**, frozen to
 the exact candidate timestamp boundaries and source SHA identities, playable
 from checksum-verified local H.264 proxies only. The browser hides Klip
-scores, sample type and source identifiers. It records A/B/Tie/Neither,
+scores, sample type and source identifiers. To avoid Firefox/other browsers
+blocking cross-directory `file://` playback, it places local **hard links**
+to the already verified H.264 preview derivatives in the report's
+`media/` directory (or bounded private derivative copies if the
+filesystem forbids hard links). This uses no extra video storage on
+normal same-volume filesystems and never links an original source.
+It records A/B/Tie/Neither,
 optional reason checkboxes and comments, then exports a local JSON for
 reproducible read-only evaluation.
 
