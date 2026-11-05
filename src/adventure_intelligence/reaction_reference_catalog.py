@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
 import json
 import re
 
