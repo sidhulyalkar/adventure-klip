@@ -191,7 +191,13 @@ def main(argv: list[str] | None = None) -> int:
     social_temporal.add_argument("--features",type=Path,required=True,
         help="Existing social-lens-feature-template file, NOT external social video corpus")
     social_temporal.add_argument("--output-dir",type=Path,required=True,
-        help="NEW reports/ or exports/ directory")
+        help="NEW reports/ or exports/ directory (existing checkpoint folder only with --resume)")
+    social_temporal.add_argument("--resume",action="store_true",
+        help="Resume exactly matching incomplete checkpoint folder; interrupted clips are safely skipped")
+    social_temporal.add_argument("--retry-interrupted",action="store_true",
+        help="With --resume, explicitly retry potentially blocked source media after fixing storage")
+    social_temporal.add_argument("--retry-failures",action="store_true",
+        help="With --resume, explicitly retry recorded failed candidate analyses")
     social_temporal.add_argument("--limit",type=int,default=40,
         help="Maximum inspected candidate intervals (1..300)")
     social_temporal.add_argument("--run",action="store_true",
@@ -661,7 +667,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="social-lens-temporal":
             _print(save_temporal_evidence(root,args.features,args.output_dir,
                 limit=args.limit,run=args.run,
-                prepare_previews=args.prepare_previews))
+                prepare_previews=args.prepare_previews,
+                resume=args.resume,retry_interrupted=args.retry_interrupted,
+                retry_failures=args.retry_failures))
         elif args.command=="social-lens-corpus-init":
             _print(init_corpus(root,args.output))
         elif args.command=="social-lens-preflight":

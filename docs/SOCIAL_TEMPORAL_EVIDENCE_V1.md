@@ -170,3 +170,78 @@ The output contains `temporal-evidence.json` and `index.html`.
 This v1 deliberately adds **no learned score** and writes zero values
 to the existing ten personal human rubric fields. It is an evidence
 qualification instrument, not a viral clip predictor.
+
+
+## Removable SD-card stall: safe recovery and checkpoints
+
+If --prepare-previews waits in macOS read() on a DJI recording from a
+removable SDXC reader, the storage path may not be supplying bytes.
+Raising FFmpeg/Ollama timeouts does not help before FFmpeg starts.
+A kernel-blocked read cannot be guaranteed to stop promptly.
+
+Klip now creates a private checkpoint journal in a NEW temporal report
+directory. It records each candidate as in_progress BEFORE opening a
+potentially unavailable original, then persists success or error
+atomically. Stderr displays per-candidate progress and throttled
+SHA-256 read progress (about every 256 MiB). The final
+temporal-evidence.json only appears after completion; the checkpoint
+directory persists after Ctrl+C. Verified H.264 derivatives remain
+cached separately.
+
+### First assess already-cached previews without accessing the SD card
+
+    export WS="$HOME/AdventureAI-clean.QJnopt"
+    export FEATURES="$WS/reports/social-rubric-balanced40-v1/feature-template.json"
+
+    klip --workspace "$WS" social-lens-temporal \
+      --features "$FEATURES" --limit 40 --run \
+      --output-dir "$WS/reports/temporal-cached-only-v1"
+
+Do NOT add --prepare-previews for this inventory. It reports
+missing_verified_preview for clips without a valid H.264 derivative;
+missing does not mean a negative human-quality label.
+
+If few previews are measured, first fix SD-card access or copy/import
+legitimate unchanged originals to healthy local storage before running
+any new source-read pass. Retain catalog SHA identity and never bypass
+resolve_source hashing.
+
+### Start an explicitly authorized source-preparation run
+
+Only after physical media access is healthy:
+
+    klip --workspace "$WS" social-lens-temporal \
+      --features "$FEATURES" --limit 40 --run --prepare-previews \
+      --output-dir "$WS/reports/temporal-recoverable-v1"
+
+If it is stopped before completion, rerun with exactly the same input,
+limit, flags and output directory plus --resume:
+
+    klip --workspace "$WS" social-lens-temporal \
+      --features "$FEATURES" --limit 40 --run --prepare-previews \
+      --output-dir "$WS/reports/temporal-recoverable-v1" --resume
+
+On resume, completed rows with the same feature fingerprint and exact
+verified preview bytes are reused. Old failures are retained. Any
+candidate left in_progress is reported as InterruptedBeforeCheckpoint,
+and skipped by default, not automatically re-opened against the SD card.
+Its evidence stays UNKNOWN.
+
+Only after fixing the drive and explicitly choosing to retry a potentially
+stalled original, add --retry-interrupted. To retry previously recorded
+error rows, add --retry-failures. Each requires --resume.
+
+Different --features, --limit, --run or --prepare-previews settings require
+a NEW report directory. A complete temporal-evidence.json closes that
+journal, and new experiments require another directory.
+
+Private item checkpoints live in
+<output-dir>/checkpoints/<index>-<candidate-fingerprint>.json.
+Source MP4/MOV media, human annotations and cached embeddings remain
+unmodified. Neither checkpoints nor a synthetic CI test attest that
+the user's physical card or reader is healthy.
+
+Historical interrupted runs from before these changes never wrote
+per-candidate checkpoints; they cannot resume as such. Existing verified
+H.264 cached derivatives can still be reused in a new checkpoint-enabled
+run.

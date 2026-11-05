@@ -178,8 +178,9 @@ def studio_clip_metadata(workspace:Path, asset_id:str, start_ms:int, end_ms:int)
 
 class SourceStream:
     """Read-only source resolver; first playback verifies entire original SHA-256."""
-    def __init__(self,workspace: Path):
+    def __init__(self,workspace: Path,progress=None):
         self.workspace=workspace
+        self.progress=progress
         self._cache:dict[str,tuple[Path,tuple]]={}
         self._lock=threading.RLock()
 
@@ -196,7 +197,7 @@ class SourceStream:
                 # session; later requests validate stored inode and stat tuple.
                 cached=self._cache.get(asset_id)
                 if cached is None:
-                    path=resolve_source(db,asset)
+                    path=resolve_source(db,asset,progress=self.progress)
                     stat=path.stat()
                     fields=(stat.st_dev,stat.st_ino,stat.st_size,
                             stat.st_mtime_ns,stat.st_ctime_ns)
