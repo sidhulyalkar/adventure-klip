@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src 'self' file:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Klip | Reel Studio</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1725;--panel:#152335;--panel2:#1a2b40;--edge:#2c4055;--ink:#eff3f6;--muted:#93a9bb;--accent:#eca48d;--accent2:#b77c73;--ok:#74b3a2}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,sans-serif}
+button,input,textarea,select{font:inherit}button{cursor:pointer;border:1px solid var(--edge);background:#1a2d42;color:var(--ink);border-radius:9px;padding:9px 12px}
+button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:default}
+button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent2);border-color:var(--accent2);color:white}
+button.active{color:#fff;border-color:var(--accent);background:#503b43}
+label{font-size:12px;color:var(--muted);display:block;margin-bottom:5px}
+input,textarea,select{color:var(--ink);background:#0e1b2a;border:1px solid var(--edge);border-radius:9px;padding:10px;width:100%}
+textarea{resize:vertical;min-height:86px}input[type=range]{padding:0;accent-color:var(--accent)}
+header{height:67px;border-bottom:1px solid var(--edge);padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{font-size:18px;letter-spacing:.07em;font-weight:750}.brand span{color:var(--accent);font-weight:500}
+.subtle,.hint,.tiny{color:var(--muted)}.tiny{font-size:11px}.hint{font-size:12px}
+.shell{display:grid;grid-template-columns:245px minmax(370px,1fr) 350px;min-height:calc(100vh - 67px);max-width:1700px;margin:auto}
+aside{padding:20px 15px;border-right:1px solid var(--edge);min-width:0}
+aside h2,.notes h2{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.13em;text-transform:uppercase;margin:10px 10px 18px}
+.reel{display:block;text-align:left;width:100%;border:1px solid transparent;background:transparent;padding:12px 12px;margin:5px 0}
+.reel.active{background:var(--panel2);border-color:var(--edge)}
+.reel strong{display:block;font-weight:600}.reel small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+.section-label{font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin:22px 12px 9px}
+.player-col{padding:25px 27px;min-width:0}
+.heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+h1{font-size:22px;line-height:1.25;margin:0 0 7px;font-weight:650}
+.status{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--ok)}
+.status.scout{color:var(--accent)}
+.video-box{aspect-ratio:16/9;background:#050b13;border-radius:14px;overflow:hidden;border:1px solid #28394b;margin-top:17px;display:flex;justify-content:center;align-items:center;position:relative}
+video{display:block;width:100%;height:100%;object-fit:contain}
+#empty{max-width:410px;text-align:center;color:var(--muted);padding:25px}
+.transport{margin-top:14px;display:grid;grid-template-columns:auto auto 1fr auto auto;gap:10px;align-items:center}
+.transport button{white-space:nowrap}
+.timeline-wrap{margin-top:8px;position:relative;padding:16px 0 8px}
+#timeline{width:100%;height:7px}
+#pins{position:absolute;top:0;left:0;right:0;height:23px;pointer-events:none}
+.pin{position:absolute;top:2px;height:15px;min-width:7px;width:7px;padding:0;border:0;border-radius:4px;background:var(--accent);pointer-events:auto;transform:translateX(-50%)}
+.pin.interval{background:var(--ok);height:8px;top:10px}
+#time{font-size:12px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.clip-meta{margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chip{border-radius:15px;border:1px solid var(--edge);color:var(--muted);padding:4px 10px;font-size:11px}
+.clip-controls{margin-top:18px;display:flex;flex-wrap:wrap;align-items:center;gap:9px}
+.clip-controls button{background:transparent}
+.clip-list{margin-top:21px;display:grid;gap:8px}
+.clip-row{width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;border-radius:10px;background:var(--panel);padding:11px}
+.clip-row.active{border-color:var(--accent)}.clip-row .clip-left{display:flex;align-items:center;gap:10px}
+.clip-row small{color:var(--muted)}
+.clip-row .num{color:var(--accent);font-size:12px;font-variant-numeric:tabular-nums}
+.notes{border-left:1px solid var(--edge);padding:22px 18px;min-width:0;background:#111e2e}
+.notes h2{margin:7px 0 10px}
+.notes p{font-size:12px;color:var(--muted);margin:5px 0 15px}
+.reaction-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:10px}
+.reaction-grid button{font-size:12px;line-height:1.2;min-height:46px;padding:6px}
+.block{padding:16px 0;border-bottom:1px solid var(--edge)}
+.block:first-child{padding-top:0}
+.block label{margin-top:9px}
+#notes-list{display:grid;gap:8px;max-height:350px;overflow:auto}
+.note-row{border-radius:9px;border:1px solid var(--edge);background:var(--panel);padding:11px}
+.note-row button{padding:2px 5px;border:0;background:transparent;color:var(--accent)}
+.note-row p{font-size:13px;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0}
+#prior-note{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);font-size:13px}
+.flex{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.spread{justify-content:space-between}
+#message{font-size:12px;min-height:1.5em;color:var(--accent);overflow-wrap:anywhere}
+#file-input{display:none}
+@media(max-width:1180px){.shell{grid-template-columns:190px 1fr}.notes{grid-column:1/-1;border-left:0;border-top:1px solid var(--edge)}.player-col{padding:20px}}
+@media(max-width:690px){header{padding:0 12px}.shell{display:flex;flex-direction:column}aside{border-right:0;border-bottom:1px solid var(--edge);padding:12px}.reel{width:auto;display:inline-block;margin-right:8px}.player-col{padding:15px}.transport{grid-template-columns:auto auto 1fr auto auto;gap:5px}.transport button{padding:8px}.notes{padding:17px}}
+</style></head><body>
+<header><div class="brand">KLIP <span>/ Reel Studio</span></div><div class="hint">Private, local playback · Manual annotations · No uploads</div></header>
+<div class="shell">
+<aside aria-label="Reel collections">
+<h2>Collections</h2><div id="reels"></div>
+<div class="section-label">Playback status</div>
+<div id="coverage" class="hint" style="padding:0 12px"></div>
+<div class="section-label">Keyboard</div>
+<div class="hint" style="padding:0 12px">Space: play/pause<br>N / P: next/previous clip<br>← / →: seek five seconds<br>M: add a marker<br>[ / ]: mark selection start/end</div>
+</aside>
+<main class="player-col">
+<div class="heading"><div><h1 id="reel-name">Reel Studio</h1><div id="reel-description" class="hint"></div></div><div id="reel-position" class="hint"></div></div>
+<div class="video-box"><video id="video" controls playsinline preload="metadata"></video>
+<div id="empty" role="status">Choose a reel to begin. Only verified local video derivatives are playable.</div></div>
+<div class="transport">
+<button id="prev" title="Previous clip" aria-label="Previous clip">◀◀</button>
+<button id="play" class="primary" title="Play or pause">Play</button>
+<input id="timeline" type="range" min="0" max="1000" value="0" aria-label="Seek within video">
+<span id="time">0:00 / 0:00</span>
+<button id="next" title="Next clip" aria-label="Next clip">▶▶</button>
+</div>
+<div class="timeline-wrap"><div id="pins" aria-label="Annotated timestamps"></div></div>
+<div class="flex spread"><span id="clip-state" class="status">No clip selected</span><label style="display:flex;align-items:center;gap:7px;margin:0;color:var(--muted)"><input id="auto-next" type="checkbox" checked style="width:auto"> Automatically play next clip</label></div>
+<div class="clip-meta" id="clip-meta"></div>
+<div class="clip-controls"><button id="mark-start">[ Mark selection in</button><button id="mark-end">] Mark selection out</button><span id="selection-state" class="hint">No selected interval</span><button id="save-selection">Save selection</button><button id="clear-selection">Clear</button></div>
+<div class="section-label">In this collection</div>
+<div id="clip-list" class="clip-list"></div>
+</main>
+<section class="notes" aria-label="Time-aligned reaction notes">
+<h2>Your reaction track</h2>
+<p>Comment at the playhead, record a standout moment, or select a precise interval. These are your annotations, not ground-truth classifications.</p>
+<div class="block">
+<label for="reviewer">Reviewer pseudonym</label><input id="reviewer" maxlength="100" value="reviewer-001" autocomplete="off">
+<label for="note-kind">Annotation type</label><select id="note-kind">
+<option value="standout">Standout moment</option><option value="athletic">Athletic technique</option>
+<option value="camera">Camera / composition</option><option value="story">Story or emotion in context</option>
+<option value="nature">Nature / encounter</option><option value="uncertain">Question / uncertain</option>
+<option value="keep">Keep this cut</option><option value="skip">Skip this cut</option>
+<option value="retrim">Needs better boundaries</option></select>
+<label for="comment">Your note (optional for quick reactions)</label>
+<textarea id="comment" maxlength="1200" placeholder="What happened? Why did it stand out? What should Klip look for next?"></textarea>
+<div class="flex"><button id="add-note" class="primary">Mark at playhead</button><span id="current-time" class="tiny">0:00</span></div>
+<div class="reaction-grid" aria-label="Quick reactions">
+<button type="button" data-reaction="wow">⚡ Wow</button>
+<button type="button" data-reaction="skill">🏂 Skill</button>
+<button type="button" data-reaction="framing">📷 Shot</button>
+<button type="button" data-reaction="nature">🐟 Nature</button>
+<button type="button" data-reaction="personal">♡ Memory</button>
+<button type="button" data-reaction="unclear">? Unclear</button>
+</div>
+</div>
+<div class="block">
+<div class="flex spread"><strong>Annotations for this clip</strong><span id="note-count" class="tiny"></span></div>
+<div id="notes-list" style="margin-top:12px"></div>
+</div>
+<div class="block">
+<button id="reveal-prior">Show earlier review notes</button>
+<div id="prior-note" hidden style="margin-top:10px"></div>
+</div>
+<div class="block">
+<strong>Save your review</strong><p>Browser-local draft storage is best-effort. Export the JSON to keep your markers and comments reliably; no information is sent to a server.</p>
+<div class="flex"><button id="export" class="primary">Export annotations</button><button id="import">Import annotations</button></div>
+<input type="file" id="file-input" accept=".json,application/json">
+<div class="flex" style="margin-top:9px"><button id="clear-draft">Clear local draft</button><span id="draft-status" class="tiny"></span></div>
+<div id="message" role="status" aria-live="polite"></div>
+</div>
+</section></div>
+<script>
+"use strict";
+const payload=__KLIP_STUDIO_PAYLOAD__;
+const studioVersion="klip-reel-timed-reactions-v1";
+const clips=new Map(payload.clips.map(c=>[c.clipId,c]));
+const reels=payload.reels;
+let currentReel=null,currentClipId=null,currentIndex=0;
+let inMark=null,outMark=null;
+let notes=[];
+const $=id=>document.getElementById(id);
+const video=$("video");
+const storageKey="klip-reel-draft-"+payload.manifestSha256;
+const safeId=/^[a-zA-Z0-9_.:-]{4,100}$/;
+const allowedKinds=new Set(["standout","athletic","camera","story","nature","uncertain","keep","skip","retrim","wow","skill","framing","personal","unclear"]);
+const fmt=seconds=>{seconds=Math.max(0,Math.round(seconds||0));return Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0");};
+const selected=()=>clips.get(currentClipId);
+const reelIds=()=>currentReel?.clipIds||[];
+const clamp=(num,a,b)=>Math.max(a,Math.min(b,num));
+const timestamp=()=>{
+ const c=selected();
+ return c?clamp(c.startMs+Math.round((video.currentTime||0)*1000),c.startMs,c.endMs-1):null;
+};
+function message(txt){$("message").textContent=txt;}
+function saveDraft(){
+ try{
+  localStorage.setItem(storageKey,JSON.stringify({version:studioVersion,manifestSha256:payload.manifestSha256,notes,reviewer:$("reviewer").value}));
+  $("draft-status").textContent="Local draft saved";
+ }catch(_){$("draft-status").textContent="Browser draft unavailable; use Export";}
+}
+function loadDraft(){
+ try{
+  const obj=JSON.parse(localStorage.getItem(storageKey)||"null");
+  if(obj && obj.version===studioVersion && obj.manifestSha256===payload.manifestSha256 && Array.isArray(obj.notes)){
+   const good=obj.notes.filter(n=>validNote(n));
+   notes=good.slice(0,1500);
+   if(typeof obj.reviewer==="string"&&safeId.test(obj.reviewer))$("reviewer").value=obj.reviewer;
+  }
+ }catch(_){}
+}
+function validNote(n){
+ if(!n||typeof n!=="object"||!clips.has(n.clipId)||!allowedKinds.has(n.kind))return false;
+ const c=clips.get(n.clipId);
+ if(typeof n.annotatorId!=="string"||!safeId.test(n.annotatorId))return false;
+ if(!Number.isInteger(n.startMs)||!Number.isInteger(n.endMs)||n.startMs<c.startMs||n.endMs>c.endMs||n.startMs>n.endMs)return false;
+ if(typeof n.text!=="string"||n.text.length>1200||n.text.includes("\u0000"))return false;
+ if(typeof n.id!=="string"||n.id.length>100)return false;
+ return true;
+}
+function currentNotes(){return notes.filter(n=>n.clipId===currentClipId).sort((a,b)=>a.startMs-b.startMs);}
+function refreshReels(){
+ const container=$("reels");container.replaceChildren();
+ reels.forEach(reel=>{
+  const b=document.createElement("button");b.className="reel"+(currentReel?.reelId===reel.reelId?" active":"");
+  const strong=document.createElement("strong");strong.textContent=reel.label;
+  const meta=document.createElement("small");meta.textContent=reel.clipIds.length+" clips · "+(reel.reelId==="sport-scout"?"Unreviewed":"Human-preferred");
+  b.append(strong,meta);b.addEventListener("click",()=>chooseReel(reel.reelId));
+  container.append(b);
+ });
+ const missing=payload.clips.filter(c=>!c.videoUrl).length;
+ const kept=payload.clips.filter(c=>c.humanApproved&&c.videoUrl).length;
+ $("coverage").textContent=kept+" human-selected available · "+missing+" unavailable · "+payload.clips.filter(c=>!c.humanApproved&&c.videoUrl).length+" sporting scout candidates";
+}
+function chooseReel(id){
+ currentReel=reels.find(x=>x.reelId===id)||reels[0]||null;
+ currentIndex=0;
+ refreshReels();refreshClipList();loadClip(0,false);
+ $("reel-name").textContent=currentReel?.label||"No collection";
+ $("reel-description").textContent=currentReel?.description||"";
+}
+function refreshClipList(){
+ const list=$("clip-list");list.replaceChildren();
+ const ids=reelIds();
+ if(!ids.length){const p=document.createElement("p");p.className="hint";p.textContent="No verified clips in this collection yet. Sport scouting does not establish any successful action.";list.append(p);}
+ ids.forEach((rid,i)=>{
+  const c=clips.get(rid);
+  const b=document.createElement("button");b.className="clip-row"+(rid===currentClipId?" active":"");
+  const left=document.createElement("span");left.className="clip-left";
+  const number=document.createElement("span");number.className="num";number.textContent=String(i+1).padStart(2,"0");
+  const label=document.createElement("span");label.textContent=(c.sportFromCatalog==="unknown"?"Unclassified":c.sportFromCatalog.replaceAll("_"," "))+" · "+fmt(c.durationMs/1000);
+  left.append(number,label);
+  const state=document.createElement("small");state.textContent=c.humanApproved?"Selected":"Scout only";
+  b.append(left,state);b.addEventListener("click",()=>loadClip(i,false));list.append(b);
+ });
+}
+function loadClip(i,autoplay){
+ const ids=reelIds();
+ if(!ids.length){
+  currentClipId=null;video.pause();video.removeAttribute("src");video.load();
+  video.hidden=true;$("empty").hidden=false;$("empty").textContent="No playable clips in this collection. Nothing has been invented to fill the reel.";
+  $("clip-state").textContent="No verified clip";$("clip-state").className="status scout";
+  $("reel-position").textContent="0 / 0";$("clip-meta").replaceChildren();
+  $("timeline").value=0;$("play").disabled=true;$("prev").disabled=true;$("next").disabled=true;
+  $("mark-start").disabled=true;$("mark-end").disabled=true;$("add-note").disabled=true;
+  inMark=null;outMark=null;drawSelection();drawNotes();refreshClipList();return;
+ }
+ currentIndex=clamp(i,0,ids.length-1);
+ currentClipId=ids[currentIndex];const c=selected();
+ video.pause();video.src=c.videoUrl;video.hidden=false;$("empty").hidden=true;
+ video.load();if(autoplay)video.play().catch(()=>message("Press Play to start playback."));
+ $("reel-position").textContent=(currentIndex+1)+" / "+ids.length;
+ $("clip-state").textContent=c.humanApproved?"Human-selected window (not expert-adjudicated)":"Unreviewed sporting candidate: assess before promoting";
+ $("clip-state").className="status"+(c.humanApproved?"":" scout");
+ $("clip-meta").replaceChildren();
+ for(const label of [c.sportFromCatalog+" · catalog activity",fmt(c.durationMs/1000)+" interval",c.humanApproved?"Human Keep":"Scout only",c.clipId.slice(0,8)]){
+  const p=document.createElement("span");p.className="chip";p.textContent=label;$("clip-meta").append(p);
+ }
+ $("prev").disabled=currentIndex===0;$("next").disabled=currentIndex===ids.length-1;
+ $("mark-start").disabled=false;$("mark-end").disabled=false;$("add-note").disabled=false;$("play").disabled=false;
+ $("prior-note").hidden=true;$("reveal-prior").textContent="Show earlier review notes";
+ $("prior-note").textContent=c.priorHumanRationale.length?c.priorHumanRationale.join("\n\n"):"No earlier human rationale for this candidate.";
+ inMark=null;outMark=null;drawSelection();drawNotes();refreshClipList();updateTime();
+}
+function updateTime(){
+ const d=Number.isFinite(video.duration)?video.duration:(selected()?.durationMs||0)/1000;
+ $("time").textContent=fmt(video.currentTime)+" / "+fmt(d);
+ $("current-time").textContent="Source "+fmt((timestamp()||0)/1000);
+ $("timeline").value=d>0?String(Math.round(clamp(video.currentTime/d,0,1)*1000)):"0";
+ $("play").textContent=video.paused?"Play":"Pause";
+}
+video.addEventListener("timeupdate",updateTime);video.addEventListener("loadedmetadata",updateTime);
+video.addEventListener("play",updateTime);video.addEventListener("pause",updateTime);
+video.addEventListener("ended",()=>{if($("auto-next").checked&&currentIndex<reelIds().length-1)loadClip(currentIndex+1,true);else updateTime();});
+$("timeline").addEventListener("input",()=>{if(!selected())return;const d=Number.isFinite(video.duration)?video.duration:selected().durationMs/1000;video.currentTime=d*Number($("timeline").value)/1000;});
+$("play").addEventListener("click",()=>{if(!selected())return;if(video.paused)video.play().catch(()=>message("Playback unavailable; check local media."));else video.pause();});
+$("prev").addEventListener("click",()=>loadClip(currentIndex-1,false));
+$("next").addEventListener("click",()=>loadClip(currentIndex+1,false));
+function drawSelection(){
+ const c=selected(),get=v=>v===null?"unmarked":fmt((v-c.startMs)/1000);
+ $("selection-state").textContent=c?"In "+get(inMark)+" · Out "+get(outMark):"No selection";
+ $("save-selection").disabled=!(c&&inMark!==null&&outMark!==null&&outMark>inMark);
+ $("clear-selection").disabled=!(inMark!==null||outMark!==null);
+}
+$("mark-start").addEventListener("click",()=>{inMark=timestamp();drawSelection();});
+$("mark-end").addEventListener("click",()=>{outMark=timestamp();drawSelection();});
+$("clear-selection").addEventListener("click",()=>{inMark=null;outMark=null;drawSelection();});
+function reviewer(){const id=$("reviewer").value.trim();if(!safeId.test(id)){message("Choose a reviewer pseudonym (4–100 letters, digits, _, ., :, -).");return null;}return id;}
+function addNote(kind,start,end,text){
+ const c=selected(),person=reviewer();if(!c||!person)return;
+ if(notes.length>=1500){message("Annotation limit reached; export before continuing.");return;}
+ const note={id:"note-"+Date.now()+"-"+String(notes.length).padStart(3,"0"),
+             clipId:c.clipId,annotatorId:person,kind,startMs:start,endMs:end,text:text||""};
+ if(!validNote(note)){message("Invalid annotation timing or text.");return;}
+ notes.push(note);saveDraft();drawNotes();message("Saved "+kind+" annotation at "+fmt((start-c.startMs)/1000)+".");
+}
+$("add-note").addEventListener("click",()=>{
+ const t=timestamp();if(t===null)return;
+ addNote($("note-kind").value,t,t,$("comment").value.trim());$("comment").value="";
+});
+$("save-selection").addEventListener("click",()=>{
+ if(inMark===null||outMark===null||outMark<=inMark){message("Mark a valid in and out point.");return;}
+ addNote("retrim",inMark,outMark,$("comment").value.trim());$("comment").value="";
+ inMark=null;outMark=null;drawSelection();
+});
+for(const b of document.querySelectorAll("[data-reaction]"))b.addEventListener("click",()=>{
+ const t=timestamp();if(t!==null)addNote(b.dataset.reaction,t,t,"");
+});
+function drawNotes(){
+ const list=$("notes-list");list.replaceChildren();const arr=currentNotes();
+ $("note-count").textContent=arr.length+" markers";
+ const pins=$("pins");pins.replaceChildren();
+ if(!arr.length){
+  const p=document.createElement("p");p.className="hint";p.textContent="No notes for this clip yet. Use a quick reaction or mark a precise event.";list.append(p);return;
+ }
+ const c=selected();
+ arr.forEach(n=>{
+  const box=document.createElement("div");box.className="note-row";
+  const top=document.createElement("div");top.className="flex spread";
+  const seek=document.createElement("button");seek.textContent=fmt((n.startMs-c.startMs)/1000)+" · "+n.kind.replaceAll("_"," ");
+  seek.title="Jump to marker";
+  seek.addEventListener("click",()=>{video.currentTime=(n.startMs-c.startMs)/1000;video.pause();});
+  const del=document.createElement("button");del.textContent="Remove";del.setAttribute("aria-label","Remove marker");
+  del.addEventListener("click",()=>{notes=notes.filter(x=>x.id!==n.id);saveDraft();drawNotes();});
+  top.append(seek,del);box.append(top);
+  if(n.text){const p=document.createElement("p");p.textContent=n.text;box.append(p);}
+  if(n.endMs>n.startMs){const tiny=document.createElement("small");tiny.className="tiny";tiny.textContent="To "+fmt((n.endMs-c.startMs)/1000);box.append(tiny);}
+  list.append(box);
+  const pin=document.createElement("button");pin.className="pin"+(n.endMs>n.startMs?" interval":"");
+  pin.title=n.kind+" at "+fmt((n.startMs-c.startMs)/1000);
+  pin.style.left=(100*(n.startMs-c.startMs)/c.durationMs)+"%";
+  pin.setAttribute("aria-label",pin.title);
+  pin.addEventListener("click",()=>{video.currentTime=(n.startMs-c.startMs)/1000;video.pause();});
+  pins.append(pin);
+ });
+}
+$("reveal-prior").addEventListener("click",()=>{const hidden=$("prior-note").hidden;$("prior-note").hidden=!hidden;$("reveal-prior").textContent=hidden?"Hide earlier review notes":"Show earlier review notes";});
+function exportNotes(){
+ const obj={version:studioVersion,studioManifestSha256:payload.manifestSha256,
+            reviewer:$("reviewer").value,notes};
+ const blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"});
+ const url=URL.createObjectURL(blob),a=document.createElement("a");
+ a.href=url;a.download="klip-reel-reactions-"+payload.manifestSha256.slice(0,12)+".json";
+ document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
+ message("Downloaded annotation export. Keep this JSON with your private review files.");
+}
+$("export").addEventListener("click",exportNotes);
+$("import").addEventListener("click",()=>$("file-input").click());
+$("file-input").addEventListener("change",async()=>{
+ const file=$("file-input").files[0];if(!file)return;
+ try{
+  if(file.size>2500000)throw new Error("Review export exceeds 2.5 MB");
+  const doc=JSON.parse(await file.text());
+  if(doc.version!==studioVersion||doc.studioManifestSha256!==payload.manifestSha256||
+     !Array.isArray(doc.notes)||doc.notes.length>1500||!doc.notes.every(validNote))
+    throw new Error("This annotation export does not match the frozen reel or valid source timeline");
+  const ids=new Set();for(const n of doc.notes){if(ids.has(n.id))throw new Error("Duplicate annotation ID");ids.add(n.id);}
+  notes=doc.notes;
+  if(typeof doc.reviewer==="string"&&safeId.test(doc.reviewer))$("reviewer").value=doc.reviewer;
+  saveDraft();drawNotes();message("Imported "+notes.length+" annotations. Previous local draft replaced.");
+ }catch(err){message("Import rejected: "+String(err.message||err));}
+ $("file-input").value="";
+});
+$("clear-draft").addEventListener("click",()=>{
+ if(!confirm("Clear local annotation draft? Export first if you want to keep it."))return;
+ notes=[];try{localStorage.removeItem(storageKey);}catch(_){}
+ drawNotes();message("Local annotations cleared; source footage unchanged.");
+});
+document.addEventListener("keydown",e=>{
+ const tag=document.activeElement?.tagName;
+ if(["INPUT","TEXTAREA","SELECT","BUTTON"].includes(tag)||e.metaKey||e.ctrlKey||e.altKey)return;
+ if(e.key===" "){e.preventDefault();if(selected())video.paused?video.play():video.pause();}
+ else if(e.key==="n"||e.key==="N")loadClip(currentIndex+1,false);
+ else if(e.key==="p"||e.key==="P")loadClip(currentIndex-1,false);
+ else if(e.key==="ArrowLeft")video.currentTime=clamp(video.currentTime-5,0,video.duration||selected()?.durationMs/1000||0);
+ else if(e.key==="ArrowRight")video.currentTime=clamp(video.currentTime+5,0,video.duration||selected()?.durationMs/1000||0);
+ else if(e.key==="m"||e.key==="M"){const t=timestamp();if(t!==null)addNote("standout",t,t,"");}
+ else if(e.key==="["){inMark=timestamp();drawSelection();}
+ else if(e.key==="]"){outMark=timestamp();drawSelection();}
+});
+loadDraft();chooseReel(reels.find(r=>r.clipIds.length)?.reelId||reels[0]?.reelId);
+</script>
+</body></html>

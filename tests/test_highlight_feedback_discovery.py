@@ -252,3 +252,261 @@ def test_report_media_symlink_never_dereferences_original(frozen,tmp_path):
     proxy.symlink_to("/Volumes/UNMOUNTED_DJI/DCIM/evil.MP4")
     with pytest.raises(ValueError,match="derivative missing/altered"):
         plan_review_discovery(root,packet,[path])
+
+
+def _make_studio(frozen,tmp_path,*,workers=2,scout_limit=6):
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    from adventure_intelligence.highlight_reel_studio import assemble_reel_studio
+    root,packet,pilot,ready=frozen
+    nature=feedback(ready[0]["recordId"],"reviewer-001","keep",
+                    "Beautiful natural encounter worth highlighting")
+    athletics=feedback(ready[1]["recordId"],"reviewer-001","keep",
+                       "This is a great and readable action moment")
+    athletics["goal"]="athletic_skill"
+    exclude=feedback(ready[2]["recordId"],"reviewer-001","skip",
+                     "Not a highlight but the whole run may be useful")
+    review_file=export(tmp_path/"selected.json",pilot["manifestSha256"],
+                       [nature,athletics,exclude])
+    plan_dir=root/"reports"/"feedback-for-reels"
+    created=save_review_discovery(root,packet,[review_file],plan_dir)
+    studio_dir=root/"reports"/"interactive-reels"
+    result=assemble_reel_studio(
+        root,packet,Path(created["report"]),studio_dir,workers=workers,
+        scout_limit=scout_limit)
+    return root,packet,ready,result
+
+
+def test_interactive_reel_studio_reuses_verified_local_proxy_and_runs_parallel(
+        frozen,tmp_path,monkeypatch):
+    from adventure_intelligence.highlight_reel_feedback import qualify_reel_feedback
+    root,packet,ready,result=_make_studio(frozen,tmp_path)
+    assert result["status"]=="interactive_reel_studio_created"
+    assert result["localCacheWorkers"]==2
+    assert result["humanSelectedAvailable"]==2
+    assert result["sourceOriginalReads"]==0
+    assert result["sourceFilesModified"] is False
+    assert result["modelInferenceCalls"]==0
+    manifest=json.loads(Path(result["manifest"]).read_text())
+    assert manifest["sourceFilesModified"] is False
+    assert manifest["trainingPerformed"] is False
+    assert manifest["clipsRenderedToNewSingleMp4"]==0
+    reels={x["reelId"]:x for x in manifest["reels"]}
+    assert len(reels["human-selected"]["clipIds"])==2
+    assert len(reels["nature"]["clipIds"])==1
+    assert len(reels["athletic"]["clipIds"])==1
+    assert all(x["provenance"]=="unreviewed_scout_window"
+               for x in manifest["clips"] if not x["humanApproved"])
+    for c in manifest["clips"]:
+        if c["videoUrl"]:
+            file=Path(result["directory"])/c["videoUrl"]
+            assert file.is_file()
+            assert file.read_bytes()==(packet/"media"/(c["clipId"]+".mp4")).read_bytes()
+            assert file.stat().st_nlink==1  # independent private copy
+    html=Path(result["index"]).read_text()
+    assert "Reel Studio" in html
+    assert "Mark selection in" in html
+    assert "Mark at playhead" in html
+    assert "Export annotations" in html
+    assert "/Volumes/UNMOUNTED_DJI" not in html
+    with pytest.raises(ValueError,match="NEW"):
+        from adventure_intelligence.highlight_reel_studio import assemble_reel_studio
+        assemble_reel_studio(root,packet,
+            root/"reports"/"feedback-for-reels"/"review-discovery-plan.json",
+            Path(result["directory"]),workers=2)
+
+
+def test_reel_feedback_grounding_and_exact_trim_proposals(frozen,tmp_path):
+    from adventure_intelligence.highlight_reel_feedback import (
+        qualify_reel_feedback,save_reel_feedback
+    )
+    root,packet,ready,result=_make_studio(frozen,tmp_path,scout_limit=0)
+    studio_dir=Path(result["directory"])
+    manifest=json.loads(Path(result["manifest"]).read_text())
+    assert all(x["humanApproved"] for x in manifest["clips"])
+    clip=next(x for x in manifest["clips"] if x["videoUrl"])
+    a=clip["startMs"]+2000
+    b=clip["startMs"]+4000
+    review={
+        "version":"klip-reel-timed-reactions-v1",
+        "studioManifestSha256":result["manifestSha256"],
+        "reviewer":"reviewer-001",
+        "notes":[{
+            "id":"note-0001","clipId":clip["clipId"],
+            "annotatorId":"reviewer-001","kind":"retrim",
+            "startMs":a,"endMs":b,
+            "text":"Start here for the setup and end just after the payoff",
+        },{
+            "id":"note-0002","clipId":clip["clipId"],
+            "annotatorId":"reviewer-001","kind":"standout",
+            "startMs":b,"endMs":b,"text":"This frame is really interesting",
+        }],
+    }
+    path=tmp_path/"timed-annotations.json"
+    path.write_text(json.dumps(review))
+    report=qualify_reel_feedback(root,studio_dir,path)
+    assert report["humanMarkerCount"]==2
+    assert report["annotatedClips"]==1
+    assert len(report["humanProposedRetrims"])==1
+    assert len(report["humanInterestDiscoveryProposals"])==1
+    interest=report["humanInterestDiscoveryProposals"][0]
+    assert interest["sourceMediaReadAuthorized"] is False
+    assert interest["humanHighlightApprovedAutomatically"] is False
+    assert interest["startMs"]<=b<interest["endMs"]
+    assert report["humanProposedRetrims"][0]["startMs"]==a
+    assert report["humanProposedRetrims"][0]["endMs"]==b
+    assert report["sourceOriginalReads"]==0
+    assert report["trainingRightsVerified"] is False
+    dest=root/"reports"/"timed-feedback"
+    saved=save_reel_feedback(root,studio_dir,path,dest)
+    assert saved["proposedRetrims"]==1
+    assert saved["interestWindowProposals"]==1
+    assert Path(saved["interestWindows"]).is_file()
+    assert saved["sourceOriginalReads"]==0
+    assert Path(saved["retrims"]).is_file()
+    review["notes"][0]["endMs"]=clip["endMs"]
+    path.write_text(json.dumps(review))
+    with pytest.raises(ValueError,match="outside the source interval"):
+        qualify_reel_feedback(root,studio_dir,path)
+    review["notes"][0]["endMs"]=b
+    review["studioManifestSha256"]="0"*64
+    path.write_text(json.dumps(review))
+    with pytest.raises(ValueError,match="exact frozen reel"):
+        qualify_reel_feedback(root,studio_dir,path)
+
+
+def test_reel_studio_scout_limit_zero_and_tampered_derivative(frozen,tmp_path):
+    from adventure_intelligence.highlight_reel_feedback import qualify_reel_feedback
+    root,packet,ready,result=_make_studio(frozen,tmp_path,workers=1,scout_limit=0)
+    manifest=json.loads(Path(result["manifest"]).read_text())
+    assert result["sportScoutingAvailable"]==0
+    assert all(x["humanApproved"] for x in manifest["clips"])
+    clip=next(x for x in manifest["clips"] if x["videoUrl"])
+    blob={
+        "version":"klip-reel-timed-reactions-v1",
+        "studioManifestSha256":result["manifestSha256"],
+        "notes":[{"id":"note-1","clipId":clip["clipId"],
+                  "annotatorId":"reviewer-001","kind":"keep",
+                  "startMs":clip["startMs"],"endMs":clip["startMs"],
+                  "text":"Great moment"}],
+    }
+    notes=tmp_path/"valid.json";notes.write_text(json.dumps(blob))
+    local=Path(result["directory"])/clip["videoUrl"]
+    local.write_bytes(b"tampered report-only derivative"*4)
+    with pytest.raises(ValueError,match="missing, changed"):
+        qualify_reel_feedback(root,Path(result["directory"]),notes)
+
+
+def test_offline_reel_javascript_syntax_and_privacy(frozen,tmp_path):
+    import shutil,subprocess
+    root,packet,ready,result=_make_studio(frozen,tmp_path)
+    html=Path(result["index"]).read_text()
+    assert "connect-src 'none'" in html
+    assert "Training" not in html
+    assert "__KLIP_STUDIO_PAYLOAD__" not in html
+    node=shutil.which("node")
+    if not node:
+        pytest.skip("Node.js unavailable for static offline review script lint")
+    script=html.split("<script>",1)[1].split("</script>",1)[0]
+    check=subprocess.run([node,"--check","-"],input=script.encode(),
+                         stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                         timeout=25,check=False)
+    assert check.returncode==0,check.stderr.decode("utf-8","replace")
+
+
+def test_reel_work_is_local_only_even_when_sdcard_unmounted(frozen,tmp_path,monkeypatch):
+    from adventure_intelligence.highlight_reel_studio import assemble_reel_studio
+    root,packet,ready,result=_make_studio(frozen,tmp_path)
+    plan=root/"reports"/"feedback-for-reels"/"review-discovery-plan.json"
+    old_stat,old_resolve,old_is_file=Path.stat,Path.resolve,Path.is_file
+    def forbid_external(old):
+        def wrapped(self,*a,**kw):
+            if str(self).startswith("/Volumes/UNMOUNTED_DJI"):
+                pytest.fail("No original removable video access!")
+            return old(self,*a,**kw)
+        return wrapped
+    monkeypatch.setattr(Path,"stat",forbid_external(old_stat))
+    monkeypatch.setattr(Path,"resolve",forbid_external(old_resolve))
+    monkeypatch.setattr(Path,"is_file",forbid_external(old_is_file))
+    more=assemble_reel_studio(
+        root,packet,plan,root/"reports"/"read-only-again",
+        workers=4,scout_limit=4)
+    assert more["sourceOriginalReads"]==0
+    assert more["localCacheWorkers"]==4
+
+
+def test_optional_preview_reel_render_uses_only_valid_local_proxy(frozen,tmp_path):
+    import shutil,subprocess
+    from adventure_intelligence.highlight_reel_render import render_local_reels
+    from adventure_intelligence.studio_preview_judge import preview_paths
+    ffmpeg=shutil.which("ffmpeg")
+    ffprobe=shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        pytest.skip("FFmpeg and FFprobe are required for a real preview render test")
+    root,packet,pilot,ready=frozen
+    rid=ready[0]["recordId"]
+    aid=ready[0]["source"]["assetSha256"]
+    real=tmp_path/"real-valid-source-preview.mp4"
+    ff=subprocess.run([
+        ffmpeg,"-hide_banner","-loglevel","error","-nostdin","-y",
+        "-f","lavfi","-i","color=c=blue:s=128x72:r=10",
+        "-t","1.5","-an","-c:v","libx264","-pix_fmt","yuv420p",str(real)
+    ],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=45)
+    assert ff.returncode==0,ff.stderr.decode("utf-8","replace")
+    # Only synthetic derivative fixture bytes are replaced. No real
+    # source media or user's archive is accessed in CI.
+    preview,receipt=preview_paths(root,aid,1000,21000)
+    blob=real.read_bytes()
+    preview.write_bytes(blob)
+    digest=sha256(blob).hexdigest()
+    old=json.loads(receipt.read_text())
+    old["previewSha256"]=digest
+    receipt.write_text(json.dumps(old))
+    view=json.loads((packet/"presentation.json").read_text())
+    view["records"][rid]["proxySha256"]=digest
+    (packet/"presentation.json").write_text(json.dumps(view))
+    root,packet,ready,result=_make_studio(frozen,tmp_path,scout_limit=0)
+    studio=Path(result["directory"])
+    output=root/"reports"/"rendered-nature"
+    rendered=render_local_reels(root,studio,output,reel_id="nature",workers=2)
+    assert rendered["renderedReels"]==1
+    assert rendered["originalSourceReads"]==0
+    manifest=json.loads(Path(rendered["report"]).read_text())
+    assert manifest["sourcePreviewOnly"] is True
+    assert manifest["fullResolutionSourceRender"] is False
+    assert manifest["audioPreserved"] is False
+    assert manifest["reels"][0]["status"]=="rendered_preview_mp4"
+    produced=output/"nature.mp4"
+    assert produced.is_file() and produced.stat().st_size>100
+    probe=subprocess.run([
+        ffprobe,"-v","error","-show_entries","stream=codec_name,width,height",
+        "-select_streams","v:0","-of","json",str(produced)
+    ],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=25,check=True)
+    stream=json.loads(probe.stdout)["streams"][0]
+    assert stream["codec_name"]=="h264"
+    assert (stream["width"],stream["height"])==(960,540)
+    with pytest.raises(ValueError,match="NEW"):
+        render_local_reels(root,studio,output,reel_id="nature")
+    with pytest.raises(ValueError,match="unreviewed"):
+        render_local_reels(root,studio,root/"reports"/"unapproved",
+                           reel_id="sport-scout")
+    assert not (root/"reports"/"unapproved").exists()
+
+
+def test_preview_renderer_fails_closed_if_cached_reel_was_tampered(frozen,tmp_path):
+    import shutil
+    from adventure_intelligence.highlight_reel_render import render_local_reels
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg unavailable")
+    root,packet,ready,result=_make_studio(frozen,tmp_path,scout_limit=0)
+    studio=Path(result["directory"])
+    manifest=json.loads(Path(result["manifest"]).read_text())
+    nature=next(c for c in manifest["clips"] if c["category"]=="nature")
+    local=studio/nature["videoUrl"]
+    local.write_bytes(b"tampered"+local.read_bytes())
+    exported=render_local_reels(
+        root,studio,root/"reports"/"fail-closed-render",reel_id="nature")
+    assert exported["renderedReels"]==0
+    assert exported["failedReels"]==1
+    report=json.loads(Path(exported["report"]).read_text())
+    assert report["reels"][0]["status"]=="not_rendered_missing_or_invalid_proxy"
+    assert not (root/"reports"/"fail-closed-render"/"nature.mp4").exists()

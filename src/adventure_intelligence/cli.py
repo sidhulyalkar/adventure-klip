@@ -56,6 +56,9 @@ from .highlight_curation_validate import audit_highlight_curation_manifest
 from .highlight_curation_pilot import save_curation_pilot
 from .highlight_curation_review import import_curation_reviews
 from .highlight_feedback_discovery import save_review_discovery
+from .highlight_reel_studio import assemble_reel_studio
+from .highlight_reel_feedback import save_reel_feedback
+from .highlight_reel_render import render_local_reels
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -223,6 +226,39 @@ def main(argv: list[str] | None = None) -> int:
         help="Deterministic selection seed")
     pilot.add_argument("--max-per-source",type=int,default=2,
         help="Maximum intervals from one source (1..8)")
+    reel_render=sub.add_parser("highlight-reel-render",
+        help="Optionally render verified LOCAL proxy playlists to preview-resolution MP4 using bounded FFmpeg CPU jobs")
+    reel_render.add_argument("--studio-dir",type=Path,required=True,
+        help="Existing private interactive Reel Studio output directory")
+    reel_render.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ output directory")
+    reel_render.add_argument("--reel",default="all",
+        choices=["all","human-selected","nature","cinematic","personal","athletic","sport-scout"],
+        help="Which collection to export; all excludes unreviewed sport scouting by default")
+    reel_render.add_argument("--workers",type=int,default=2,
+        help="Concurrent FFmpeg encode jobs on verified local derivatives (1..2)")
+    reel_render.add_argument("--allow-scout",action="store_true",
+        help="Explicitly include unreviewed sport-scout previews in a separate, clearly labeled scouting MP4")
+    reel_feedback=sub.add_parser("highlight-reel-feedback",
+        help="Import per-frame-timeline human reactions from frozen local Reel Studio, with no original reads")
+    reel_feedback.add_argument("--studio-dir",type=Path,required=True,
+        help="Existing private interactive reel studio directory")
+    reel_feedback.add_argument("--annotations",type=Path,required=True,
+        help="Downloaded local reel-reactions JSON export")
+    reel_feedback.add_argument("--output-dir",type=Path,required=True,
+        help="NEW reports/ or exports/ directory for source-timed feedback")
+    reel_studio=sub.add_parser("highlight-reel-studio",
+        help="Build offline interactive human-selected and sport-scout reels from verified LOCAL cached previews")
+    reel_studio.add_argument("--pilot-dir",type=Path,required=True,
+        help="Frozen private curation pilot with verified preview derivatives")
+    reel_studio.add_argument("--feedback",type=Path,required=True,
+        help="Private review-discovery-plan.json from highlight-feedback-plan")
+    reel_studio.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ directory for interactive reel studio")
+    reel_studio.add_argument("--workers",type=int,default=2,
+        help="Concurrent checksum-verified local preview copies only (1..4), never original-source reads")
+    reel_studio.add_argument("--scout-limit",type=int,default=12,
+        help="Maximum unreviewed known-sport candidates, kept separate from human highlights (0..80)")
     feedback_plan=sub.add_parser("highlight-feedback-plan",
         help="Map human review preferences to source-safe highlight and context-discovery proposals")
     feedback_plan.add_argument("--pilot-dir",type=Path,required=True,
@@ -717,6 +753,17 @@ def main(argv: list[str] | None = None) -> int:
             _print(save_curation_pilot(root,args.study,args.features,
                 args.output_dir,limit=args.limit,seed=args.seed,
                 max_per_source=args.max_per_source))
+        elif args.command=="highlight-reel-render":
+            _print(render_local_reels(
+                root,args.studio_dir,args.output_dir,reel_id=args.reel,
+                workers=args.workers,allow_scout=args.allow_scout))
+        elif args.command=="highlight-reel-feedback":
+            _print(save_reel_feedback(
+                root,args.studio_dir,args.annotations,args.output_dir))
+        elif args.command=="highlight-reel-studio":
+            _print(assemble_reel_studio(
+                root,args.pilot_dir,args.feedback,args.output_dir,
+                workers=args.workers,scout_limit=args.scout_limit))
         elif args.command=="highlight-feedback-plan":
             _print(save_review_discovery(root,args.pilot_dir,args.reviews,
                 args.output_dir))
