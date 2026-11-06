@@ -81,7 +81,8 @@ def run_cached_secondlook_batches(workspace:Path,assignments:Path,output_dir:Pat
         _write_atomic(state_file,checkpoint)
     excluded=set(checkpoint["excludedReviewIds"])
     start_at=len(checkpoint["batchFiles"])
-    for i in range(start_at,min(40,start_at+batches)):
+    remaining=0 if checkpoint.get("completed") else min(batches,40-start_at)
+    for i in range(start_at,start_at+remaining):
         report=inspect_temporal_candidates(
             root,assignments,model=model,limit=8,run=True,
             exclude_review_ids=tuple(sorted(excluded)))
