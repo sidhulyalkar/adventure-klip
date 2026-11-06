@@ -25,6 +25,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import time
 
 from .archive_pilot import _open_catalog, _table
 from .highlight_curation_pilot import _safe_dest
@@ -500,6 +501,7 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
             if prev and prev.get("status")=="failed" and not retry_failed:
                 continue
             queued+=1
+            began=time.monotonic()
             try:
                 path=_require_local_path(
                     item["storedPathAsCatalogued"],root,trusted,allow_mounted_ssd)
@@ -516,12 +518,15 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
                     state["sourceHashPasses"]+=1
                     state["sourceReadsPerformed"]+=1
                     _hash_verified(path,aid)
+                    sha_seconds=max(.001,time.monotonic()-began)
                     meta=probe(path)
                     actual=float(meta["duration"])
                     expected=item["durationMsFromCatalog"]/1000
                     if not math.isfinite(actual) or abs(actual-expected)>max(10,expected*.05):
                         raise ValueError("ffprobe duration differs from frozen catalog; requires human metadata review")
+                    decode_began=time.monotonic()
                     samples=motion_series(path,fps=fps,total_seconds=expected)
+                    decode_seconds=max(.001,time.monotonic()-decode_began)
                     after=path.stat()
                     proof=lambda st:(st.st_dev,st.st_ino,st.st_size,
                                      st.st_mtime_ns,st.st_ctime_ns)
@@ -538,6 +543,12 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
                         "ffprobeDurationSeconds":actual,
                         "sampleFps":fps,
                         "lowResolutionMotionSamples":len(samples),
+                        "measuredSourceShaSeconds":round(sha_seconds,3),
+                        "measuredDecoderWallSeconds":round(decode_seconds,3),
+                        "measuredSourceShaMiBPerSecond":round(
+                            before.st_size/1024**2/sha_seconds,2),
+                        "measuredDecodeVideoSecondsPerWallSecond":round(
+                            actual/decode_seconds,2),
                         "candidateHypotheses":proposals,
                         "noActionOutcomePredicted":True,
                         "noSemanticSpeciesClaim":True,
@@ -564,6 +575,7 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
                 "status":status,
                 "reportSha256":receipt,
                 "reason":reason,
+                "attemptWallSeconds":round(time.monotonic()-began,3),
             }
             _atomic_json(dest/"scan-state.json",state)
             print(f"[archive-campaign] {queued}/{max_assets} {aid[:12]} {status}",
@@ -591,6 +603,7 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
         "justCompleted":changed,
         "sourceHashPasses":state["sourceHashPasses"],
         "sourceMediaReadsWereExplicitlyAuthorized":True,
+        "benchmarkFutureWorkerParallelismOnlyAfterSeveralMeasuredSources":True,
         "sourceFilesModified":False,
         "humanApprovedHighlights":0,
         "trainingPerformed":False,
