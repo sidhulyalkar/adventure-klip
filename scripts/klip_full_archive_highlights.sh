@@ -15,6 +15,19 @@ PASSES="${SCAN_PASSES:-40}"
 FPS="${SCAN_FPS:-1}"
 PACKET_LIMIT="${PACKET_LIMIT:-120}"
 PREPARE_MISSING_PREVIEWS="${PREPARE_MISSING_PREVIEWS:-NO}"
+# Fail before creating a new frozen campaign if the selected source is a
+# non-existent example path, or unacknowledged mounted media.
+if [[ "$PHASE" != audit && "$PHASE" != packet && -n "$SOURCE_ROOT" ]]; then
+  if [[ "$SOURCE_ROOT" = /Volumes/* && "$MOUNTED_ACK" != YES ]]; then
+    echo "BLOCKED: mounted source root requires ALLOW_MOUNTED_SSD=YES; do not use stalled SDXC cards." >&2
+    exit 3
+  fi
+  if [[ "$SOURCE_ROOT" = /absolute/path/* || ! -d "$SOURCE_ROOT" ]]; then
+    echo "BLOCKED: HEALTHY_SOURCE_ROOT must be a real, existing, healthy local footage directory, not an example path." >&2
+    echo "Run: python scripts/klip_source_root_preflight.py --workspace \"$WS\"" >&2
+    exit 3
+  fi
+fi
 command -v klip >/dev/null
 command -v python >/dev/null
 mkdir -p "$CAMPAIGN_DIR"
@@ -56,6 +69,38 @@ if [[ "$PHASE" != scan && "$PHASE" != all && "$PHASE" != packet ]]; then
   echo "Use PHASE=audit, scan, packet or all" >&2; exit 2
 fi
 if [[ "$PHASE" != packet ]]; then
+# The audit contains only catalogued paths. A new trusted folder that has not
+# been indexed will not magically make old /Volumes paths eligible for scans.
+# Check this lexically, without resolving or statting stale catalog paths.
+if ! python - "$CAMPAIGN_DIR/audit/campaign-audit.json" "$WS" "$SOURCE_ROOT" <<'PY'
+import json,os,sys
+from pathlib import Path
+audit=Path(sys.argv[1])
+ws=Path(os.path.abspath(os.path.expanduser(sys.argv[2])))
+selected=sys.argv[3]
+allowed=[ws/"originals"]
+if selected:
+    allowed.append(Path(os.path.abspath(os.path.expanduser(selected))))
+data=json.loads(audit.read_text())
+eligible=sum(
+    isinstance(item.get("storedPathAsCatalogued"),str)
+    and item["storedPathAsCatalogued"].startswith("/")
+    and any(
+        Path(os.path.abspath(item["storedPathAsCatalogued"])).is_relative_to(root)
+        for root in allowed
+    )
+    for item in data["assets"]
+)
+if eligible==0:
+    print("BLOCKED: 0 catalogued sources are under managed originals or HEALTHY_SOURCE_ROOT.",file=sys.stderr)
+    print("Index verified healthy copies first, then create a NEW campaign audit.",file=sys.stderr)
+    print("Try: python scripts/klip_source_root_preflight.py --workspace WS --trusted-root HEALTHY_FOLDER",file=sys.stderr)
+    raise SystemExit(3)
+print("Catalog paths under authorized roots:",eligible,"of",len(data["assets"])," (not SHA-verified yet)")
+PY
+then
+  exit 3
+fi
 if [[ "$SOURCE_ACK" != YES ]]; then
   echo "BLOCKED: requires ENABLE_ORIGINAL_READS=YES for healthy, local video ONLY." >&2
   exit 3
