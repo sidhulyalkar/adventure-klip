@@ -149,6 +149,16 @@ def test_builds_context_routing_from_exact_frozen_manifest(frozen,tmp_path):
     output=save_review_discovery(root,packet,[path],root/"reports"/"plan")
     assert output["status"]=="review_discovery_plan_created"
     assert output["manualDeletionRequests"]==1
+    shortlist=json.loads(Path(output["highlightsFile"]).read_text())
+    assert len(shortlist["highlights"])==1
+    assert shortlist["clipsRendered"]==0
+    next_plan=json.loads(Path(output["sourceContextPlan"]).read_text())
+    assert next_plan["sourceMediaReadAuthorized"] is False
+    assert next_plan["proposals"]
+    deletion=json.loads(Path(output["manualDeletionHolds"]).read_text())
+    assert deletion["filesDeleted"]==0
+    assert deletion["requiresExplicitFutureConfirmation"] is True
+    assert len(deletion["requests"])==1
     report=json.loads(Path(output["report"]).read_text())
     assert report["decisions"]==plan["decisions"]
     html=Path(output["html"]).read_text()
