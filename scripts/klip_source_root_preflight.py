@@ -134,20 +134,57 @@ def build_report(workspace: Path, root: Path | None = None) -> dict:
             by_name_size[(Path(row["stored_path"]).name.casefold(), size)].add(row["id"])
     matched_ids = set()
     potential = []
+    discovered_by_path = {}
     filenames = 0
     total_bytes = 0
     ambiguous = 0
     for path, nbytes in candidates_under(root):
         filenames += 1
         total_bytes += nbytes
+        discovered_by_path[str(path)] = nbytes
         ids = sorted(by_name_size.get((path.name.casefold(), nbytes), ()))
         if ids:
             matched_ids.update(ids)
             ambiguous += len(ids) > 1
             potential.append({"path": str(path), "sizeBytes": nbytes,
                               "possibleSourceIds": ids, "shaVerified": False})
+    # Compare already-enumerated local entries against saved catalog paths.
+    # This is *metadata reconciliation only*: no stored_path stat/resolve/open,
+    # no SHA-256 and no inference that a same-size file has identical bytes.
+    cataloged_paths = {}
+    for row in rows:
+        path = row.get("stored_path")
+        if isinstance(path, str) and path.startswith("/"):
+            old = lexical(path)
+            if old.is_relative_to(root):
+                cataloged_paths[str(old)] = row.get("size_bytes")
+    exact_and_size = sorted(
+        path for path, size in cataloged_paths.items()
+        if discovered_by_path.get(path) == size
+    )
+    size_different = sorted(
+        path for path, size in cataloged_paths.items()
+        if path in discovered_by_path and discovered_by_path[path] != size
+    )
+    missing = sorted(path for path in cataloged_paths if path not in discovered_by_path)
+    unlisted = sorted(path for path in discovered_by_path if path not in cataloged_paths)
     free_bytes = shutil.disk_usage(workspace).free
     report.update({
+        "catalogPathsInsideTrustedRoot": len(cataloged_paths),
+        "catalogSamePathSameSizeUnverified": len(exact_and_size),
+        "catalogSamePathDifferentSize": len(size_different),
+        "catalogPathNotEnumerated": len(missing),
+        "localPathsNotInCatalogAtSamePath": len(unlisted),
+        "catalogPathNotEnumeratedSample": missing[:20],
+        "catalogSizeMismatchSample": size_different[:20],
+        "localPathsNotInCatalogSample": unlisted[:20],
+        "recommendation": (
+            "Existing catalog paths and sizes match the selected SSD metadata. "
+            "A frozen audit and SHA-verifying two-source scan can proceed without a full reindex."
+            if len(exact_and_size) > 0 else
+            "No matching existing catalog path/size evidence under this root. "
+            "Investigate remapping or explicit zero-copy indexing before scanning."
+        ),
         "trustedRoot": str(root),
         "localVideoFilesEnumerated": filenames,
         "localVideoBytesEnumerated": total_bytes,
@@ -157,8 +194,8 @@ def build_report(workspace: Path, root: Path | None = None) -> dict:
         "matchedCandidatesNotVerified": potential,
         "workspaceFreeBytes": free_bytes,
         "catalogCopyWouldFitWorkspaceAtThisInstant": catalog_bytes <= free_bytes,
-        "note": "Filename and size are only discovery clues; renamed files can match by SHA despite zero filename hits.",
-        "nextStep": "If this is a healthy local source, run `klip --workspace WS index ROOT --dry-run` then `klip --workspace WS index ROOT`; inspect errors and re-audit into a NEW campaign directory.",
+        "note": "Filename, path and size are discovery clues only, not SHA or decode verification. A different-path file may contain an already-catalogued SHA.",
+        "nextStep": "If catalog paths and sizes already match, freeze a NEW audit and run a bounded SHA-verifying scan. Otherwise assess missing/new paths before electing full zero-copy indexing.",
     })
     return report
 
