@@ -495,3 +495,67 @@ def test_campaign_status_tracks_playable_packet_and_rejects_bad_source_receipt(
     assert tampered["scan"]["reportIntegrityFailures"]==1
     assert tampered["scan"]["completed"]==0
     assert tampered["goNoGo"]["coarseScannedEveryCatalogSource"] is False
+
+
+def test_real_ffmpeg_coarse_scan_to_playable_blind_packet(tmp_path):
+    """End-to-end integration against ORIGINAL SYNTHETIC video, never personal media."""
+    import shutil
+    import subprocess
+    from adventure_intelligence.full_archive_review_packet import prepare_campaign_packet
+    from adventure_intelligence.media import probe
+    ffmpeg=shutil.which("ffmpeg")
+    ffprobe=shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        pytest.skip("FFmpeg executable unavailable")
+    root=tmp_path/"workspace"
+    originals=root/"originals"
+    originals.mkdir(parents=True)
+    clip=originals/"generated-synthetic-test.mp4"
+    encode=subprocess.run([
+        ffmpeg,"-hide_banner","-loglevel","error","-nostdin","-y",
+        "-f","lavfi","-i","testsrc2=size=128x72:rate=4",
+        "-t","24","-an","-c:v","libx264",
+        "-preset","ultrafast","-pix_fmt","yuv420p",
+        str(clip),
+    ],capture_output=True,timeout=45)
+    if encode.returncode:
+        pytest.skip("FFmpeg test fixture encoder unavailable")
+    aid=sha256(clip.read_bytes()).hexdigest()
+    duration=probe(clip)["duration"]
+    assert 22<=duration<=26
+    with connect(root) as db:
+        db.execute(
+            "INSERT INTO assets(id,sha256,stored_path,size_bytes,suffix,duration,activity)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (aid,aid,str(clip),clip.stat().st_size,".mp4",duration,"ski"))
+    audit=campaign.create_campaign_audit(root,root/"reports"/"audit")
+    scanned=campaign.scan_campaign(
+        root,Path(audit["audit"]),root/"reports"/"scan",max_assets=1,fps=1)
+    assert scanned["completedSources"]==1
+    source_report=json.loads(
+        (root/"reports"/"scan"/"per-source"/(aid+".json")).read_text())
+    assert source_report["lowResolutionMotionSamples"]>5
+    assert source_report["measuredDecoderWallSeconds"]>0
+    assert len(source_report["candidateHypotheses"])>0
+    packet=prepare_campaign_packet(
+        root,Path(audit["audit"]),root/"reports"/"scan",
+        root/"reports"/"review-packet",prepare_missing=True,
+        limit=4,per_source=4,workers=2)
+    assert packet["verifiedReviewableClips"]>=1
+    assert packet["distinctOriginalHashPasses"]==1
+    assert packet["newPreviewDerivatives"]>=1
+    presentation=json.loads(
+        (root/"reports"/"review-packet"/"presentation.json").read_text())
+    ready=[r for r in presentation["records"].values()
+           if r["verifiedProxyReady"]]
+    assert ready
+    assert all(r["proxyUrl"].startswith("media/") for r in ready)
+    from adventure_intelligence.full_archive_campaign_status import campaign_progress
+    progress=campaign_progress(
+        root,Path(audit["audit"]),
+        scan_dir=root/"reports"/"scan",
+        packet_dir=root/"reports"/"review-packet")
+    assert progress["goNoGo"]["coarseScannedEveryCatalogSource"] is True
+    assert progress["goNoGo"]["atLeastOnePlayableCandidate"] is True
+    assert progress["goNoGo"]["allArchiveHighlightsDiscovered"] is False
+    assert progress["scan"]["scanDurationCoveragePercentOfEntireCatalog"]==100.0
