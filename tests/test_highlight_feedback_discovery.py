@@ -746,6 +746,8 @@ def test_cached_secondlook_batches_checkpoint_and_completed_resume(tmp_path,monk
     root=tmp_path/"workspace"
     assignments=root/"reports"/"review-assignments.json"
     assignments.parent.mkdir(parents=True)
+    with connect(root):
+        pass  # The output safety guard requires a real local catalog.
     assignments.write_text('{"version":"synthetic-frozen-fixture"}')
     calls=[]
     def fake_run(workspace,path,*,model,limit,run,exclude_review_ids):
