@@ -56,6 +56,7 @@ from .highlight_curation_validate import audit_highlight_curation_manifest
 from .highlight_curation_pilot import save_curation_pilot
 from .highlight_curation_review import import_curation_reviews
 from .highlight_feedback_discovery import save_review_discovery
+from .highlight_reel_studio import assemble_reel_studio
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -223,6 +224,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Deterministic selection seed")
     pilot.add_argument("--max-per-source",type=int,default=2,
         help="Maximum intervals from one source (1..8)")
+    reel_studio=sub.add_parser("highlight-reel-studio",
+        help="Build offline interactive human-selected and sport-scout reels from verified LOCAL cached previews")
+    reel_studio.add_argument("--pilot-dir",type=Path,required=True,
+        help="Frozen private curation pilot with verified preview derivatives")
+    reel_studio.add_argument("--feedback",type=Path,required=True,
+        help="Private review-discovery-plan.json from highlight-feedback-plan")
+    reel_studio.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ directory for interactive reel studio")
+    reel_studio.add_argument("--workers",type=int,default=2,
+        help="Concurrent checksum-verified local preview copies only (1..4), never original-source reads")
+    reel_studio.add_argument("--scout-limit",type=int,default=12,
+        help="Maximum unreviewed known-sport candidates, kept separate from human highlights (0..80)")
     feedback_plan=sub.add_parser("highlight-feedback-plan",
         help="Map human review preferences to source-safe highlight and context-discovery proposals")
     feedback_plan.add_argument("--pilot-dir",type=Path,required=True,
@@ -717,6 +730,10 @@ def main(argv: list[str] | None = None) -> int:
             _print(save_curation_pilot(root,args.study,args.features,
                 args.output_dir,limit=args.limit,seed=args.seed,
                 max_per_source=args.max_per_source))
+        elif args.command=="highlight-reel-studio":
+            _print(assemble_reel_studio(
+                root,args.pilot_dir,args.feedback,args.output_dir,
+                workers=args.workers,scout_limit=args.scout_limit))
         elif args.command=="highlight-feedback-plan":
             _print(save_review_discovery(root,args.pilot_dir,args.reviews,
                 args.output_dir))
