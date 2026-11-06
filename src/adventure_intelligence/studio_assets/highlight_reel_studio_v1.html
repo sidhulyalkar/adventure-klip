@@ -363,6 +363,28 @@ document.addEventListener("keydown",e=>{
  else if(e.key==="["){inMark=timestamp();drawSelection();}
  else if(e.key==="]"){outMark=timestamp();drawSelection();}
 });
-loadDraft();chooseReel(reels.find(r=>r.clipIds.length)?.reelId||reels[0]?.reelId);
+// Deep links from the adaptive inspection queue are accepted only for
+// existing frozen clip IDs with a bounded source-relative seek time.
+loadDraft();
+const params=new URLSearchParams(location.search);
+const requestedClip=params.get("clip");
+const requestedTime=params.get("t");
+const linkedReel=requestedClip?
+  reels.find(r=>r.clipIds.includes(requestedClip)):null;
+chooseReel(linkedReel?.reelId||reels.find(r=>r.clipIds.length)?.reelId||reels[0]?.reelId);
+if(linkedReel&&clips.has(requestedClip)){
+ const idx=reelIds().indexOf(requestedClip);
+ if(idx>=0){
+   loadClip(idx,false);
+   const c=selected(),absolute=Number(requestedTime);
+   if(requestedTime!==null&&Number.isInteger(absolute)&&
+      String(absolute)===requestedTime&&absolute>=c.startMs&&absolute<c.endMs){
+     video.addEventListener("loadedmetadata",()=>{
+       video.currentTime=(absolute-c.startMs)/1000;
+       updateTime();
+     },{once:true});
+   }
+ }
+}
 </script>
 </body></html>

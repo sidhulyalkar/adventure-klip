@@ -510,3 +510,127 @@ def test_preview_renderer_fails_closed_if_cached_reel_was_tampered(frozen,tmp_pa
     report=json.loads(Path(exported["report"]).read_text())
     assert report["reels"][0]["status"]=="not_rendered_missing_or_invalid_proxy"
     assert not (root/"reports"/"fail-closed-render"/"nature.mp4").exists()
+
+
+def test_next_pass_prioritizes_human_requests_and_binds_cached_source_time(frozen,tmp_path):
+    from adventure_intelligence.highlight_adaptive_queue import save_adaptive_queue
+    from adventure_intelligence.highlight_reel_feedback import save_reel_feedback
+    root,packet,ready,studio=_make_studio(frozen,tmp_path,workers=2,scout_limit=6)
+    manifest=json.loads(Path(studio["manifest"]).read_text())
+    clip=next(c for c in manifest["clips"] if c["videoUrl"] and c["humanApproved"])
+    source_start=clip["startMs"]
+    annotations={
+        "version":"klip-reel-timed-reactions-v1",
+        "studioManifestSha256":studio["manifestSha256"],
+        "notes":[{
+            "id":"synthetic-retrim-1","clipId":clip["clipId"],
+            "annotatorId":"reviewer-001","kind":"retrim",
+            "startMs":source_start+3000,"endMs":source_start+8000,
+            "text":"This is the best complete section",
+        },{
+            "id":"synthetic-standout-2","clipId":clip["clipId"],
+            "annotatorId":"reviewer-001","kind":"standout",
+            "startMs":source_start+6500,"endMs":source_start+6500,
+            "text":"A decisive, clearly visible moment",
+        }],
+    }
+    export_path=tmp_path/"timed.json"
+    export_path.write_text(json.dumps(annotations))
+    feedback=save_reel_feedback(root,Path(studio["directory"]),export_path,
+                                root/"reports"/"timed-for-queue")
+    assert feedback["interestWindowProposals"]==1
+    output=root/"reports"/"adaptive-queue"
+    result=save_adaptive_queue(
+        root,packet,root/"reports"/"feedback-for-reels"/"review-discovery-plan.json",
+        Path(studio["directory"]),output,
+        timed_feedback=Path(feedback["report"]),limit=30,per_source=3)
+    assert result["originalSourceReads"]==0
+    assert result["modelsTrained"]==0
+    assert result["candidates"]>=2
+    queue=json.loads(Path(result["queue"]).read_text())
+    assert queue["trainingPerformed"] is False
+    assert queue["originalMediaReads"]==0
+    assert queue["selectionIsReviewPriorityNotPredictedQualityScore"]
+    selected=queue["selected"]
+    assert selected[0]["kind"]=="retrim"
+    trim=selected[0]
+    assert trim["cachedReviewCoverage"]=="full"
+    assert trim["cachedReviewCoverageFraction"]==1.
+    assert trim["linkedStudioClipId"]==clip["clipId"]
+    assert trim["seekSourceMs"]>=source_start+3000
+    assert trim["eventExistenceOrSuccessVerified"] is False
+    assert trim["originalSourceReadAuthorized"] is False
+    assert any(c["kind"]=="marked_interest" for c in selected)
+    assert any(c["kind"]=="prior_context" for c in selected)
+    html=Path(result["html"]).read_text()
+    assert "Next review pass" in html
+    assert "Inspect available footage in Reel Studio" in html
+    assert "?clip=" in html and "&amp;t=" in html
+    assert "/Volumes/UNMOUNTED_DJI" not in html
+    assert "Your timecoded interest" in html
+    with pytest.raises(ValueError,match="NEW"):
+        save_adaptive_queue(
+            root,packet,root/"reports"/"feedback-for-reels"/"review-discovery-plan.json",
+            Path(studio["directory"]),output,timed_feedback=Path(feedback["report"]))
+
+
+def test_next_pass_is_deterministic_and_limits_per_source(frozen,tmp_path):
+    from adventure_intelligence.highlight_adaptive_queue import save_adaptive_queue
+    root,packet,ready,studio=_make_studio(frozen,tmp_path,scout_limit=6)
+    plan=root/"reports"/"feedback-for-reels"/"review-discovery-plan.json"
+    first=save_adaptive_queue(
+        root,packet,plan,Path(studio["directory"]),
+        root/"reports"/"queue-one",limit=50,per_source=1)
+    second=save_adaptive_queue(
+        root,packet,plan,Path(studio["directory"]),
+        root/"reports"/"queue-two",limit=50,per_source=1)
+    a=json.loads(Path(first["queue"]).read_text())
+    b=json.loads(Path(second["queue"]).read_text())
+    assert a==b
+    sources=[c["sourceAssetSha256"] for c in a["selected"]]
+    assert len(sources)==len(set(sources))
+    assert all(c["selectionPriorityTier"] in (0,1,2) for c in a["selected"])
+    assert all(c["editorialApprovalInferred"] is False for c in a["selected"])
+    assert all(c["newMediaPrepared"] is False for c in a["selected"])
+    assert a["originalMediaDecodes"]==0
+    assert a["trainingPerformed"] is False
+
+
+def test_next_pass_rejects_mismatched_studio_and_fabricated_timing(frozen,tmp_path):
+    from adventure_intelligence.highlight_adaptive_queue import save_adaptive_queue
+    root,packet,ready,studio=_make_studio(frozen,tmp_path,scout_limit=0)
+    plan=root/"reports"/"feedback-for-reels"/"review-discovery-plan.json"
+    corrupted=json.loads(plan.read_text())
+    corrupted["frozenPilotManifestSha256"]="0"*64
+    bad=root/"reports"/"bad-plan.json"
+    bad.write_text(json.dumps(corrupted))
+    with pytest.raises(ValueError,match="share one frozen source manifest"):
+        save_adaptive_queue(root,packet,bad,Path(studio["directory"]),
+                            root/"reports"/"bad-queue")
+    valid=json.loads(plan.read_text())
+    if valid["sourceContextProposals"]:
+        valid["sourceContextProposals"][0]["endMs"]=99_999_999_999
+        bad.write_text(json.dumps(valid))
+        with pytest.raises(ValueError,match="outside catalog-backed"):
+            save_adaptive_queue(root,packet,bad,Path(studio["directory"]),
+                                root/"reports"/"impossible-queue")
+    assert not (root/"reports"/"impossible-queue").exists()
+
+
+def test_next_pass_is_metadata_only_on_unmounted_dji(frozen,tmp_path,monkeypatch):
+    from adventure_intelligence.highlight_adaptive_queue import save_adaptive_queue
+    root,packet,ready,studio=_make_studio(frozen,tmp_path)
+    old_stat,old_resolve,old_is_file=Path.stat,Path.resolve,Path.is_file
+    def forbid_external(old):
+        def check(self,*args,**kwargs):
+            if str(self).startswith("/Volumes/UNMOUNTED_DJI"):
+                pytest.fail("Adaptive queue must never probe external original media")
+            return old(self,*args,**kwargs)
+        return check
+    monkeypatch.setattr(Path,"stat",forbid_external(old_stat))
+    monkeypatch.setattr(Path,"resolve",forbid_external(old_resolve))
+    monkeypatch.setattr(Path,"is_file",forbid_external(old_is_file))
+    result=save_adaptive_queue(
+        root,packet,root/"reports"/"feedback-for-reels"/"review-discovery-plan.json",
+        Path(studio["directory"]),root/"reports"/"no-media-queue",per_source=2)
+    assert result["originalSourceReads"]==0
