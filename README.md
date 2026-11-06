@@ -1,18 +1,21 @@
 <div align="center">
-
-# Adventure-Klip
-
-### Understand the action. Preserve the experience.
-
-**Local-first, evidence-grounded temporal video intelligence for skiing, mountain biking, snorkeling, and exploratory footage.**
-
-[![CI](https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/Python-3.11%2B-346D95)
-![License](https://img.shields.io/badge/License-Apache--2.0-6D8793)
-![Research](https://img.shields.io/badge/Status-Research%20stage-D77C6A)
-
-**[The problem](#the-problem) · [The mathematics](#the-mathematics) · [System design](#system-design) · [Run locally](#run-it-locally) · [Research roadmap](#research-roadmap) · [Contribute](#contribute)**
-
+  <h1>Adventure-Klip</h1>
+  <h3>Understand the action. Preserve the experience.</h3>
+  <p><strong>Local-first, evidence-grounded temporal video intelligence for skiing, mountain biking, snorkeling, and exploratory footage.</strong></p>
+  <p>
+    <a href="https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+    <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-346D95">
+    <img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache--2.0-6D8793">
+    <img alt="Research stage" src="https://img.shields.io/badge/Status-Research%20stage-D77C6A">
+  </p>
+  <p>
+    <a href="#the-problem">The problem</a> ·
+    <a href="#the-mathematics">The mathematics</a> ·
+    <a href="#system-design">System design</a> ·
+    <a href="#run-it-locally">Run locally</a> ·
+    <a href="#research-roadmap">Research roadmap</a> ·
+    <a href="#contribute">Contribute</a>
+  </p>
 </div>
 
 ---
