@@ -10,6 +10,8 @@ STUDY="${STUDY:-$WS/reports/archive-value-study-pilot-v1/study.json}"
 SOURCE_ROOT="${HEALTHY_SOURCE_ROOT:-}"
 SOURCE_ACK="${ENABLE_ORIGINAL_READS:-NO}"
 MOUNTED_ACK="${ALLOW_MOUNTED_SSD:-NO}"
+SSD_IDENTITY_FILE="${SSD_IDENTITY_FILE:-}"
+RETRY_FAILED_SOURCES="${RETRY_FAILED_SOURCES:-NO}"
 BATCH="${SCAN_ASSETS_PER_PASS:-8}"
 PASSES="${SCAN_PASSES:-40}"
 FPS="${SCAN_FPS:-1}"
@@ -30,6 +32,20 @@ if [[ "$PHASE" != audit && "$PHASE" != packet && -n "$SOURCE_ROOT" ]]; then
 fi
 command -v klip >/dev/null
 command -v python >/dev/null
+# Optional per-run macOS identity pin. This checks the mounted volume UUID and
+# exact indexed root, not drive health. Disk IDs can change after reinsertion.
+check_ssd_identity() {
+  if [[ -z "$SSD_IDENTITY_FILE" ]]; then
+    return 0
+  fi
+  if [[ -z "$SOURCE_ROOT" || "$MOUNTED_ACK" != YES ]]; then
+    echo "BLOCKED: SSD_IDENTITY_FILE requires HEALTHY_SOURCE_ROOT and ALLOW_MOUNTED_SSD=YES." >&2
+    return 3
+  fi
+  python scripts/klip_ssd_mount_guard.py verify \
+    --workspace "$WS" --root "$SOURCE_ROOT" --identity "$SSD_IDENTITY_FILE"
+}
+if [[ "$PHASE" != audit ]]; then check_ssd_identity; fi
 mkdir -p "$CAMPAIGN_DIR"
 echo "Campaign: $CAMPAIGN_DIR (phase $PHASE)"
 if [[ ! -f "$CAMPAIGN_DIR/audit/campaign-audit.json" ]]; then
@@ -119,9 +135,11 @@ cmd=(--workspace "$WS" highlight-campaign-scan
      --output-dir "$CAMPAIGN_DIR/coarse-scan"
      --fps "$FPS" --workers 1 --max-assets "$BATCH")
 if [[ -n "$SOURCE_ROOT" ]]; then cmd+=(--trusted-local-root "$SOURCE_ROOT"); fi
+if [[ "$RETRY_FAILED_SOURCES" = YES ]]; then cmd+=(--retry-failed); fi
 if [[ "$MOUNTED_ACK" = YES ]]; then cmd+=(--allow-mounted-ssd); fi
 echo "Starting source scan. Sources must be on HEALTHY LOCAL storage."
 for ((i=1; i<=PASSES; i++)); do
+  check_ssd_identity
   args=("${cmd[@]}")
   if [[ -f "$CAMPAIGN_DIR/coarse-scan/scan-state.json" ]]; then args+=(--resume); fi
   result="$CAMPAIGN_DIR/scan-pass-$(printf '%03d' "$i").json"
@@ -176,6 +194,7 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
     fi
     packetargs+=(--prepare-missing)
   fi
+  check_ssd_identity
   if [[ -e "$CAMPAIGN_DIR/review-packet" ]]; then
     echo "Existing review packet preserved: $CAMPAIGN_DIR/review-packet" >&2
     echo "Use a new campaign folder for another immutable review packet." >&2
