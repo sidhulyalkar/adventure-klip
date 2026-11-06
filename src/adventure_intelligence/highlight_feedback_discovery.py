@@ -21,7 +21,7 @@ from .highlight_curation_pilot import (
     VERSION as PILOT_VERSION, MANIFEST_VERSION, _safe_dest
 )
 from .highlight_curation_review import (
-    REVIEW_VERSION, _read_json, _review
+    REVIEW_VERSION, _review
 )
 from .highlight_curation_validate import audit_highlight_curation_manifest
 
