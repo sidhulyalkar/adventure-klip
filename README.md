@@ -1,3 +1,22 @@
+# Klip experimental: Temporal Action Intelligence (cache-only)
+
+An opt-in `temporal-lite` command turns completed, homogeneous SigLIP2
+frame embeddings into a *visual change graph*: provisional segments, visual
+transition candidates, explicit unknown intervals and chronological edges.
+No original decoding, model downloads, uploads, automatic trims, or review
+database changes. Visual changes are **not** verified actions or highlights.
+
+```bash
+klip --workspace "$WS" temporal-lite --asset FULL_ASSET_SHA256 \
+  --output "$WS/reports/temporal-lite-first.json"
+```
+
+See [Temporal Action Intelligence](docs/TEMPORAL_ACTION_INTELLIGENCE.md)
+for the full qualification and study plan. This remains experimental on
+an unmerged branch stack, not a released ranking replacement.
+
+---
+
 # Klip experimental: Adaptive POV sampling (opt-in)
 
 Use `klip adaptive-plan` to create a cached-evidence-driven, bounded frame

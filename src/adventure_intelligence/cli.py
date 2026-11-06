@@ -79,6 +79,7 @@ from .examples import review_example, review_inventory
 from .review_evaluation import review_quality_report
 from .editorial_quality import editorial_candidates
 from .scene_atlas import enrich_candidates
+from .temporal_lite import build_cached_temporal_lite
 from .reels import RECIPES
 
 
@@ -549,6 +550,14 @@ def main(argv: list[str] | None = None) -> int:
     event_context.add_argument("--output-dir",required=True,type=Path)
     event_context.add_argument("--max-events",type=int,default=4)
     event_context.add_argument("--allow-model-download",action="store_true")
+    temporal=sub.add_parser("temporal-lite",
+        help="Build a no-media visual-change graph from completed SigLIP2 cache")
+    temporal.add_argument("--asset",required=True,help="Full indexed source SHA-256")
+    temporal.add_argument("--output",type=Path,required=True,
+        help="NEW JSON artifact inside workspace reports/ or exports/")
+    temporal.add_argument("--change-threshold",type=float,default=.20)
+    temporal.add_argument("--max-gap-ms",type=int,default=7000)
+    temporal.add_argument("--support-radius-ms",type=int,default=3500)
     segments=sub.add_parser("segments",
         help="Sparse sport-specific scene segments, boundary investigation and review gallery")
     segments.add_argument("--asset",required=True,
@@ -1057,6 +1066,26 @@ def main(argv: list[str] | None = None) -> int:
                 _print(build_event_context(root,args.asset,args.output_dir,
                     max_events=args.max_events,
                     allow_model_download=args.allow_model_download))
+        elif args.command=="temporal-lite":
+            workspace=root.expanduser().resolve()
+            destination=args.output.expanduser().resolve()
+            if (destination.exists() or not destination.is_relative_to(workspace)
+                    or destination==workspace or destination.suffix.lower()!=".json"
+                    or destination.relative_to(workspace).parts[0] not in {"reports","exports"}):
+                raise ValueError("Temporal report must be a NEW .json under workspace reports/ or exports/")
+            with connect(workspace) as db:
+                protect_source_output(db,destination)
+            report=build_cached_temporal_lite(
+                workspace,args.asset,change_threshold=args.change_threshold,
+                max_gap_ms=args.max_gap_ms,support_radius_ms=args.support_radius_ms)
+            destination.parent.mkdir(parents=True,exist_ok=True)
+            with destination.open("x",encoding="utf-8") as handle:
+                handle.write(json.dumps(report,indent=2,sort_keys=True,allow_nan=False)+"\n")
+            _print({"output":str(destination),"assetId":args.asset,
+                    "status":report["status"],"segments":len(report["segments"]),
+                    "visualTransitions":len(report["visualTransitions"]),
+                    "coverage":report["coverage"],
+                    "abstentionReason":report["abstentionReason"]})
         elif args.command=="segments":
             with lock_workspace(root):
                 _print(scan_segments(root,args.asset,args.output_dir,
