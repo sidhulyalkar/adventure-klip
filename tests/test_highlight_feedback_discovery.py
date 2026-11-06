@@ -634,3 +634,108 @@ def test_next_pass_is_metadata_only_on_unmounted_dji(frozen,tmp_path,monkeypatch
         root,packet,root/"reports"/"feedback-for-reels"/"review-discovery-plan.json",
         Path(studio["directory"]),root/"reports"/"no-media-queue",per_source=2)
     assert result["originalSourceReads"]==0
+
+
+def test_diagnose_missing_presentation_then_recover_exact_frozen_human_pilot(
+        frozen,tmp_path,monkeypatch):
+    from adventure_intelligence.highlight_pilot_recovery import (
+        diagnose_local_pilot,recover_local_pilot)
+    from adventure_intelligence.highlight_reel_studio import assemble_reel_studio
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "The footage contains a beautiful visible encounter")])
+    plan_root=root/"reports"/"human-feedback"
+    plan=save_review_discovery(root,packet,[human],plan_root)
+    original_bytes=Path(original["manifest"]).read_bytes()
+    (packet/"presentation.json").unlink()
+    result=diagnose_local_pilot(root,packet,Path(plan["report"]))
+    assert result["files"]["curationManifest"]["status"]=="ready"
+    assert result["files"]["presentation"]["status"]=="missing"
+    assert result["studioMetadataPreflightReady"] is False
+    assert result["originalMediaReads"]==0
+    with pytest.raises(ValueError,match=r"presentation\.json"):
+        assemble_reel_studio(root,packet,Path(plan["report"]),
+                             root/"reports"/"cannot-start")
+    assert not (root/"reports"/"cannot-start").exists()
+    recovered_dir=root/"reports"/"recovered-pilot"
+    recovered=recover_local_pilot(root,packet,Path(plan["report"]),recovered_dir)
+    assert recovered["originalSourceReads"]==0
+    assert recovered["originalPilotFilesModified"] is False
+    assert recovered["frozenManifestSha256"]==original["manifestSha256"]
+    assert (recovered_dir/"curation-manifest.json").read_bytes()==original_bytes
+    assert recovered["verifiedReviewProxies"]>0
+    assert recovered["missingReviewProxies"]>=0
+    healthy=diagnose_local_pilot(root,recovered_dir,Path(plan["report"]))
+    assert healthy["studioMetadataPreflightReady"]
+    studio=assemble_reel_studio(root,recovered_dir,Path(plan["report"]),
+                                root/"reports"/"studio-recovered",workers=2)
+    assert studio["humanSelectedAvailable"]==1
+    assert studio["sourceOriginalReads"]==0
+    assert (packet/"presentation.json").exists() is False
+    assert original_bytes==Path(original["manifest"]).read_bytes()
+
+
+def test_pilot_recovery_rejects_mismatched_reviews_and_never_mutates_original(frozen,tmp_path):
+    from adventure_intelligence.highlight_pilot_recovery import recover_local_pilot
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "Beautiful scene with clear action")])
+    plan=save_review_discovery(root,packet,[human],root/"reports"/"feedback-for-recovery")
+    forged=json.loads(Path(plan["report"]).read_text())
+    forged["frozenPilotManifestSha256"]="f"*64
+    forged_path=root/"reports"/"wrong-frozen-feedback.json"
+    forged_path.write_text(json.dumps(forged))
+    original_bytes=Path(original["manifest"]).read_bytes()
+    with pytest.raises(ValueError,match="NOT linked"):
+        recover_local_pilot(root,packet,forged_path,root/"reports"/"must-not-create")
+    assert not (root/"reports"/"must-not-create").exists()
+    assert Path(original["manifest"]).read_bytes()==original_bytes
+
+
+def test_pilot_recovery_never_follows_external_original_video_paths(frozen,tmp_path,monkeypatch):
+    from adventure_intelligence.highlight_pilot_recovery import recover_local_pilot
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "This scene has an interesting focal subject")])
+    plan=save_review_discovery(root,packet,[human],root/"reports"/"recovery-with-io-guard")
+    old_stat,old_is_file,old_resolve=Path.stat,Path.is_file,Path.resolve
+    def guard(fn):
+        def checked(self,*args,**kwargs):
+            if str(self).startswith("/Volumes/UNMOUNTED_DJI"):
+                pytest.fail("Never probe the unmounted original source card")
+            return fn(self,*args,**kwargs)
+        return checked
+    monkeypatch.setattr(Path,"stat",guard(old_stat))
+    monkeypatch.setattr(Path,"is_file",guard(old_is_file))
+    monkeypatch.setattr(Path,"resolve",guard(old_resolve))
+    result=recover_local_pilot(root,packet,Path(plan["report"]),
+                               root/"reports"/"recovered-without-sd")
+    assert result["originalSourceReads"]==0
+
+
+def test_recovery_marks_unverifiable_media_unavailable_instead_of_relabeling(frozen,tmp_path):
+    from adventure_intelligence.highlight_pilot_recovery import recover_local_pilot
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    from adventure_intelligence.studio_preview_judge import preview_paths
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "Wildlife encounter appears promising in this cut")])
+    plan=save_review_discovery(root,packet,[human],root/"reports"/"recovery-with-missing-cache")
+    rec=ready[0];rid=rec["recordId"];aid=rec["source"]["assetSha256"]
+    cache,receipt=preview_paths(root,aid,rec["event"]["startMs"],rec["event"]["endMs"])
+    receipt.unlink()
+    (packet/"presentation.json").unlink()
+    target=root/"reports"/"recovered-with-unknown"
+    recovered=recover_local_pilot(root,packet,Path(plan["report"]),target)
+    available=json.loads((target/"presentation.json").read_text())["records"][rid]
+    assert available["verifiedProxyReady"] is False
+    assert available["requiresSourceReadForPreview"] is True
+    assert not (target/"media"/(rid+".mp4")).exists()
+    assert recovered["originalSourceReads"]==0
