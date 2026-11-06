@@ -367,11 +367,47 @@ def save_review_discovery(workspace:Path,pilot_dir:Path,
     with (dest/"review-discovery-plan.json").open("x",encoding="utf-8") as fp:
         json.dump(report,fp,indent=2,sort_keys=True,allow_nan=False)
         fp.write("\n")
+    # Separate small artifacts for the next manual extraction/review steps.
+    # A shortlist is NOT a verified or rendered reel.
+    outputs={
+        "provisional-highlights.json":{
+            "version":VERSION,
+            "sourceManifestSha256":report["frozenPilotManifestSha256"],
+            "highlightGoalSpecific":True,
+            "humanPreferencesNotModelTruth":True,
+            "highlights":[x for x in report["decisions"]
+                          if x["route"]=="provisional_highlight"],
+            "sourceMediaRead":False,
+            "clipsRendered":0,
+        },
+        "source-context-proposals.json":{
+            "version":VERSION,
+            "sourceManifestSha256":report["frozenPilotManifestSha256"],
+            "proposals":report["sourceContextProposals"],
+            "observedInMedia":False,
+            "sourceMediaReadAuthorized":False,
+        },
+        "manual-deletion-holds.json":{
+            "version":VERSION,
+            "sourceManifestSha256":report["frozenPilotManifestSha256"],
+            "requests":[x for x in report["decisions"]
+                        if x["deleteRequestReviewOnlyNeverExecuted"]],
+            "filesDeleted":0,
+            "requiresExplicitFutureConfirmation":True,
+        },
+    }
+    for name,data in outputs.items():
+        with (dest/name).open("x",encoding="utf-8") as fp:
+            json.dump(data,fp,indent=2,sort_keys=True,allow_nan=False)
+            fp.write("\n")
     with (dest/"index.html").open("x",encoding="utf-8") as fp:
         fp.write(_html(report))
     return {
         "status":"review_discovery_plan_created",
         "report":str(dest/"review-discovery-plan.json"),
+        "provisionalHighlights":str(dest/"provisional-highlights.json"),
+        "sourceContextPlan":str(dest/"source-context-proposals.json"),
+        "manualDeletionHolds":str(dest/"manual-deletion-holds.json"),
         "html":str(dest/"index.html"),
         "reviewedWindows":report["reviewedWindows"],
         "provisionalHighlights":report["provisionalHighlightCount"],
