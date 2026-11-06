@@ -87,6 +87,12 @@ Use **Import previously exported JSON** for manual draft recovery. The
 export's frozen manifest digest prevents it from being imported into
 another experiment without explicit conversion.
 
+Reviewers can also mark an approximate **action peak** and **visible
+resolution** at the current video playhead. Timestamps are stored in
+original-source milliseconds per reviewer. These are human observations,
+NOT automatically adjudicated event truth. Leave an off-camera outcome
+unmarked; a marked resolution cannot precede its marked peak.
+
 The UI does not yet collect full event-phase boundaries, track
 annotations frame-by-frame, validate expert biographies or display
 multi-angle synchronized views. Those are future modules. Ratings
