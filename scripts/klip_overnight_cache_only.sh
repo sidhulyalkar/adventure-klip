@@ -89,7 +89,7 @@ data=resolve_human_feedback(
     ws,manifest,
     preferred_plan=preferred_plan,
     preferred_reviews=preferred_review if str(preferred_review)!="." else None)
-Path(out).write_text(json.dumps(data,indent=2,sort_keys=True)+"\\n")
+Path(out).write_text(json.dumps(data,indent=2,sort_keys=True)+"\n")
 print("Human feedback evidence:",data["status"],"windows:",data["reviewedWindows"])
 if data["selectedPath"]:
     print("Matching local file:",data["selectedPath"])
