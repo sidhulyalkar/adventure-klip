@@ -160,7 +160,7 @@ def build_report(workspace: Path, root: Path | None = None) -> dict:
                 cataloged_paths[str(old)] = row.get("size_bytes")
     exact_and_size = sorted(
         path for path, size in cataloged_paths.items()
-        if discovered_by_path.get(path) == size
+        if path in discovered_by_path and discovered_by_path[path] == size
     )
     size_different = sorted(
         path for path, size in cataloged_paths.items()
