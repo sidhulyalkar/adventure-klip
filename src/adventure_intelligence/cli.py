@@ -63,6 +63,7 @@ from .highlight_adaptive_queue import save_adaptive_queue
 from .highlight_pilot_recovery import diagnose_local_pilot, recover_local_pilot
 from .cached_secondlook_batches import run_cached_secondlook_batches
 from .full_archive_campaign import create_campaign_audit, scan_campaign
+from .full_archive_review_packet import prepare_campaign_packet
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -383,6 +384,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Omit this frozen ID from this run only; repeat to advance past failed items")
     temporal.add_argument("--run",action="store_true",
         help="Opt in to local Ollama inference using seven stills from verified cached H264 previews")
+    campaign_packet=sub.add_parser("highlight-campaign-review-packet",
+        help="Build blind, source-backed review packet from frozen coarse scan, reusing existing verified H264 cache by default")
+    campaign_packet.add_argument("--audit",type=Path,required=True,
+        help="Matching frozen campaign-audit.json")
+    campaign_packet.add_argument("--scan-dir",type=Path,required=True,
+        help="Completed/partial coarse scan containing per-source SHA-backed reports")
+    campaign_packet.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ review packet directory")
+    campaign_packet.add_argument("--limit",type=int,default=80,
+        help="Maximum candidate windows to include (1..500)")
+    campaign_packet.add_argument("--per-source",type=int,default=4,
+        help="Maximum mixed motion/control windows per scanned source (1..12)")
+    campaign_packet.add_argument("--prepare-missing",action="store_true",
+        help="EXPLICITLY read SHA-verified trusted original video ONCE per source and encode missing H264 review previews")
+    campaign_packet.add_argument("--workers",type=int,default=2,
+        help="Up to 2 local FFmpeg preview transcodes concurrently per already-verified source")
+    campaign_packet.add_argument("--trusted-local-root",type=Path,
+        help="Extra trusted local footage directory; never point this at an unresponsive SD card")
+    campaign_packet.add_argument("--allow-mounted-ssd",action="store_true",
+        help="Explicitly authorize healthy mounted SSD reads only, not a broken SDXC device")
     campaign_audit=sub.add_parser("highlight-campaign-audit",
         help="Audit ALL catalog source identities and prior episode coverage without ever touching source video paths")
     campaign_audit.add_argument("--study",type=Path,
@@ -892,6 +913,13 @@ def main(argv: list[str] | None = None) -> int:
             _print(report)
             if report.get("status")=="partial_failure":
                 return 1
+        elif args.command=="highlight-campaign-review-packet":
+            _print(prepare_campaign_packet(
+                root,args.audit,args.scan_dir,args.output_dir,
+                limit=args.limit,per_source=args.per_source,
+                prepare_missing=args.prepare_missing,workers=args.workers,
+                trusted_local_root=args.trusted_local_root,
+                allow_mounted_ssd=args.allow_mounted_ssd))
         elif args.command=="highlight-campaign-audit":
             _print(create_campaign_audit(
                 root,args.output_dir,study=args.study))
