@@ -169,6 +169,17 @@ def plan_review_discovery(workspace:Path,pilot_dir:Path,
             rid=row.get("recordId") if isinstance(row,dict) else None
             if rid not in by_id or not presentations["records"][rid].get("verifiedProxyReady"):
                 raise ValueError("Review refers to unavailable/nonexistent pilot clip")
+            # Read ONLY the report-local derivative, never the source SD card.
+            # A stale/modified proxy cannot ground a human review.
+            entry=presentations["records"][rid]
+            expected=entry.get("proxySha256")
+            proxy=pilot/"media"/(rid+".mp4")
+            if (not isinstance(expected,str) or
+                    not re.fullmatch(r"[a-f0-9]{64}",expected)
+                    or not proxy.is_file() or not 64<=proxy.stat().st_size<=45*1024*1024
+                    or sha256(proxy.read_bytes()).hexdigest()!=expected):
+                raise ValueError(
+                    "Frozen reviewer derivative missing/altered: cannot link unverified clip")
             checked=_review(row,by_id[rid],True)
             key=(rid,checked["annotatorId"])
             if key in seen:
