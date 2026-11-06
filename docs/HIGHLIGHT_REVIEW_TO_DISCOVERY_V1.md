@@ -62,6 +62,12 @@ Outputs:
   start/end time, previous actual reviews and separate proposed routes;
   candidate context windows (metadata only); review rationale;
   no claim that any context clip is verified or visually observed.
+- provisional-highlights.json: provisional, goal-specific human-Keep
+  intervals with source hashes and times; NOT a rendered or verified reel.
+- source-context-proposals.json: bounded before/after and same-run search
+  windows for future verification; original-video reads not authorized.
+- manual-deletion-holds.json: explicitly flagged requests requiring
+  separate, conscious confirmation; no deletion machinery exists here.
 - index.html: readable, private summary of provisional highlights,
   skipped exact cuts, conflicting opinions and annotation limitations.
 
