@@ -40,7 +40,8 @@ def render_blind_review(manifest:dict,presentation:dict,digest:str)->str:
         if url is not None and not re.fullmatch(r"media/[a-f0-9]{24}\.mp4",url):
             raise ValueError("Unsafe local review preview URL")
         items.append({"id":rid,"ready":visual["verifiedProxyReady"],
-                      "url":url,"sport":record["sportContext"]["sport"]})
+                      "url":url,"sport":record["sportContext"]["sport"],
+                      "start":record["event"]["startMs"],"end":record["event"]["endMs"]})
     encoded=json.dumps(items,ensure_ascii=True,separators=(",",":"))
     html=r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -78,6 +79,11 @@ progress{width:140px;accent-color:var(--salmon)}
 <div class="row" style="justify-content:space-between;margin-bottom:10px"><span class="eyebrow">Source-backed candidate / no AI score</span><span id="activity" class="small"></span></div>
 <div class="video-shell"><video id="video" controls preload="metadata" playsinline></video><p id="no-video" class="message" hidden>No checksum-verified local preview. This interval remains UNKNOWN. Do not rate without seeing the source.</p></div>
 <p class="small">Observe only what is visible. A hidden landing is not a confirmed landing. No model story or reaction commentary is shown.</p>
+<div class="row" style="margin-top:8px">
+<button type="button" id="mark-peak">Mark action peak at playhead</button>
+<button type="button" id="mark-resolution">Mark observed resolution</button>
+<button type="button" id="clear-timing">Clear markers</button>
+</div><p class="small" id="timing">No action timestamps marked.</p>
 </section>
 <section class="card" id="rating">
 <h2>1 · What would you keep?</h2>
@@ -123,7 +129,7 @@ const manifestSha='__MANIFEST_SHA__';
 const version='klip-highlight-curation-review-export-v1';
 const decisions=new Map();
 const $=id=>document.getElementById(id);
-let index=0,choice=null;
+let index=0,choice=null,peakMs=null,resolutionMs=null;
 const value=(id)=>$(id).value;
 const rating=(id)=>value(id)===''?null:Number(value(id));
 for(const id of ['tech','aesth','readability']){
@@ -136,6 +142,7 @@ function highlightChoice(){
 }
 function show(){
   if(!items.length){
+    for(const x of ['mark-peak','mark-resolution','clear-timing'])$(x).disabled=true;
     $('counter').textContent='0 / 0 ready';
     $('review-count').textContent=missingCount+' candidates lack verified previews';
     $('video').hidden=true;
@@ -153,7 +160,10 @@ function show(){
   $('video').hidden=!item.ready;$('no-video').hidden=item.ready;
   if(item.ready){$('video').src=item.url;$('video').load();}
   $('save').disabled=!item.ready;
+  for(const x of ['mark-peak','mark-resolution','clear-timing'])$(x).disabled=!item.ready;
   const d=decisions.get(item.id)||{};
+  peakMs=d.eventPeakMs??null;resolutionMs=d.resolutionMs??null;
+  showTiming();
   choice=d.choice||null;highlightChoice();
   $('outcome').value=d.outcome||'unknown';
   $('outcome-visible').value=d.outcomeVisible||'ambiguous';
@@ -169,6 +179,25 @@ function show(){
 }
 for(const b of document.querySelectorAll('[data-choice]'))
   b.addEventListener('click',()=>{choice=b.dataset.choice;highlightChoice();});
+function showTiming(){
+  if(!items.length)return;
+  const sourceStart=items[index].start;
+  const fmt=v=>v===null?'unmarked':((v-sourceStart)/1000).toFixed(2)+'s into clip';
+  $('timing').textContent='Peak: '+fmt(peakMs)+' / Resolution: '+fmt(resolutionMs);
+}
+function mark(kind){
+  const item=items[index];
+  if(!item||!item.ready||!Number.isFinite($('video').currentTime))return;
+  const stamp=Math.min(item.end-1,Math.max(item.start,
+      item.start+Math.round($('video').currentTime*1000)));
+  if(kind==='peak')peakMs=stamp;else resolutionMs=stamp;
+  showTiming();
+}
+$('mark-peak').addEventListener('click',()=>mark('peak'));
+$('mark-resolution').addEventListener('click',()=>mark('resolution'));
+$('clear-timing').addEventListener('click',()=>{
+  peakMs=null;resolutionMs=null;showTiming();
+});
 function save(){
   const item=items[index];if(!item.ready)return;
   const id=value('annotator').trim();
@@ -180,6 +209,9 @@ function save(){
   if((outcome==='completed'||outcome==='failed')&&visible!=='yes'){
     $('error').textContent='A completed or failed outcome must be visible; choose Unknown otherwise.';return;
   }
+  if(peakMs!==null&&resolutionMs!==null&&resolutionMs<peakMs){
+    $('error').textContent='Resolution cannot precede the marked peak.';return;
+  }
   const rationale=value('rationale').trim();
   if((choice==='keep'||choice==='skip')&&rationale.length<10){
     $('error').textContent='Describe at least ten characters of visual evidence for a Keep or Skip judgment.';return;
@@ -188,7 +220,8 @@ function save(){
     recordId:item.id,annotatorId:id,role:value('role'),goal:value('goal'),
     choice,outcome,outcomeVisible:visible,
     technicalQuality:rating('tech'),aestheticQuality:rating('aesth'),
-    eventReadability:rating('readability'),rationale
+    eventReadability:rating('readability'),
+    eventPeakMs:peakMs,resolutionMs:resolutionMs,rationale
   });
   if(index<items.length-1)index++;
   show();
@@ -256,10 +289,11 @@ def _rating(value,name:str):
 def _review(row:dict,record:dict,available:bool)->dict:
     if not isinstance(row,dict):
         raise ValueError("Malformed human review")
-    allowed={"recordId","annotatorId","role","goal","choice","outcome",
-             "outcomeVisible","technicalQuality","aestheticQuality",
-             "eventReadability","rationale"}
-    if set(row)!=allowed:
+    required={"recordId","annotatorId","role","goal","choice","outcome",
+              "outcomeVisible","technicalQuality","aestheticQuality",
+              "eventReadability","rationale"}
+    allowed=required|{"eventPeakMs","resolutionMs"}
+    if not required.issubset(row) or set(row)-allowed:
         raise ValueError("Human review fields differ from frozen export schema")
     if row["recordId"]!=record["recordId"] or not available:
         raise ValueError("Human review refers to an unsupported or missing verified preview")
@@ -275,6 +309,14 @@ def _review(row:dict,record:dict,available:bool)->dict:
     if (row["outcome"] in ("completed","failed")
             and row["outcomeVisible"]!="yes"):
         raise ValueError("Cannot confirm a completed/failed action without a visible outcome")
+    start,end=record["event"]["startMs"],record["event"]["endMs"]
+    peak,resolution=row.get("eventPeakMs"),row.get("resolutionMs")
+    for stamp,label in ((peak,"peak"),(resolution,"resolution")):
+        if stamp is not None and (type(stamp) is not int
+                                  or not start<=stamp<end):
+            raise ValueError(f"Reviewer {label} timestamp outside source interval")
+    if peak is not None and resolution is not None and resolution<peak:
+        raise ValueError("Reviewer resolution timestamp precedes action peak")
     rationale=row["rationale"]
     if type(rationale) is not str or len(rationale)>1000:
         raise ValueError("Invalid human rationale length")
@@ -291,6 +333,7 @@ def _review(row:dict,record:dict,available:bool)->dict:
         "technicalQuality":_rating(row["technicalQuality"],"technical"),
         "aestheticQuality":_rating(row["aestheticQuality"],"aesthetic"),
         "eventReadability":_rating(row["eventReadability"],"readability"),
+        "eventPeakMs":peak,"resolutionMs":resolution,
     }
 
 
@@ -385,6 +428,10 @@ def import_curation_reviews(workspace:Path,pilot_dir:Path,reviews_files:list[Pat
         "observerRoles":dict(sorted(roles.items())),
         "choices":dict(sorted(choices.items())),
         "multiRaterDisagreements":disputed,
+        "humanLocalizedPeaks":sum(r["eventPeakMs"] is not None
+                                   for rows in annotations.values() for r in rows),
+        "humanLocalizedResolutions":sum(r["resolutionMs"] is not None
+                                         for rows in annotations.values() for r in rows),
         "selectionGroundTruthNotImplied":True,
         "sportAndFilmingConsensusNotAutoInferred":True,
         "eventOutcomeAdjudicationRequired":True,
