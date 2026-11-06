@@ -67,7 +67,8 @@ def _sha_bytes(path:Path,max_bytes:int=10_000_000)->tuple[dict,str]:
 
 
 def _clip_context(source:dict, start:int, end:int, route:str,
-                  explicit_full_run:bool)->list[dict]:
+                  explicit_full_run:bool,
+                  seek_clearer_alternative:bool=False)->list[dict]:
     """Metadata-only bounded nearby intervals, not event detections."""
     duration=source["sourceDurationMs"]
     proposals=[]
@@ -94,6 +95,13 @@ def _clip_context(source:dict, start:int, end:int, route:str,
         if right-left>60000:
             right=min(duration,left+60000)
         suggest(left,right,"check_approach_peak_and_aftermath")
+    # A quality-rejected but explicitly valuable nature/action event may
+    # have a better, clearer neighboring view. These are only proposals.
+    if seek_clearer_alternative:
+        suggest(max(0,start-25000),min(duration,start+4000),
+                "search_prior_clearer_event_view")
+        suggest(max(0,end-4000),min(duration,end+25000),
+                "search_following_clearer_event_view")
     # A start-of-run complaint deserves forward exploration, not training
     # a "boring" label against the rest of that run.
     if explicit_full_run:
@@ -198,7 +206,9 @@ def plan_review_discovery(workspace:Path,pilot_dir:Path,
         # Never interpret DELETE in comments as authorization to change files.
         action=["human_confirm_highlight_in_context" if keep else
                 "review_disagreement" if route=="human_disagreement" else
-                "exclude_exact_reviewed_window_only"]
+                "exclude_exact_reviewed_window_only" if
+                route=="exclude_this_window" else
+                "collect_more_visual_evidence_before_deciding"]
         if preserve and not keep:
             action.append("preserve_original_seek_better_window")
         if limited and not keep:
@@ -209,7 +219,9 @@ def plan_review_discovery(workspace:Path,pilot_dir:Path,
             action.append("manual_deletion_request_hold_no_file_operation")
         start,end=item["event"]["startMs"],item["event"]["endMs"]
         source=item["source"]
-        context=_clip_context(source,start,end,route,extended)
+        context=_clip_context(source,start,end,route,extended,
+                              seek_clearer_alternative=(preserve and limited
+                                                        and not keep))
         if preserve:
             preservation["source_preservation_suggested"]+=1
         if delete:
