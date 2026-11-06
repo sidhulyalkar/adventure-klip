@@ -148,7 +148,7 @@ def test_scan_quarantines_invalid_source_and_explicitly_retries(sources,monkeypa
         root,Path(audit["audit"]),out,max_assets=1,resume=True,retry_failed=True)
     assert retried["status"]=="coarse_scanned_all_eligible_local_sources"
     assert retried["completedSources"]==1
-    assert retried["sourceHashPasses"]==1
+    assert retried["sourceHashPasses"]==2  # initial mismatch and explicit retry
 
 
 def test_no_scan_opens_removable_sources_without_trusted_root(sources,monkeypatch):
@@ -197,3 +197,14 @@ def test_untrusted_broad_root_never_accepted(sources):
     root,local,aid,external,study,body=sources
     with pytest.raises(ValueError,match="specific footage directory"):
         campaign._require_local_path(local,root,Path("/"),False)
+
+
+def test_frozen_audit_refuses_catalog_mutation_until_new_audit(sources):
+    root,local,aid,external,study,body=sources
+    audit=campaign.create_campaign_audit(root,root/"reports"/"audit")
+    with connect(root) as db:
+        db.execute("UPDATE assets SET activity='bike' WHERE id=?",(aid,))
+    with pytest.raises(ValueError,match="Catalog changed"):
+        campaign.scan_campaign(
+            root,Path(audit["audit"]),root/"reports"/"scan",max_assets=1)
+    assert not (root/"reports"/"scan").exists()
