@@ -127,6 +127,7 @@ def qualify_reel_feedback(workspace:Path,studio_dir:Path,annotations_file:Path)-
             raise ValueError("A reviewed local proxy is missing, changed or unverified")
     decisions=[]
     trims=[]
+    positive_markers=defaultdict(list)
     for rid,notes in per_clip.items():
         clip=by_id[rid]
         votes=Counter(n["kind"] for n in notes)
@@ -144,6 +145,21 @@ def qualify_reel_feedback(workspace:Path,studio_dir:Path,annotations_file:Path)-
                 "status":"human_proposed_requires_video_evidence",
                 "originalSourceReadAuthorized":False,
             })
+        for note in notes:
+            if note["kind"] in {
+                    "standout","athletic","camera","story","nature","keep",
+                    "wow","skill","framing","personal"}:
+                source_duration=clip.get("sourceDurationMsFromCatalog")
+                if (type(source_duration) is int and
+                        clip["endMs"]<=source_duration<=43_200_000):
+                    positive_markers[clip["sourceAssetSha256"]].append({
+                        "atMs":(note["startMs"]+note["endMs"])//2,
+                        "sourceDurationMs":source_duration,
+                        "sourceFamilyId":clip["sourceFamilyId"],
+                        "clipId":rid,
+                        "kind":note["kind"],
+                        "annotatorId":note["annotatorId"],
+                    })
         decisions.append({
             "clipId":rid,"sourceAssetSha256":clip["sourceAssetSha256"],
             "sourceFamilyId":clip["sourceFamilyId"],
@@ -155,6 +171,47 @@ def qualify_reel_feedback(workspace:Path,studio_dir:Path,annotations_file:Path)-
             "newPreferenceStillRequiresReview":True,
             "eventAchievementVerified":False,
         })
+    # Cluster nearby human time markers into bounded *discovery hypotheses*.
+    # No automatically verified sporting event, action outcome or wildlife
+    # claim is created; the source may not currently be accessible.
+    discovery=[]
+    for asset,markers in sorted(positive_markers.items()):
+        markers.sort(key=lambda n:(n["atMs"],n["clipId"],n["kind"]))
+        clusters=[]
+        current=[]
+        for marker in markers:
+            if (current and (
+                    marker["atMs"]-current[-1]["atMs"]>10000 or
+                    marker["atMs"]-current[0]["atMs"]>36000)):
+                clusters.append(current)
+                current=[]
+            current.append(marker)
+        if current:
+            clusters.append(current)
+        for cluster in clusters:
+            source_duration=cluster[0]["sourceDurationMs"]
+            center_a=min(x["atMs"] for x in cluster)
+            center_b=max(x["atMs"] for x in cluster)
+            a=max(0,center_a-9000)
+            b=min(source_duration,center_b+13000)
+            if b-a>60000:
+                b=a+60000
+            if b-a<1000:
+                continue
+            discovery.append({
+                "sourceAssetSha256":asset,
+                "sourceFamilyId":cluster[0]["sourceFamilyId"],
+                "startMs":a,"endMs":b,
+                "humanMarkedSourceTimesMs":[x["atMs"] for x in cluster],
+                "kinds":sorted({x["kind"] for x in cluster}),
+                "clipIds":sorted({x["clipId"] for x in cluster}),
+                "annotators":sorted({x["annotatorId"] for x in cluster}),
+                "reason":"revisit_time_near_human_interest_marker",
+                "evidenceStatus":"human_reaction_requires_video_verification",
+                "sourceMediaReadAuthorized":False,
+                "newPreviewPrepared":False,
+                "humanHighlightApprovedAutomatically":False,
+            })
     return {
         "version":_REPORT_VERSION,
         "frozenStudioManifestSha256":manifest_sha,
@@ -165,6 +222,7 @@ def qualify_reel_feedback(workspace:Path,studio_dir:Path,annotations_file:Path)-
         "types":dict(sorted(types.items())),
         "decisions":decisions,
         "humanProposedRetrims":trims,
+        "humanInterestDiscoveryProposals":discovery,
         "sourceOriginalReads":0,"sourceOriginalDecodes":0,
         "modelInferenceCalls":0,"filesDeleted":0,
         "eventGroundTruthEstablished":False,
@@ -189,6 +247,13 @@ def save_reel_feedback(workspace:Path,studio_dir:Path,
                 "proposals":report["humanProposedRetrims"],
                 "sourceReadsAuthorized":False,
                 "filesModified":False,
+            }),
+            ("source-interest-proposals.json",{
+                "version":_REPORT_VERSION,
+                "studioManifestSha256":report["frozenStudioManifestSha256"],
+                "proposals":report["humanInterestDiscoveryProposals"],
+                "originalReadsAuthorized":False,
+                "mediaVerified":False,
             })):
         with (dest/name).open("x",encoding="utf-8") as handle:
             json.dump(obj,handle,sort_keys=True,indent=2,allow_nan=False)
@@ -197,9 +262,11 @@ def save_reel_feedback(workspace:Path,studio_dir:Path,
         "status":"timed_reel_feedback_qualified",
         "report":str(dest/"timed-feedback.json"),
         "retrims":str(dest/"retrim-proposals.json"),
+        "interestWindows":str(dest/"source-interest-proposals.json"),
         "annotatedClips":report["annotatedClips"],
         "annotations":report["humanMarkerCount"],
         "proposedRetrims":len(report["humanProposedRetrims"]),
+        "interestWindowProposals":len(report["humanInterestDiscoveryProposals"]),
         "sourceOriginalReads":0,"modelInferenceCalls":0,
         "modelTrainingAuthorized":False,
     }
