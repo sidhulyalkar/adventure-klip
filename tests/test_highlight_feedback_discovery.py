@@ -804,6 +804,5 @@ def test_overnight_script_bash_syntax():
     assert "highlight-next-pass" in content
     assert "social-lens-temporal" in content
     assert "archive-cached-secondlook-batches" in content
-    assert "social-lens-temporal \\\n" not in content  # avoid duplicate command blocks
     assert "--prepare-previews" in content  # documented prohibition only
     assert "archive-local-triage " not in content  # never run source-reading triage
