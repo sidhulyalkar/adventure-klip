@@ -377,8 +377,8 @@ if(linkedReel&&clips.has(requestedClip)){
  if(idx>=0){
    loadClip(idx,false);
    const c=selected(),absolute=Number(requestedTime);
-   if(requestedTime!==null&&/^\\d{1,10}$/.test(requestedTime)&&
-      Number.isInteger(absolute)&&absolute>=c.startMs&&absolute<c.endMs){
+   if(requestedTime!==null&&Number.isInteger(absolute)&&
+      String(absolute)===requestedTime&&absolute>=c.startMs&&absolute<c.endMs){
      video.addEventListener("loadedmetadata",()=>{
        video.currentTime=(absolute-c.startMs)/1000;
        updateTime();
