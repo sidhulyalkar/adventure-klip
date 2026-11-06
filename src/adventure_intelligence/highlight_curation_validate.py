@@ -180,6 +180,14 @@ def audit_highlight_curation_manifest(path:Path)->dict:
                 if (val is not None and
                         (not _integer(val) or not 1<=val<=5)):
                     raise ValueError(f"Per-review {quality} outside human scale for {rid}")
+            peak,resolution=(review.get("eventPeakMs"),review.get("resolutionMs"))
+            for stamp,name in ((peak,"event peak"),(resolution,"resolution")):
+                if (stamp is not None and
+                        (not _integer(stamp)
+                         or not event["startMs"]<=stamp<event["endMs"])):
+                    raise ValueError(f"Human {name} outside event source timeline for {rid}")
+            if peak is not None and resolution is not None and resolution<peak:
+                raise ValueError(f"Human resolution precedes peak for {rid}")
             if review.get("reviewStatus")=="human_verified":
                 has_human+=1
         for reaction in reactions:
