@@ -7,7 +7,7 @@ must NEVER be mistaken for ground-truth outcome or preference labels.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
