@@ -418,3 +418,80 @@ def test_zero_eligible_local_ollama_jobs_explicitly_report_blocker(tmp_path,monk
     assert result["inputGate"]["awaitingAdaptiveV2"]==3
     assert result["newLocalModelOutputs"]==0
     assert result["sourceVideoReads"]==0
+
+
+def test_campaign_status_is_denom_correct_and_fails_closed_without_media_reads(
+        sources,monkeypatch):
+    from adventure_intelligence.full_archive_campaign_status import campaign_progress
+    root,local,aid,external,study,body=sources
+    audit=campaign.create_campaign_audit(root,root/"reports"/"audit",study=study)
+    # The catalog-only stage must NEVER claim source scan coverage.
+    earlier=campaign_progress(root,Path(audit["audit"]))
+    assert earlier["catalogAssetCount"]==3
+    assert earlier["scan"]["available"] is False
+    assert earlier["scan"]["completed"]==0
+    assert earlier["goNoGo"]["coarseScannedEveryCatalogSource"] is False
+    assert earlier["goNoGo"]["sourceMediaOpenedByThisStatus"] is False
+    monkeypatch.setattr(campaign,"probe",lambda _:{"duration":60.0})
+    monkeypatch.setattr(campaign,"motion_series",lambda path,**kwargs:[
+        {"t_ms":1000,"change":.1},{"t_ms":16000,"change":.6}])
+    scanned=campaign.scan_campaign(
+        root,Path(audit["audit"]),root/"reports"/"scan",max_assets=1)
+    assert scanned["completedSources"]==1
+    old_stat,old_is_file,old_resolve=Path.stat,Path.is_file,Path.resolve
+    def block_original(func):
+        def check(self,*args,**kwargs):
+            if str(self)==str(local) or str(self).startswith("/Volumes/UNMOUNTED_DJI"):
+                pytest.fail("Progress must never inspect camera videos")
+            return func(self,*args,**kwargs)
+        return check
+    monkeypatch.setattr(Path,"stat",block_original(old_stat))
+    monkeypatch.setattr(Path,"is_file",block_original(old_is_file))
+    monkeypatch.setattr(Path,"resolve",block_original(old_resolve))
+    report=campaign_progress(root,Path(audit["audit"]),
+                             scan_dir=root/"reports"/"scan")
+    assert report["scan"]["completed"]==1
+    assert report["scan"]["completedDurationSeconds"]==60
+    assert report["scan"]["scanSourceCoveragePercentOfEntireCatalog"]==33.33
+    assert report["scan"]["candidateWindowsProposed"]>0
+    assert report["reviewPacket"]["available"] is False
+    assert report["scan"]["completedOriginalGiBFromCatalog"]>=0
+    assert report["goNoGo"]["coarseScannedEveryCatalogSource"] is False
+    assert report["goNoGo"]["allArchiveHighlightsDiscovered"] is False
+    assert report["goNoGo"]["trainingReady"] is False
+
+
+def test_campaign_status_tracks_playable_packet_and_rejects_bad_source_receipt(
+        sources,monkeypatch):
+    from adventure_intelligence.full_archive_campaign_status import campaign_progress
+    from adventure_intelligence import full_archive_review_packet as packet
+    from adventure_intelligence.studio_preview_judge import preview_paths
+    root,local,aid,audit,scans=_scanned_local_campaign(sources,monkeypatch)
+    record=json.loads((scans/"per-source"/(aid+".json")).read_text())
+    first=record["candidateHypotheses"][0]
+    a,b=first["startMs"],first["endMs"]
+    preview,receipt=preview_paths(root,aid,a,b)
+    preview.parent.mkdir(parents=True,exist_ok=True)
+    blob=b"verified-existing-preview-local-bytes"*5
+    preview.write_bytes(blob)
+    receipt.write_text(json.dumps({
+        "version":"studio-preview-local-judge-v1",
+        "assetId":aid,"startMs":a,"endMs":b,
+        "previewSha256":sha256(blob).hexdigest(),
+        "originalSha256Verified":True,
+    }))
+    output=root/"reports"/"human-packet"
+    pkt=packet.prepare_campaign_packet(root,audit,scans,output,limit=5)
+    assert pkt["verifiedReviewableClips"]>=1
+    status=campaign_progress(root,audit,scan_dir=scans,packet_dir=output)
+    assert status["reviewPacket"]["candidateWindows"]==pkt["candidateWindows"]
+    assert status["reviewPacket"]["verifiedPlaybackClipsReported"]>=1
+    assert status["reviewPacket"]["matchesCurrentScanCheckpoint"] is True
+    assert status["goNoGo"]["atLeastOnePlayableCandidate"] is True
+    assert status["goNoGo"]["allArchiveHighlightsDiscovered"] is False
+    src=scans/"per-source"/(aid+".json")
+    src.write_text(src.read_text()+"\n")
+    tampered=campaign_progress(root,audit,scan_dir=scans,packet_dir=output)
+    assert tampered["scan"]["reportIntegrityFailures"]==1
+    assert tampered["scan"]["completed"]==0
+    assert tampered["goNoGo"]["coarseScannedEveryCatalogSource"] is False
