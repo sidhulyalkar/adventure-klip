@@ -337,7 +337,7 @@ def save_adaptive_queue(workspace:Path,pilot_dir:Path,plan_file:Path,
         "unselectedDueToCap":deferred,
         "coverage":dict(sorted(Counter(
             x["cachedReviewCoverage"] for x in selected).items())),
-        "selectionIsReviewPriorityNotPredictedQuality":True,
+        "selectionIsReviewPriorityNotPredictedQualityScore":True,
         "allCandidatesSourceMediaUnverifiedBeyondExistingCache":True,
         "originalMediaReads":0,
         "originalMediaDecodes":0,
