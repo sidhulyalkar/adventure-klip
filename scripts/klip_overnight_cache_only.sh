@@ -7,24 +7,23 @@ set -Eeuo pipefail
 WS="${WS:-$HOME/AdventureAI-clean.QJnopt}"
 PILOT="${PILOT:-$WS/reports/highlight-curation-pilot60-v1}"
 PLAN="${PLAN:-$WS/reports/highlight-feedback-for-reels-v1/review-discovery-plan.json}"
+REVIEWS="${REVIEWS:-}"
 STUDY="${STUDY:-$WS/reports/archive-value-study-pilot-v1/study.json}"
 ASSIGNMENTS="${ASSIGNMENTS:-}"
 MODEL="${MODEL:-gemma3:4b}"
 KLIP_RUNROOT="${KLIP_RUNROOT:-$WS/reports/klip-safe-night-$(date +%Y%m%d-%H%M%S)-$$}"
 RUNROOT="$KLIP_RUNROOT"
-export WS PILOT PLAN STUDY ASSIGNMENTS MODEL KLIP_RUNROOT
+export WS PILOT PLAN REVIEWS STUDY ASSIGNMENTS MODEL KLIP_RUNROOT
 mkdir -p "$RUNROOT"
 umask 077
 
 echo "Klip night root: $RUNROOT"
 echo "Frozen original pilot: $PILOT"
-echo "Existing human feedback: $PLAN"
+echo "Preferred human feedback plan (auto-discovered if absent): $PLAN"
+echo "Preferred raw review export (auto-discovered if absent): ${REVIEWS:-unspecified}"
 echo "Operating mode: CACHE-ONLY, originals untouched. Logs: $RUNROOT/*.stderr.log"
 test -f "$PILOT/curation-manifest.json" || {
   echo "ERROR: frozen curation manifest does not exist: $PILOT/curation-manifest.json" >&2; exit 2;
-}
-test -f "$PLAN" || {
-  echo "ERROR: review-discovery-plan.json does not exist: $PLAN" >&2; exit 2;
 }
 command -v klip >/dev/null || { echo "ERROR: klip command missing. Activate .venv and install package." >&2; exit 2; }
 command -v python >/dev/null || { echo "ERROR: Python is required." >&2; exit 2; }
@@ -72,11 +71,59 @@ run_step() {
 # Always create a NEW recovered packet, preserving every frozen manifest
 # byte, reusing only receipt-verified LOCAL derivatives, never the SD card.
 run_step doctor klip --workspace "$WS" highlight-pilot-doctor \
-  --pilot-dir "$PILOT" --feedback "$PLAN"
+  --pilot-dir "$PILOT"
 RECOVERED="$RUNROOT/recovered-pilot"
 preserve_incomplete_dir recover "$RECOVERED"
 run_step recover klip --workspace "$WS" highlight-pilot-recover \
-  --pilot-dir "$PILOT" --feedback "$PLAN" --output-dir "$RECOVERED"
+  --pilot-dir "$PILOT" --output-dir "$RECOVERED"
+
+# Use an existing human plan ONLY if its frozen manifest SHA matches.
+# Otherwise discover one matching raw exported review and build its plan
+# from the recovered packet. No plan/review? Skip the reel, not the night.
+python - "$WS" "$RECOVERED/curation-manifest.json" "$PLAN" "$REVIEWS" "$RUNROOT/feedback-discovery.json" <<'PY'
+import json,sys
+from pathlib import Path
+from adventure_intelligence.highlight_night_feedback import resolve_human_feedback
+ws,manifest,preferred_plan,preferred_review,out=map(Path,sys.argv[1:])
+data=resolve_human_feedback(
+    ws,manifest,
+    preferred_plan=preferred_plan,
+    preferred_reviews=preferred_review if str(preferred_review)!="." else None)
+Path(out).write_text(json.dumps(data,indent=2,sort_keys=True)+"\\n")
+print("Human feedback evidence:",data["status"],"windows:",data["reviewedWindows"])
+if data["selectedPath"]:
+    print("Matching local file:",data["selectedPath"])
+else:
+    print(data["action"])
+PY
+FB_STATUS="$(python - "$RUNROOT/feedback-discovery.json" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1]))["status"])
+PY
+)"
+FB_FILE="$(python - "$RUNROOT/feedback-discovery.json" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1]))["selectedPath"] or "")
+PY
+)"
+if test "$FB_STATUS" = matching_existing_plan; then
+  PLAN="$FB_FILE"
+elif test "$FB_STATUS" = matching_raw_review_export; then
+  PLAN="$RUNROOT/human-feedback-plan/review-discovery-plan.json"
+  preserve_incomplete_dir feedback-plan "$RUNROOT/human-feedback-plan"
+  if run_step feedback-plan klip --workspace "$WS" highlight-feedback-plan \
+       --pilot-dir "$RECOVERED" --reviews "$FB_FILE" \
+       --output-dir "$RUNROOT/human-feedback-plan"; then
+    echo "Human review plan created: $PLAN"
+  else
+    PLAN=""
+    echo "No valid feedback plan could be generated; keeping all source identities unknown."
+    echo "The cache-only temporal study can still run."
+  fi
+else
+  PLAN=""
+  echo "No matching human review export. Skipping reel/feedback stages, continuing cache-only study."
+fi
 
 CACHE_COUNT="$(python - "$RECOVERED/recovery-report.json" <<'PY'
 import json,sys
@@ -85,7 +132,7 @@ PY
 )"
 echo "Verified, recovered, local playback previews: $CACHE_COUNT"
 
-if test "$CACHE_COUNT" -gt 0; then
+if test "$CACHE_COUNT" -gt 0 && test -n "$PLAN" && test -f "$PLAN"; then
   STUDIO="$RUNROOT/interactive-reels"
   preserve_incomplete_dir studio "$STUDIO"
   run_step studio klip --workspace "$WS" highlight-reel-studio \
@@ -107,8 +154,8 @@ if test "$CACHE_COUNT" -gt 0; then
   echo "NEXT_PASS=$RUNROOT/adaptive-next-pass/index.html"
   echo "MP4_REPORT=$RUNROOT/preview-mp4-reels/render-report.json"
 else
-  echo "No verified cached previews recovered. Refusing to invent a reel."
-  echo "Temporal processing can still inspect other existing caches without SD-card reads."
+  echo "Cannot assemble a human-labeled reel: missing verified local previews or matching human feedback."
+  echo "Temporal analysis can still inspect other cached video without SD-card reads."
 fi
 
 # Largest safe analysis batch: source study is READ AS AN EXISTING JSON FILE.
