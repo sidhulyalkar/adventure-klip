@@ -59,6 +59,7 @@ from .highlight_feedback_discovery import save_review_discovery
 from .highlight_reel_studio import assemble_reel_studio
 from .highlight_reel_feedback import save_reel_feedback
 from .highlight_reel_render import render_local_reels
+from .highlight_adaptive_queue import save_adaptive_queue
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -226,6 +227,22 @@ def main(argv: list[str] | None = None) -> int:
         help="Deterministic selection seed")
     pilot.add_argument("--max-per-source",type=int,default=2,
         help="Maximum intervals from one source (1..8)")
+    adaptive=sub.add_parser("highlight-next-pass",
+        help="Prioritize human-interest intervals across sources, deduplicate, and link verified cached footage with zero original-media reads")
+    adaptive.add_argument("--pilot-dir",type=Path,required=True,
+        help="Original frozen curation pilot")
+    adaptive.add_argument("--feedback-plan",type=Path,required=True,
+        help="Frozen review-discovery-plan.json, same pilot")
+    adaptive.add_argument("--studio-dir",type=Path,required=True,
+        help="Frozen private interactive Reel Studio")
+    adaptive.add_argument("--timed-feedback",type=Path,
+        help="Optional timecoded feedback/timed-feedback.json from Reel Studio")
+    adaptive.add_argument("--output-dir",type=Path,required=True,
+        help="NEW private workspace reports/ or exports/ destination")
+    adaptive.add_argument("--limit",type=int,default=60,
+        help="Maximum queued windows to inspect (1..160)")
+    adaptive.add_argument("--per-source",type=int,default=3,
+        help="Maximum windows per source recording (1..8)")
     reel_render=sub.add_parser("highlight-reel-render",
         help="Optionally render verified LOCAL proxy playlists to preview-resolution MP4 using bounded FFmpeg CPU jobs")
     reel_render.add_argument("--studio-dir",type=Path,required=True,
@@ -753,6 +770,11 @@ def main(argv: list[str] | None = None) -> int:
             _print(save_curation_pilot(root,args.study,args.features,
                 args.output_dir,limit=args.limit,seed=args.seed,
                 max_per_source=args.max_per_source))
+        elif args.command=="highlight-next-pass":
+            _print(save_adaptive_queue(
+                root,args.pilot_dir,args.feedback_plan,args.studio_dir,
+                args.output_dir,timed_feedback=args.timed_feedback,
+                limit=args.limit,per_source=args.per_source))
         elif args.command=="highlight-reel-render":
             _print(render_local_reels(
                 root,args.studio_dir,args.output_dir,reel_id=args.reel,
