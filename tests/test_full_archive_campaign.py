@@ -355,3 +355,37 @@ def test_full_campaign_launch_shell_syntax():
     assert "highlight-campaign-audit" in source
     assert "highlight-campaign-scan" in source
     assert "--prepare-previews" not in source
+
+
+def test_zero_copy_reindex_never_rehashes_old_stalled_sdcard(tmp_path,monkeypatch):
+    from adventure_intelligence import indexing
+    root=tmp_path/"workspace"
+    staged=tmp_path/"safe-staged-footage"
+    staged.mkdir()
+    source=staged/"actual.MP4"
+    blob=b"verified-local-test-data"*150
+    source.write_bytes(blob)
+    aid=sha256(blob).hexdigest()
+    with connect(root) as db:
+        db.execute(
+            "INSERT INTO assets(id,sha256,stored_path,size_bytes,suffix,duration,activity)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (aid,aid,"/Volumes/UNMOUNTED_DJI/DCIM/missing.MP4",
+             len(blob),".MP4",60.0,"unknown"))
+    previous=indexing.verified_digest
+    touched=[]
+    def only_safe(path,*args,**kwargs):
+        touched.append(str(path))
+        if str(path).startswith("/Volumes/"):
+            pytest.fail("Indexer must not rehash an old removable-media catalog path")
+        return previous(path,*args,**kwargs)
+    monkeypatch.setattr(indexing,"verified_digest",only_safe)
+    result=indexing.index_folder(staged,root)
+    assert result["duplicates"]==1
+    assert result["errors"]==[]
+    assert touched==[str(source)]
+    with connect(root) as db:
+        stored=db.execute("SELECT stored_path FROM assets WHERE id=?",
+                          (aid,)).fetchone()[0]
+    assert stored==str(source)
+    assert not any(x.startswith("/Volumes") for x in touched)
