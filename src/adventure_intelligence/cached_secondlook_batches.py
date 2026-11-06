@@ -106,15 +106,30 @@ def run_cached_secondlook_batches(workspace:Path,assignments:Path,output_dir:Pat
         checkpoint["lastSelected"]=selected
         if selected==0:
             checkpoint["completed"]=True
+            checkpoint["finalInputGate"]={
+                "eligibleUnreviewed":report.get("eligibleUnreviewed",0),
+                "missingVerifiedPreviews":report.get("missingVerifiedPreviews",0),
+                "awaitingAdaptiveV2":report.get("awaitingAdaptiveV2",0),
+                "firstPassNotFlaggedForInvestigation":report.get(
+                    "firstPassNotFlaggedForInvestigation",0),
+                "reason":"No further eligible cached first-pass-qualified clips.",
+            }
         _write_atomic(state_file,checkpoint)
         print(f"[klip-secondlook] batch {i+1}, selected {selected}, "
               f"total qualified IDs {len(excluded)}, failures {checkpoint['failures']}",
               flush=True)
         if selected==0:
             break
+    no_work=(checkpoint["completed"] and
+             checkpoint["newLocalModelOutputs"]==0 and
+             checkpoint["reusedLocalModelOutputs"]==0 and
+             len(excluded)==0)
     return {
-        "status":"cached_secondlook_batches_complete" if checkpoint["completed"]
-                 else "cached_secondlook_budget_reached",
+        "status":("blocked_no_eligible_model_inputs" if no_work else
+                  "cached_secondlook_batches_complete" if checkpoint["completed"]
+                  else "cached_secondlook_budget_reached"),
+        "inputGate":checkpoint.get("finalInputGate"),
+        "zeroModelCallsNotScientificCompletion":bool(no_work),
         "outputDir":str(dest),
         "checkpoint":str(state_file),
         "batchesRecorded":len(checkpoint["batchFiles"]),

@@ -61,13 +61,16 @@ def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
                 if found:
                     stats['duplicates']+=1
                     stored=Path(found['stored_path'])
-                    # If the original disappeared, refresh the reference to this valid path.
-                    try:
-                        valid = verified_digest(stored) == digest
-                    except OSError:
-                        valid = False
-                    if not valid:
-                        db.execute('UPDATE assets SET stored_path=? WHERE id=?',(str(p),digest))
+                    # We have ALREADY SHA-verified p. Re-reading an old
+                    # catalog path here is redundant and can hang forever
+                    # when it points at an unresponsive removable SDXC.
+                    # Preserve a managed content-addressed original (if
+                    # any); otherwise update the path to the newly verified
+                    # healthy local file. No stat/hash of stored is needed.
+                    if (stored!=p and
+                            not stored.is_relative_to(workspace/'originals')):
+                        db.execute('UPDATE assets SET stored_path=? WHERE id=?',
+                                   (str(p),digest))
                     if not found['duration'] or found['duration']<=0:
                         meta=probe(p)
                         if not meta.get('duration') or meta['duration']<=0:
