@@ -36,6 +36,15 @@ from .media import require_tool
 VERSION="klip-full-archive-review-packet-v1"
 
 
+def _cached_receipt_verified(root:Path,aid:str,start:int,end:int)->bool:
+    # Never dereference even a report-local symlink into an untrusted SD card.
+    path,receipt=preview_paths(root,aid,start,end)
+    if (path.is_symlink() or receipt.is_symlink() or
+            path.parent.is_symlink() or receipt.parent.is_symlink()):
+        return False
+    return _check_cached(path,receipt,aid=aid,start_ms=start,end_ms=end)
+
+
 def _candidates(audit:dict,scan:dict,scan_dir:Path,limit:int,per_source:int):
     asset_by_id={x["sourceAssetSha256"]:x for x in audit["assets"]}
     groups=defaultdict(list)
@@ -103,8 +112,10 @@ def _candidates(audit:dict,scan:dict,scan_dir:Path,limit:int,per_source:int):
 
 def _generate_cached(root:Path,source:Path,aid:str,start:int,end:int):
     target,receipt=preview_paths(root,aid,start,end)
-    if _check_cached(target,receipt,aid=aid,start_ms=start,end_ms=end):
+    if _cached_receipt_verified(root,aid,start,end):
         return True,None
+    if (target.is_symlink() or receipt.is_symlink() or target.parent.is_symlink()):
+        return False,"unsafe_local_cache_symlink"
     target.parent.mkdir(parents=True,exist_ok=True)
     fd,tmp=tempfile.mkstemp(prefix=".klip-campaign-preview-",suffix=".mp4",
                             dir=target.parent)
@@ -190,8 +201,7 @@ def prepare_campaign_packet(workspace:Path,audit_file:Path,scan_dir:Path,
             for item,rec in group:
                 start,end=item["startMs"],item["endMs"]
                 video,receipt=preview_paths(root,aid,start,end)
-                if not _check_cached(video,receipt,
-                                     aid=aid,start_ms=start,end_ms=end):
+                if not _cached_receipt_verified(root,aid,start,end):
                     needed.append((item,rec))
             if not needed:
                 continue
@@ -250,7 +260,7 @@ def prepare_campaign_packet(workspace:Path,audit_file:Path,scan_dir:Path,
         rid=rec["recordId"]
         start,end=item["startMs"],item["endMs"]
         original,receipt=preview_paths(root,aid,start,end)
-        ok=_check_cached(original,receipt,aid=aid,start_ms=start,end_ms=end)
+        ok=_cached_receipt_verified(root,aid,start,end)
         url=None
         digest=None
         if ok and original.is_file() and not original.is_symlink():
