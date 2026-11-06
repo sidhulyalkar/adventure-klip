@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from hashlib import sha256
 from pathlib import Path
-from html import escape
 import copy
 import json
 import re
