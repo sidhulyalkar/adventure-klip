@@ -220,7 +220,8 @@
                 "maxLength": 300
               }
             }
-          }
+          },
+          "description": "An unassessed pilot interval contains one ambiguous context placeholder; never mistake this for a verified event phase."
         },
         "observationCaveats": {
           "type": "array",
@@ -463,9 +464,50 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "observedOutcome": {
+            "enum": [
+              "completed",
+              "failed",
+              "partial",
+              "not_applicable",
+              "unknown"
+            ]
+          },
+          "outcomeVisible": {
+            "enum": [
+              "yes",
+              "no",
+              "ambiguous"
+            ]
+          },
+          "technicalQuality": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5
+          },
+          "aestheticQuality": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5
+          },
+          "eventReadability": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5
           }
         }
-      }
+      },
+      "description": "Keep ratings per human annotator without writing a false consensus to the event or filming fields. These are human-submitted, not expert-adjudicated or independent training authorization."
     },
     "reactions": {
       "type": "array",
@@ -617,7 +659,8 @@
             "null"
           ]
         }
-      }
+      },
+      "description": "Boolean permission flags are declarations only; verification of real agreements is independent and this schema grants nothing."
     },
     "split": {
       "type": "object",
