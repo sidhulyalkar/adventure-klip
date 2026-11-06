@@ -75,5 +75,38 @@ class SourceRootPreflightTests(unittest.TestCase):
             mod.write_report(self.ws, str(self.root / 'escape.json'), report)
 
 
+    def test_existing_ssd_catalog_paths_reconcile_without_hashing(self):
+        known = self.root / 'DJI_01.MP4'
+        changed = self.root / 'DJI_02.MP4'
+        unknown = self.root / 'NEW.MP4'
+        known.write_bytes(b'12345')
+        changed.write_bytes(b'xyz')
+        unknown.write_bytes(b'other')
+        with closing(sqlite3.connect(self.ws / 'catalog.sqlite3')) as db:
+            db.execute('UPDATE assets SET stored_path=? WHERE id=?',
+                       (str(known), 'a' * 64))
+            db.execute('UPDATE assets SET stored_path=? WHERE id=?',
+                       (str(changed), 'b' * 64))
+            db.commit()
+        report = mod.build_report(self.ws, self.root)
+        self.assertEqual(report['catalogPathsInsideTrustedRoot'], 2)
+        self.assertEqual(report['catalogSamePathSameSizeUnverified'], 1)
+        self.assertEqual(report['catalogSamePathDifferentSize'], 1)
+        self.assertEqual(report['catalogPathNotEnumerated'], 0)
+        self.assertEqual(report['localPathsNotInCatalogAtSamePath'], 1)
+        self.assertEqual(report['localPathsNotInCatalogSample'], [str(unknown)])
+        self.assertFalse(report['sourceContentHashed'])
+        self.assertFalse(report['scanReady'])
+
+    def test_missing_catalog_path_is_not_treated_as_matching_unknown_size(self):
+        with closing(sqlite3.connect(self.ws / 'catalog.sqlite3')) as db:
+            db.execute('UPDATE assets SET stored_path=?,size_bytes=? WHERE id=?',
+                       (str(self.root / 'MISSING.MP4'), None, 'a' * 64))
+            db.commit()
+        report = mod.build_report(self.ws, self.root)
+        self.assertEqual(report['catalogSamePathSameSizeUnverified'], 0)
+        self.assertEqual(report['catalogPathNotEnumerated'], 1)
+
+
 if __name__ == '__main__':
     unittest.main()
