@@ -53,6 +53,8 @@ from .social_action_lens import save_training, save_feature_template, save_compa
 from .social_corpus_onboarding import init_corpus, preflight_corpus
 from .reaction_reference_catalog import audit_reaction_references
 from .highlight_curation_validate import audit_highlight_curation_manifest
+from .highlight_curation_pilot import save_curation_pilot
+from .highlight_curation_review import import_curation_reviews
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -206,6 +208,28 @@ def main(argv: list[str] | None = None) -> int:
         help="Opt in to local FFmpeg decoding of existing verified H264 previews")
     social_temporal.add_argument("--prepare-previews",action="store_true",
         help="With --run only, checksum-verify and read original video to create absent H264 previews")
+    pilot=sub.add_parser("highlight-curation-pilot",
+        help="Select blind action/filming annotation candidates, with unknown controls, no original-media reads")
+    pilot.add_argument("--study",type=Path,required=True,
+        help="Frozen archive-value-study study.json")
+    pilot.add_argument("--features",type=Path,required=True,
+        help="Frozen pilot feature-template.json")
+    pilot.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ review packet")
+    pilot.add_argument("--limit",type=int,default=60,
+        help="Annotation candidate budget (1..200)")
+    pilot.add_argument("--seed",type=int,default=104,
+        help="Deterministic selection seed")
+    pilot.add_argument("--max-per-source",type=int,default=2,
+        help="Maximum intervals from one source (1..8)")
+    curate_import=sub.add_parser("highlight-curation-import",
+        help="Import blinded human-review JSON exports, no video/AI training")
+    curate_import.add_argument("--pilot-dir",type=Path,required=True,
+        help="Frozen existing highlight-curation-pilot packet")
+    curate_import.add_argument("--reviews",type=Path,action="append",required=True,
+        help="One JSON export per reviewer; repeat for independent raters")
+    curate_import.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ folder")
     curation=sub.add_parser("highlight-curation-preflight",
         help="Validate source/outing splits and evidence/rights declarations in an annotation manifest, no video access")
     curation.add_argument("--manifest",type=Path,required=True,
@@ -680,6 +704,13 @@ def main(argv: list[str] | None = None) -> int:
                 prepare_previews=args.prepare_previews,
                 resume=args.resume,retry_interrupted=args.retry_interrupted,
                 retry_failures=args.retry_failures))
+        elif args.command=="highlight-curation-pilot":
+            _print(save_curation_pilot(root,args.study,args.features,
+                args.output_dir,limit=args.limit,seed=args.seed,
+                max_per_source=args.max_per_source))
+        elif args.command=="highlight-curation-import":
+            _print(import_curation_reviews(root,args.pilot_dir,args.reviews,
+                args.output_dir))
         elif args.command=="highlight-curation-preflight":
             _print(audit_highlight_curation_manifest(args.manifest))
         elif args.command=="reaction-reference-audit":
