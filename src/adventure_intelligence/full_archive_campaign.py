@@ -406,6 +406,31 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
             or audit.get("workspace")!=str(root)
             or not isinstance(audit.get("assets"),list)):
         raise ValueError("A matching frozen Klip full archive audit is required")
+    # The frozen audit must describe the CURRENT catalog source identities.
+    # A prior reindex/ingest can legitimately move managed source paths, but
+    # requires a NEW audit to avoid silently mixing provenance snapshots.
+    with closing(_open_catalog(root)) as db:
+        current={
+            r["id"]:dict(r)
+            for r in db.execute(
+                "SELECT id,sha256,stored_path,size_bytes,duration,activity FROM assets")
+        }
+    if len(current)!=len(audit["assets"]):
+        raise ValueError("Catalog has changed since campaign audit; create a NEW audit")
+    for item in audit["assets"]:
+        row=current.get(item["sourceAssetSha256"])
+        if row is None:
+            raise ValueError("Catalog identity changed since frozen campaign audit")
+        duration=row["duration"]
+        ms=(int(float(duration)*1000)
+            if type(duration) in (int,float) and math.isfinite(duration)
+            and duration>0 and duration<=24*3600 else None)
+        if (row["sha256"]!=item["sourceAssetSha256"]
+                or row["stored_path"]!=item["storedPathAsCatalogued"]
+                or row["size_bytes"]!=item["sourceBytesFromCatalog"]
+                or ms!=item["durationMsFromCatalog"]
+                or row["activity"]!=item["catalogActivity"]):
+            raise ValueError("Catalog changed since frozen campaign audit; create a NEW audit")
     dest=_lexical(output_dir)
     if (not dest.is_relative_to(root)
             or dest==root
@@ -488,9 +513,9 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
                     if (not stat.S_ISREG(before.st_mode)
                             or before.st_size!=item["sourceBytesFromCatalog"]):
                         raise ValueError("Catalog size mismatch or non-regular trusted local file")
-                    _hash_verified(path,aid)
                     state["sourceHashPasses"]+=1
                     state["sourceReadsPerformed"]+=1
+                    _hash_verified(path,aid)
                     meta=probe(path)
                     actual=float(meta["duration"])
                     expected=item["durationMsFromCatalog"]/1000
