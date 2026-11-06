@@ -808,3 +808,90 @@ def test_overnight_script_bash_syntax():
     assert "archive-cached-secondlook-batches" in content
     assert "--prepare-previews" in content  # documented prohibition only
     assert "archive-local-triage " not in content  # never run source-reading triage
+
+
+def test_pilot_recovery_can_precede_human_feedback_when_no_plan_exists(frozen,tmp_path):
+    from adventure_intelligence.highlight_pilot_recovery import (
+        recover_local_pilot, diagnose_local_pilot
+    )
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,original,metadata,ready=frozen
+    manifest_before=Path(metadata["manifest"]).read_bytes()
+    (original/"presentation.json").unlink()
+    (original/"selection-report.json").unlink()
+    recovered=root/"reports"/"recovered-no-human-plan"
+    result=recover_local_pilot(root,original,None,recovered)
+    assert result["originalSourceReads"]==0
+    assert recovered.joinpath("curation-manifest.json").read_bytes()==manifest_before
+    assert not (recovered/"selection-report.json").exists()
+    review_file=export(tmp_path/"real-human-review.json",metadata["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "A nice visible highlight in this exact window"),
+    ])
+    planned=save_review_discovery(
+        root,recovered,[review_file],root/"reports"/"newly-discovered-feedback")
+    doc=json.loads(Path(planned["report"]).read_text())
+    assert doc["selectionReportPresent"] is False
+    assert doc["selectionRosterSource"]=="audited-frozen-manifest"
+    assert doc["provisionalHighlightCount"]==1
+    assert result["originalPilotFilesModified"] is False
+
+
+def test_feedback_locator_matches_frozen_manifest_and_prefers_matching_plan(frozen,tmp_path):
+    from adventure_intelligence.highlight_night_feedback import resolve_human_feedback
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,pilot,original,ready=frozen
+    manifest=pilot/"curation-manifest.json"
+    wrong=root/"reports"/"not-there"/"review-discovery-plan.json"
+    none=resolve_human_feedback(root,manifest,preferred_plan=wrong)
+    assert none["status"]=="no_matching_human_feedback"
+    assert none["noSourceMediaReads"] is True
+    reviews=export(root/"exports"/"my-curation-reviews.json",
+                   original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "A noteworthy visible source event")
+    ]) if (root/"exports").is_dir() else None
+    if reviews is None:
+        (root/"exports").mkdir(parents=True)
+        reviews=export(root/"exports"/"my-curation-reviews.json",
+                       original["manifestSha256"],[
+            feedback(ready[0]["recordId"],"reviewer-001","keep",
+                     "A noteworthy visible source event")
+        ])
+    found=resolve_human_feedback(root,manifest,preferred_plan=wrong,
+                                  preferred_reviews=reviews)
+    assert found["status"]=="matching_raw_review_export"
+    assert found["reviewedWindows"]==1
+    assert found["selectedPath"]==str(reviews)
+    plan=save_review_discovery(
+        root,pilot,[reviews],root/"reports"/"confirmed-human-plan")
+    chosen=resolve_human_feedback(root,manifest,
+                                  preferred_plan=Path(plan["report"]))
+    assert chosen["status"]=="matching_existing_plan"
+    assert chosen["selectedPath"]==str(Path(plan["report"]).resolve())
+
+
+def test_overnight_heredoc_python_syntax():
+    import ast
+    from pathlib import Path
+    script=Path(__file__).resolve().parents[1]/"scripts"/"klip_overnight_cache_only.sh"
+    lines=script.read_text().splitlines()
+    snippets=[]
+    collecting=False
+    fragment=[]
+    for line in lines:
+        if not collecting and line.endswith("<<'PY'"):
+            collecting=True
+            fragment=[]
+        elif collecting and line=="PY":
+            snippets.append("\\n".join(fragment)+"\\n")
+            collecting=False
+        elif collecting:
+            fragment.append(line)
+    assert not collecting
+    assert len(snippets)>=5
+    for code in snippets:
+        ast.parse(code)
+    assert "highlight-pilot-recover" in script.read_text()
+    assert "highlight-feedback-plan" in script.read_text()
+    assert "matching_raw_review_export" in script.read_text()
