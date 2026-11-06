@@ -884,7 +884,7 @@ def test_overnight_heredoc_python_syntax():
             collecting=True
             fragment=[]
         elif collecting and line=="PY":
-            snippets.append("\\n".join(fragment)+"\\n")
+            snippets.append("\n".join(fragment)+"\n")
             collecting=False
         elif collecting:
             fragment.append(line)
