@@ -1,7 +1,6 @@
 """Synthetic, source-safe end-to-end tests for action highlight annotation."""
 from __future__ import annotations
 
-from collections import Counter
 from hashlib import sha256
 from pathlib import Path
 import json
@@ -172,7 +171,6 @@ def test_import_two_independent_humans_without_collapsing_disagreement(dataset,t
     _add_preview(root,ids[0])
     pilot=root/"reports"/"pilot"
     created=save_curation_pilot(root,study,template,pilot,limit=12)
-    manifest=json.loads(Path(created["manifest"]).read_text())
     presentation=json.loads((pilot/"presentation.json").read_text())
     ready=[rid for rid,entry in presentation["records"].items()
            if entry["verifiedProxyReady"]]
