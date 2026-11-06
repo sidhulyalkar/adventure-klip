@@ -55,6 +55,7 @@ from .reaction_reference_catalog import audit_reaction_references
 from .highlight_curation_validate import audit_highlight_curation_manifest
 from .highlight_curation_pilot import save_curation_pilot
 from .highlight_curation_review import import_curation_reviews
+from .highlight_feedback_discovery import save_review_discovery
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -222,6 +223,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Deterministic selection seed")
     pilot.add_argument("--max-per-source",type=int,default=2,
         help="Maximum intervals from one source (1..8)")
+    feedback_plan=sub.add_parser("highlight-feedback-plan",
+        help="Map human review preferences to source-safe highlight and context-discovery proposals")
+    feedback_plan.add_argument("--pilot-dir",type=Path,required=True,
+        help="Original frozen highlight-curation-pilot packet")
+    feedback_plan.add_argument("--reviews",type=Path,action="append",required=True,
+        help="Human JSON export; repeat for independent raters")
+    feedback_plan.add_argument("--output-dir",type=Path,required=True,
+        help="NEW private reports/ or exports/ directory")
     curate_import=sub.add_parser("highlight-curation-import",
         help="Import blinded human-review JSON exports, no video/AI training")
     curate_import.add_argument("--pilot-dir",type=Path,required=True,
@@ -708,6 +717,9 @@ def main(argv: list[str] | None = None) -> int:
             _print(save_curation_pilot(root,args.study,args.features,
                 args.output_dir,limit=args.limit,seed=args.seed,
                 max_per_source=args.max_per_source))
+        elif args.command=="highlight-feedback-plan":
+            _print(save_review_discovery(root,args.pilot_dir,args.reviews,
+                args.output_dir))
         elif args.command=="highlight-curation-import":
             _print(import_curation_reviews(root,args.pilot_dir,args.reviews,
                 args.output_dir))
