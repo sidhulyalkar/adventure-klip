@@ -42,15 +42,31 @@ _GOALS={
 
 
 def _read_local(path:Path,max_bytes:int=20_000_000)->tuple[dict,str]:
-    if path.is_symlink() or not path.is_file() or not 1<=path.stat().st_size<=max_bytes:
-        raise ValueError("A required local evidence file is missing, symlinked or oversized")
-    data=path.read_bytes()
+    """Read bounded private JSON with the failing filename and reason.
+
+    Original camera paths are never consulted. A bad or incomplete prior
+    report needs a diagnosable error rather than a generic exception.
+    """
+    path=Path(path).expanduser()
+    if path.is_symlink():
+        raise ValueError(f"Required local report is a symlink (refused): {path}")
+    if not path.is_file():
+        raise ValueError(f"Required local report is missing or not a file: {path}")
+    size=path.stat().st_size
+    if not 1<=size<=max_bytes:
+        raise ValueError(
+            f"Required local report has invalid size {size} bytes "
+            f"(allowed 1..{max_bytes}): {path}")
+    try:
+        data=path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"Cannot read local report: {path}: {exc}") from exc
     try:
         value=json.loads(data)
     except (ValueError,UnicodeDecodeError) as exc:
-        raise ValueError("Malformed local evidence JSON") from exc
+        raise ValueError(f"Malformed local JSON report: {path}") from exc
     if not isinstance(value,dict):
-        raise ValueError("Expected JSON evidence object")
+        raise ValueError(f"Expected JSON object in local report: {path}")
     return value,sha256(data).hexdigest()
 
 
