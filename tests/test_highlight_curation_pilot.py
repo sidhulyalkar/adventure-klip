@@ -259,3 +259,21 @@ def test_cli_pilot_and_import_surface(dataset,tmp_path,capsys):
     assert report["candidateWindows"]>=4
     assert report["originalSourceReads"]==0
     assert report["verifiedReviewProxies"]==0
+
+
+def test_review_page_inline_script_is_valid_javascript(dataset,tmp_path):
+    import shutil
+    import subprocess
+    node=shutil.which("node")
+    if not node:
+        pytest.skip("Node.js not installed for offline HTML script syntax check")
+    root,ids,study,template=dataset
+    _add_preview(root,ids[0])
+    result=save_curation_pilot(
+        root,study,template,root/"reports"/"node-review",limit=12)
+    html=Path(result["reviewPage"]).read_text()
+    source=html.split("<script>",1)[1].split("</script>",1)[0]
+    checked=subprocess.run([node,"--check","-"],input=source.encode("utf-8"),
+                           stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                           timeout=20,check=False)
+    assert checked.returncode==0,checked.stderr.decode("utf-8","replace")
