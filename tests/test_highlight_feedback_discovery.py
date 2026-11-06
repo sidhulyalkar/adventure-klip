@@ -739,3 +739,71 @@ def test_recovery_marks_unverifiable_media_unavailable_instead_of_relabeling(fro
     assert available["requiresSourceReadForPreview"] is True
     assert not (target/"media"/(rid+".mp4")).exists()
     assert recovered["originalSourceReads"]==0
+
+
+def test_cached_secondlook_batches_checkpoint_and_completed_resume(tmp_path,monkeypatch):
+    from adventure_intelligence import cached_secondlook_batches as module
+    root=tmp_path/"workspace"
+    assignments=root/"reports"/"review-assignments.json"
+    assignments.parent.mkdir(parents=True)
+    assignments.write_text('{"version":"synthetic-frozen-fixture"}')
+    calls=[]
+    def fake_run(workspace,path,*,model,limit,run,exclude_review_ids):
+        calls.append((model,limit,run,tuple(exclude_review_ids)))
+        if len(calls)==1:
+            assert limit==8 and run
+            assert not exclude_review_ids
+            return {
+                "status":"completed","selected":2,"eligibleUnreviewed":2,
+                "items":[{"reviewId":"synthetic-a","status":"suggested"},
+                         {"reviewId":"synthetic-b","status":"failed"}],
+                "newLocalModelCalls":1,"cachedSecondLooksReused":0,"failed":1,
+            }
+        assert set(exclude_review_ids)=={"synthetic-a","synthetic-b"}
+        return {
+            "status":"completed","selected":0,"eligibleUnreviewed":0,
+            "items":[],"newLocalModelCalls":0,
+            "cachedSecondLooksReused":0,"failed":0,
+        }
+    monkeypatch.setattr(module,"inspect_temporal_candidates",fake_run)
+    output=root/"reports"/"checkpointed-secondlooks"
+    first=module.run_cached_secondlook_batches(
+        root,assignments,output,model="gemma3:4b",batches=1)
+    assert first["status"]=="cached_secondlook_budget_reached"
+    assert first["reviewIdsCovered"]==2
+    assert first["failed"]==1
+    assert (output/"secondlook-state.json").is_file()
+    second=module.run_cached_secondlook_batches(
+        root,assignments,output,model="gemma3:4b",batches=5,resume=True)
+    assert second["status"]=="cached_secondlook_batches_complete"
+    assert second["batchesRecorded"]==2
+    assert len(calls)==2
+    repeated=module.run_cached_secondlook_batches(
+        root,assignments,output,model="gemma3:4b",batches=5,resume=True)
+    assert repeated==second
+    assert len(calls)==2
+    with pytest.raises(ValueError,match="cannot change"):
+        module.run_cached_secondlook_batches(
+            root,assignments,output,model="different:4b",resume=True)
+
+
+def test_overnight_script_bash_syntax():
+    import shutil
+    import subprocess
+    shell=shutil.which("bash")
+    if not shell:
+        pytest.skip("bash unavailable")
+    script=Path(__file__).resolve().parents[1]/"scripts"/"klip_overnight_cache_only.sh"
+    assert script.is_file()
+    check=subprocess.run([shell,"-n",str(script)],
+                         stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                         timeout=15,check=False)
+    assert check.returncode==0,check.stderr.decode("utf-8","replace")
+    content=script.read_text()
+    assert "highlight-pilot-recover" in content
+    assert "highlight-next-pass" in content
+    assert "social-lens-temporal" in content
+    assert "archive-cached-secondlook-batches" in content
+    assert "social-lens-temporal \\\n" not in content  # avoid duplicate command blocks
+    assert "--prepare-previews" in content  # documented prohibition only
+    assert "archive-local-triage " not in content  # never run source-reading triage
