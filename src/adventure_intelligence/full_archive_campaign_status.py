@@ -180,7 +180,12 @@ def campaign_progress(workspace:Path,audit_file:Path,*,
     completed_all=(bool(assets) and scan["completed"]==len(assets)
                    and scan["failed"]==0 and scan["blocked"]==0
                    and scan["reportIntegrityFailures"]==0)
-    ready_for_human=packet["verifiedPlaybackClipsReported"]>0
+    # A playable media receipt is not a fully qualified review packet if
+    # its frozen source report or current checkpoint no longer verifies.
+    ready_for_human=(packet["verifiedPlaybackClipsReported"]>0
+                     and scan["available"]
+                     and scan["reportIntegrityFailures"]==0
+                     and packet["matchesCurrentScanCheckpoint"] is True)
     blockers=[]
     if not scan["available"]:
         blockers.append("No source-coarse scan checkpoint; archive audit is metadata only")
