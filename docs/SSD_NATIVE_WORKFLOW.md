@@ -79,6 +79,48 @@ If `VolumeUUID` / `DiskUUID` is unavailable, the guard fails closed.
 Investigate the filesystem identity; do not replace it with a volume-name
 comparison.
 
+## Shortcut when the original SSD mount path is already catalogued
+
+If `klip index --dry-run` discovered hundreds of recordings on the intended
+SSD, **do not immediately rehash them all**. Existing catalog SHA identities
+may already refer to those exact source paths, and a new scan will independently
+reverify each content hash before accepting its evidence.
+
+Run the new metadata-only reconciliation first. This enumerates directory
+entries but does not open video contents:
+
+```bash
+export SSD_RECONCILE_REPORT="$WS/reports/ssd-reconcile-$(date +%Y%m%d-%H%M%S).json"
+
+python scripts/klip_source_root_preflight.py --workspace "$WS" \
+  --trusted-root "$HEALTHY_SOURCE_ROOT" --allow-mounted-ssd \
+  --output "$SSD_RECONCILE_REPORT"
+
+python - "$SSD_RECONCILE_REPORT" <<'PY'
+import json, sys
+r=json.load(open(sys.argv[1]))
+for key in ("catalogAssetCount", "localVideoFilesEnumerated",
+            "catalogPathsInsideTrustedRoot",
+            "catalogSamePathSameSizeUnverified",
+            "catalogSamePathDifferentSize", "catalogPathNotEnumerated",
+            "localPathsNotInCatalogAtSamePath"):
+    print(key, r[key])
+print("Unlisted local paths sample:", *r["localPathsNotInCatalogSample"], sep="\n  ")
+PY
+```
+
+If there are catalog paths matching the root and file size, a two-file
+SHA-verifying scan can start **without a full reindex**. This does not yet
+prove all other source files are healthy; each candidate must pass its own
+hash/ffprobe/decode later. Paths not in the catalog (at the same absolute path)
+are **not necessarily new unique videos**. Investigate them later with
+content-addressed indexing, never assume the difference in counts equals new
+recordings.
+
+If the existing catalog is entirely outside the selected root or files
+have moved, index the stable SSD first, then freeze a **new** audit. Existing
+per-source receipts must never be silently relinked to a different path.
+
 ## Catalog synchronization (zero-copy)
 
 Existing catalog paths may already point to the same correct SSD mount. If
