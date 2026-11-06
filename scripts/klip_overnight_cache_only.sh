@@ -38,6 +38,16 @@ if free < 20*2**30:
     raise SystemExit("STOP: Less than 20 GiB free. Do not start overnight rendering.")
 PY
 
+preserve_incomplete_dir() {
+  label="$1"
+  path="$2"
+  if test -d "$path" && ! test -f "$RUNROOT/.$label.done"; then
+    old="$path.incomplete-$(date +%s)-$"
+    mv "$path" "$old"
+    echo "[PRESERVED partial output] $old"
+  fi
+}
+
 run_step() {
   name="$1"
   shift
@@ -64,6 +74,7 @@ run_step() {
 run_step doctor klip --workspace "$WS" highlight-pilot-doctor \
   --pilot-dir "$PILOT" --feedback "$PLAN"
 RECOVERED="$RUNROOT/recovered-pilot"
+preserve_incomplete_dir recover "$RECOVERED"
 run_step recover klip --workspace "$WS" highlight-pilot-recover \
   --pilot-dir "$PILOT" --feedback "$PLAN" --output-dir "$RECOVERED"
 
@@ -76,15 +87,18 @@ echo "Verified, recovered, local playback previews: $CACHE_COUNT"
 
 if test "$CACHE_COUNT" -gt 0; then
   STUDIO="$RUNROOT/interactive-reels"
+  preserve_incomplete_dir studio "$STUDIO"
   run_step studio klip --workspace "$WS" highlight-reel-studio \
     --pilot-dir "$RECOVERED" --feedback "$PLAN" \
     --workers 4 --scout-limit 80 --output-dir "$STUDIO"
 
+  preserve_incomplete_dir next-pass "$RUNROOT/adaptive-next-pass"
   run_step next-pass klip --workspace "$WS" highlight-next-pass \
     --pilot-dir "$RECOVERED" --feedback-plan "$PLAN" \
     --studio-dir "$STUDIO" --limit 160 --per-source 8 \
     --output-dir "$RUNROOT/adaptive-next-pass"
 
+  preserve_incomplete_dir reel-render "$RUNROOT/preview-mp4-reels"
   run_step reel-render klip --workspace "$WS" highlight-reel-render \
     --studio-dir "$STUDIO" --reel all --workers 2 \
     --output-dir "$RUNROOT/preview-mp4-reels"
@@ -101,9 +115,14 @@ fi
 # Do not regenerate archive-value-study here; that stage may stat SD media.
 if test -f "$STUDY"; then
   FEATURES_DIR="$RUNROOT/feature-template-300"
+  preserve_incomplete_dir features-300 "$FEATURES_DIR"
   run_step features-300 klip --workspace "$WS" social-lens-feature-template \
     --study "$STUDY" --limit 300 --output-dir "$FEATURES_DIR"
   TEMPORAL_DIR="$RUNROOT/temporal-300"
+  if test -d "$TEMPORAL_DIR" && ! test -f "$RUNROOT/.temporal-300.done" &&
+     ! test -f "$TEMPORAL_DIR/checkpoint.json"; then
+    preserve_incomplete_dir temporal-300 "$TEMPORAL_DIR"
+  fi
   if test -d "$TEMPORAL_DIR" && ! test -f "$RUNROOT/.temporal-300.done"; then
     run_step temporal-300 klip --workspace "$WS" social-lens-temporal \
       --features "$FEATURES_DIR/feature-template.json" \
@@ -144,6 +163,10 @@ if test -n "$ASSIGNMENTS" &&
    curl -fsS --max-time 4 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 &&
    ollama list | grep -Fq "$MODEL"; then
   LOOK_DIR="$RUNROOT/cached-ollama-secondlooks"
+  if test -d "$LOOK_DIR" && ! test -f "$RUNROOT/.cached-ollama.done" &&
+     ! test -f "$LOOK_DIR/secondlook-state.json"; then
+    preserve_incomplete_dir cached-ollama "$LOOK_DIR"
+  fi
   if test -d "$LOOK_DIR" && ! test -f "$RUNROOT/.cached-ollama.done"; then
     run_step cached-ollama klip --workspace "$WS" archive-cached-secondlook-batches \
       --assignments "$ASSIGNMENTS" --model "$MODEL" \
