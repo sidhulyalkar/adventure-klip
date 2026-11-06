@@ -44,6 +44,10 @@ print("Catalog quality gaps:",d["catalogQualityGaps"])
 print("Unverified source paths remain UNKNOWN.")
 PY
 if [[ "$PHASE" = audit ]]; then
+  klip --workspace "$WS" highlight-campaign-status \
+    --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+    >"$CAMPAIGN_DIR/progress.json"
+  echo "Campaign truth-in-progress: $CAMPAIGN_DIR/progress.json"
   echo "Audit finished. To scan healthy local originals:"
   echo "CAMPAIGN_DIR='$CAMPAIGN_DIR' PHASE=scan ENABLE_ORIGINAL_READS=YES"
   exit 0
@@ -93,6 +97,10 @@ PY
 done
 echo "Source scan reports: $CAMPAIGN_DIR/coarse-scan/per-source/"
 echo "Originals outside the explicitly trusted root were not examined."
+klip --workspace "$WS" highlight-campaign-status \
+  --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+  --scan-dir "$CAMPAIGN_DIR/coarse-scan" \
+  >"$CAMPAIGN_DIR/progress.json"
 fi
 
 if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
@@ -130,6 +138,14 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
     klip "${packetargs[@]}" >"$CAMPAIGN_DIR/packet-result.json" \
       2>"$CAMPAIGN_DIR/packet-errors.log"
   fi
+  if [[ -f "$CAMPAIGN_DIR/review-packet/selection-report.json" ]]; then
+    klip --workspace "$WS" highlight-campaign-status \
+      --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+      --scan-dir "$CAMPAIGN_DIR/coarse-scan" \
+      --packet-dir "$CAMPAIGN_DIR/review-packet" \
+      >"$CAMPAIGN_DIR/progress.json"
+  fi
+  echo "Truth-in-progress status: $CAMPAIGN_DIR/progress.json"
   echo "Open blind review: $CAMPAIGN_DIR/review-packet/index.html"
   echo "Export human annotations, then use highlight-feedback-plan and Reel Studio."
 fi
