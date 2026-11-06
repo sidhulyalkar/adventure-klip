@@ -57,6 +57,7 @@ from .highlight_curation_pilot import save_curation_pilot
 from .highlight_curation_review import import_curation_reviews
 from .highlight_feedback_discovery import save_review_discovery
 from .highlight_reel_studio import assemble_reel_studio
+from .highlight_reel_feedback import save_reel_feedback
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -224,6 +225,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Deterministic selection seed")
     pilot.add_argument("--max-per-source",type=int,default=2,
         help="Maximum intervals from one source (1..8)")
+    reel_feedback=sub.add_parser("highlight-reel-feedback",
+        help="Import per-frame-timeline human reactions from frozen local Reel Studio, with no original reads")
+    reel_feedback.add_argument("--studio-dir",type=Path,required=True,
+        help="Existing private interactive reel studio directory")
+    reel_feedback.add_argument("--annotations",type=Path,required=True,
+        help="Downloaded local reel-reactions JSON export")
+    reel_feedback.add_argument("--output-dir",type=Path,required=True,
+        help="NEW reports/ or exports/ directory for source-timed feedback")
     reel_studio=sub.add_parser("highlight-reel-studio",
         help="Build offline interactive human-selected and sport-scout reels from verified LOCAL cached previews")
     reel_studio.add_argument("--pilot-dir",type=Path,required=True,
@@ -730,6 +739,9 @@ def main(argv: list[str] | None = None) -> int:
             _print(save_curation_pilot(root,args.study,args.features,
                 args.output_dir,limit=args.limit,seed=args.seed,
                 max_per_source=args.max_per_source))
+        elif args.command=="highlight-reel-feedback":
+            _print(save_reel_feedback(
+                root,args.studio_dir,args.annotations,args.output_dir))
         elif args.command=="highlight-reel-studio":
             _print(assemble_reel_studio(
                 root,args.pilot_dir,args.feedback,args.output_dir,
