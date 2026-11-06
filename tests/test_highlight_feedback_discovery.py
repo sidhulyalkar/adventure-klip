@@ -425,3 +425,81 @@ def test_reel_work_is_local_only_even_when_sdcard_unmounted(frozen,tmp_path,monk
         workers=4,scout_limit=4)
     assert more["sourceOriginalReads"]==0
     assert more["localCacheWorkers"]==4
+
+
+def test_optional_preview_reel_render_uses_only_valid_local_proxy(frozen,tmp_path):
+    import shutil,subprocess
+    from adventure_intelligence.highlight_reel_render import render_local_reels
+    from adventure_intelligence.studio_preview_judge import preview_paths
+    ffmpeg=shutil.which("ffmpeg")
+    ffprobe=shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        pytest.skip("FFmpeg and FFprobe are required for a real preview render test")
+    root,packet,pilot,ready=frozen
+    rid=ready[0]["recordId"]
+    aid=ready[0]["source"]["assetSha256"]
+    real=tmp_path/"real-valid-source-preview.mp4"
+    ff=subprocess.run([
+        ffmpeg,"-hide_banner","-loglevel","error","-nostdin","-y",
+        "-f","lavfi","-i","color=c=blue:s=128x72:r=10",
+        "-t","1.5","-an","-c:v","libx264","-pix_fmt","yuv420p",str(real)
+    ],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=45)
+    assert ff.returncode==0,ff.stderr.decode("utf-8","replace")
+    # Only synthetic derivative fixture bytes are replaced. No real
+    # source media or user's archive is accessed in CI.
+    preview,receipt=preview_paths(root,aid,1000,21000)
+    blob=real.read_bytes()
+    preview.write_bytes(blob)
+    digest=sha256(blob).hexdigest()
+    old=json.loads(receipt.read_text())
+    old["previewSha256"]=digest
+    receipt.write_text(json.dumps(old))
+    view=json.loads((packet/"presentation.json").read_text())
+    view["records"][rid]["proxySha256"]=digest
+    (packet/"presentation.json").write_text(json.dumps(view))
+    root,packet,ready,result=_make_studio(frozen,tmp_path,scout_limit=0)
+    studio=Path(result["directory"])
+    output=root/"reports"/"rendered-nature"
+    rendered=render_local_reels(root,studio,output,reel_id="nature",workers=2)
+    assert rendered["renderedReels"]==1
+    assert rendered["originalSourceReads"]==0
+    manifest=json.loads(Path(rendered["report"]).read_text())
+    assert manifest["sourcePreviewOnly"] is True
+    assert manifest["fullResolutionSourceRender"] is False
+    assert manifest["audioPreserved"] is False
+    assert manifest["reels"][0]["status"]=="rendered_preview_mp4"
+    produced=output/"nature.mp4"
+    assert produced.is_file() and produced.stat().st_size>100
+    probe=subprocess.run([
+        ffprobe,"-v","error","-show_entries","stream=codec_name,width,height",
+        "-select_streams","v:0","-of","json",str(produced)
+    ],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=25,check=True)
+    stream=json.loads(probe.stdout)["streams"][0]
+    assert stream["codec_name"]=="h264"
+    assert (stream["width"],stream["height"])==(960,540)
+    with pytest.raises(ValueError,match="NEW"):
+        render_local_reels(root,studio,output,reel_id="nature")
+    with pytest.raises(ValueError,match="unreviewed"):
+        render_local_reels(root,studio,root/"reports"/"unapproved",
+                           reel_id="sport-scout")
+    assert not (root/"reports"/"unapproved").exists()
+
+
+def test_preview_renderer_fails_closed_if_cached_reel_was_tampered(frozen,tmp_path):
+    import shutil
+    from adventure_intelligence.highlight_reel_render import render_local_reels
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg unavailable")
+    root,packet,ready,result=_make_studio(frozen,tmp_path,scout_limit=0)
+    studio=Path(result["directory"])
+    manifest=json.loads(Path(result["manifest"]).read_text())
+    nature=next(c for c in manifest["clips"] if c["category"]=="nature")
+    local=studio/nature["videoUrl"]
+    local.write_bytes(b"tampered"+local.read_bytes())
+    exported=render_local_reels(
+        root,studio,root/"reports"/"fail-closed-render",reel_id="nature")
+    assert exported["renderedReels"]==0
+    assert exported["failedReels"]==1
+    report=json.loads(Path(exported["report"]).read_text())
+    assert report["reels"][0]["status"]=="not_rendered_missing_or_invalid_proxy"
+    assert not (root/"reports"/"fail-closed-render"/"nature.mp4").exists()
