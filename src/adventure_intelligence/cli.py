@@ -58,6 +58,7 @@ from .highlight_curation_review import import_curation_reviews
 from .highlight_feedback_discovery import save_review_discovery
 from .highlight_reel_studio import assemble_reel_studio
 from .highlight_reel_feedback import save_reel_feedback
+from .highlight_reel_render import render_local_reels
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -225,6 +226,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Deterministic selection seed")
     pilot.add_argument("--max-per-source",type=int,default=2,
         help="Maximum intervals from one source (1..8)")
+    reel_render=sub.add_parser("highlight-reel-render",
+        help="Optionally render verified LOCAL proxy playlists to preview-resolution MP4 using bounded FFmpeg CPU jobs")
+    reel_render.add_argument("--studio-dir",type=Path,required=True,
+        help="Existing private interactive Reel Studio output directory")
+    reel_render.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ output directory")
+    reel_render.add_argument("--reel",default="all",
+        choices=["all","human-selected","nature","cinematic","personal","athletic","sport-scout"],
+        help="Which collection to export; all excludes unreviewed sport scouting by default")
+    reel_render.add_argument("--workers",type=int,default=2,
+        help="Concurrent FFmpeg encode jobs on verified local derivatives (1..2)")
+    reel_render.add_argument("--allow-scout",action="store_true",
+        help="Explicitly include unreviewed sport-scout previews in a separate, clearly labeled scouting MP4")
     reel_feedback=sub.add_parser("highlight-reel-feedback",
         help="Import per-frame-timeline human reactions from frozen local Reel Studio, with no original reads")
     reel_feedback.add_argument("--studio-dir",type=Path,required=True,
@@ -739,6 +753,10 @@ def main(argv: list[str] | None = None) -> int:
             _print(save_curation_pilot(root,args.study,args.features,
                 args.output_dir,limit=args.limit,seed=args.seed,
                 max_per_source=args.max_per_source))
+        elif args.command=="highlight-reel-render":
+            _print(render_local_reels(
+                root,args.studio_dir,args.output_dir,reel_id=args.reel,
+                workers=args.workers,allow_scout=args.allow_scout))
         elif args.command=="highlight-reel-feedback":
             _print(save_reel_feedback(
                 root,args.studio_dir,args.annotations,args.output_dir))
