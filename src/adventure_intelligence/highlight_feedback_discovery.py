@@ -405,7 +405,7 @@ def save_review_discovery(workspace:Path,pilot_dir:Path,
     return {
         "status":"review_discovery_plan_created",
         "report":str(dest/"review-discovery-plan.json"),
-        "provisionalHighlights":str(dest/"provisional-highlights.json"),
+        "highlightsFile":str(dest/"provisional-highlights.json"),
         "sourceContextPlan":str(dest/"source-context-proposals.json"),
         "manualDeletionHolds":str(dest/"manual-deletion-holds.json"),
         "html":str(dest/"index.html"),
