@@ -160,3 +160,27 @@ camera-specific color grading, scene selection and licensed
 music/sound are deliberately not included. Do not publish these
 as full-resolution exports or infer that their action narratives
 have been validated.
+
+
+## Turn live reactions into the next candidate search
+
+The timed-feedback importer also groups positive interest markers from
+nearby moments in the same original source into bounded metadata-only
+source search windows. In addition to timed-feedback.json and
+retrim-proposals.json, it writes source-interest-proposals.json. Each
+proposal includes original asset SHA, source time range, reviewer IDs,
+trigger types, and explicit status human_reaction_requires_video_verification.
+A "Wow" marker or standout comment is not an automatically accepted
+highlight, and none of these proposals authorize reopening the SD card.
+These source windows are the bridge to future resumable adaptive
+temporal retrieval, not an automatic video classifier.
+
+If a browser restricts local file:// video loading, a loopback-only
+static server can provide the same offline files without Internet access:
+
+    cd "$WS/reports/interactive-reels-v1"
+    python3 -m http.server --bind 127.0.0.1 8765
+
+Then open http://127.0.0.1:8765/ locally. Stop the server with Ctrl+C.
+Do not bind this private clip directory to 0.0.0.0 or a publicly reachable
+network interface.
