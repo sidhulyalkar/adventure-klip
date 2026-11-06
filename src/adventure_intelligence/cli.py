@@ -60,6 +60,7 @@ from .highlight_reel_studio import assemble_reel_studio
 from .highlight_reel_feedback import save_reel_feedback
 from .highlight_reel_render import render_local_reels
 from .highlight_adaptive_queue import save_adaptive_queue
+from .highlight_pilot_recovery import diagnose_local_pilot, recover_local_pilot
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -264,6 +265,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Downloaded local reel-reactions JSON export")
     reel_feedback.add_argument("--output-dir",type=Path,required=True,
         help="NEW reports/ or exports/ directory for source-timed feedback")
+    doctor=sub.add_parser("highlight-pilot-doctor",
+        help="Name missing or mismatching pilot artifacts, and confirm feedback fingerprint without video reads")
+    doctor.add_argument("--pilot-dir",type=Path,required=True,
+        help="Existing private highlight curation pilot directory")
+    doctor.add_argument("--feedback",type=Path,
+        help="Optional existing review-discovery-plan.json")
+    recover=sub.add_parser("highlight-pilot-recover",
+        help="Rebuild a NEW source-safe curation packet from trusted local preview receipts, with frozen original manifest bytes")
+    recover.add_argument("--pilot-dir",type=Path,required=True,
+        help="Original frozen pilot; NEVER modified by recovery")
+    recover.add_argument("--feedback",type=Path,required=True,
+        help="Human feedback plan that must match original pilot manifest SHA")
+    recover.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ recovered packet")
     reel_studio=sub.add_parser("highlight-reel-studio",
         help="Build offline interactive human-selected and sport-scout reels from verified LOCAL cached previews")
     reel_studio.add_argument("--pilot-dir",type=Path,required=True,
@@ -782,6 +797,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="highlight-reel-feedback":
             _print(save_reel_feedback(
                 root,args.studio_dir,args.annotations,args.output_dir))
+        elif args.command=="highlight-pilot-doctor":
+            _print(diagnose_local_pilot(root,args.pilot_dir,args.feedback))
+        elif args.command=="highlight-pilot-recover":
+            _print(recover_local_pilot(
+                root,args.pilot_dir,args.feedback,args.output_dir))
         elif args.command=="highlight-reel-studio":
             _print(assemble_reel_studio(
                 root,args.pilot_dir,args.feedback,args.output_dir,
