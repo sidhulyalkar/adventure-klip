@@ -137,7 +137,8 @@ def test_builds_context_routing_from_exact_frozen_manifest(frozen,tmp_path):
     assert b["preserveSourceSuggestedNotExecuted"]
     assert "preserve_original_seek_better_window" in b["followUpActions"]
     assert "inspect_alternate_clearer_source_window" in b["followUpActions"]
-    assert not b["contextSearchProposals"]
+    assert b["contextSearchProposals"]
+    assert all(not x["sourceOriginalReadAuthorized"] for x in b["contextSearchProposals"])
     assert c["route"]=="exclude_this_window"
     assert "inspect_longer_same_source_sequence" in c["followUpActions"]
     assert len(c["contextSearchProposals"])>=2
