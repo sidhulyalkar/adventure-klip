@@ -133,7 +133,7 @@ flowchart TB
 
 | Capability | Implementation state | Where to look |
 |---|---|---|
-| Local catalog, hash identities, source-safe ingest | **Core on `main`** | [Processing](docs/PROCESSING.md) |
+| Local catalog, hash identities and managed ingest | **Core on `main`; known indexed-to-managed import fix still open in [#2](https://github.com/sidhulyalkar/adventure-klip/pull/2)** | [Processing](docs/PROCESSING.md) |
 | Basic activity/motion evidence and video-local timelines | **Core on `main`** | [Architecture](docs/ARCHITECTURE.md) |
 | Optional image embeddings and open-vocabulary object proposals | **On `main`, opt-in** | [Review-driven scene atlas](docs/REVIEW_DRIVEN_SCENE_ATLAS.md) |
 | Event proposals, human reviews, context-aware trim suggestions | **On `main`, provisional** | [Trim policy](docs/CLIP_TRIM_POLICY.md) |
@@ -186,7 +186,7 @@ klip --workspace "$WS" render "$WS/exports/plan.json" \
   --output "$WS/reels/ski-review.mp4" --transition cut
 ```
 
-For stable permanent folders, `klip --workspace "$WS" process PATH --activity ski` can index and analyze incrementally. For removable DJI cards, prefer `klip ingest CARD/DCIM` to make checksum-verified managed copies. Never assume a disconnected SSD is safely replaceable, and do not switch checkouts, reinstall dependencies, or initiate a full video pass while an existing processing job is running. See [Processing](docs/PROCESSING.md).
+For stable permanent folders, `klip --workspace "$WS" process PATH --activity ski` can index and analyze incrementally. An asset indexed externally is **not proof that a managed import copy exists**; see [the pending import-safety fix in PR #2](https://github.com/sidhulyalkar/adventure-klip/pull/2) and verify managed copies before removing original media. For removable DJI cards, prefer `klip ingest CARD/DCIM` to make checksum-verified managed copies. Never assume a disconnected SSD is safely replaceable, and do not switch checkouts, reinstall dependencies, or initiate a full video pass while an existing processing job is running. See [Processing](docs/PROCESSING.md).
 
 ### Optional semantic evidence
 
