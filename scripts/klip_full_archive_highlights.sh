@@ -13,6 +13,8 @@ MOUNTED_ACK="${ALLOW_MOUNTED_SSD:-NO}"
 BATCH="${SCAN_ASSETS_PER_PASS:-8}"
 PASSES="${SCAN_PASSES:-40}"
 FPS="${SCAN_FPS:-1}"
+PACKET_LIMIT="${PACKET_LIMIT:-120}"
+PREPARE_MISSING_PREVIEWS="${PREPARE_MISSING_PREVIEWS:-NO}"
 command -v klip >/dev/null
 command -v python >/dev/null
 mkdir -p "$CAMPAIGN_DIR"
@@ -46,9 +48,10 @@ if [[ "$PHASE" = audit ]]; then
   echo "CAMPAIGN_DIR='$CAMPAIGN_DIR' PHASE=scan ENABLE_ORIGINAL_READS=YES"
   exit 0
 fi
-if [[ "$PHASE" != scan && "$PHASE" != all ]]; then
-  echo "Use PHASE=audit, PHASE=scan or PHASE=all" >&2; exit 2
+if [[ "$PHASE" != scan && "$PHASE" != all && "$PHASE" != packet ]]; then
+  echo "Use PHASE=audit, scan, packet or all" >&2; exit 2
 fi
+if [[ "$PHASE" != packet ]]; then
 if [[ "$SOURCE_ACK" != YES ]]; then
   echo "BLOCKED: requires ENABLE_ORIGINAL_READS=YES for healthy, local video ONLY." >&2
   exit 3
@@ -90,3 +93,43 @@ PY
 done
 echo "Source scan reports: $CAMPAIGN_DIR/coarse-scan/per-source/"
 echo "Originals outside the explicitly trusted root were not examined."
+fi
+
+if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
+  if [[ ! -f "$CAMPAIGN_DIR/coarse-scan/scan-state.json" ]]; then
+    echo "BLOCKED: run PHASE=scan on healthy local originals before making a new review packet." >&2
+    exit 3
+  fi
+  if ! [[ "$PACKET_LIMIT" =~ ^[0-9]+$ ]] ||
+      [[ "$PACKET_LIMIT" -lt 1 || "$PACKET_LIMIT" -gt 500 ]]; then
+    echo "PACKET_LIMIT must be 1..500" >&2
+    exit 2
+  fi
+  packetargs=(--workspace "$WS" highlight-campaign-review-packet
+              --audit "$CAMPAIGN_DIR/audit/campaign-audit.json"
+              --scan-dir "$CAMPAIGN_DIR/coarse-scan"
+              --output-dir "$CAMPAIGN_DIR/review-packet"
+              --limit "$PACKET_LIMIT" --per-source 4 --workers 2)
+  if [[ -n "$SOURCE_ROOT" ]]; then
+    packetargs+=(--trusted-local-root "$SOURCE_ROOT")
+  fi
+  if [[ "$MOUNTED_ACK" = YES ]]; then
+    packetargs+=(--allow-mounted-ssd)
+  fi
+  if [[ "$PREPARE_MISSING_PREVIEWS" = YES ]]; then
+    if [[ "$SOURCE_ACK" != YES ]]; then
+      echo "BLOCKED: generating missing previews reads original video. Set ENABLE_ORIGINAL_READS=YES." >&2
+      exit 3
+    fi
+    packetargs+=(--prepare-missing)
+  fi
+  if [[ -e "$CAMPAIGN_DIR/review-packet" ]]; then
+    echo "Existing review packet preserved: $CAMPAIGN_DIR/review-packet" >&2
+    echo "Use a new campaign folder for another immutable review packet." >&2
+  else
+    klip "${packetargs[@]}" >"$CAMPAIGN_DIR/packet-result.json" \
+      2>"$CAMPAIGN_DIR/packet-errors.log"
+  fi
+  echo "Open blind review: $CAMPAIGN_DIR/review-packet/index.html"
+  echo "Export human annotations, then use highlight-feedback-plan and Reel Studio."
+fi
