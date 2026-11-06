@@ -62,6 +62,7 @@ from .highlight_reel_render import render_local_reels
 from .highlight_adaptive_queue import save_adaptive_queue
 from .highlight_pilot_recovery import diagnose_local_pilot, recover_local_pilot
 from .cached_secondlook_batches import run_cached_secondlook_batches
+from .full_archive_campaign import create_campaign_audit, scan_campaign
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -382,6 +383,32 @@ def main(argv: list[str] | None = None) -> int:
         help="Omit this frozen ID from this run only; repeat to advance past failed items")
     temporal.add_argument("--run",action="store_true",
         help="Opt in to local Ollama inference using seven stills from verified cached H264 previews")
+    campaign_audit=sub.add_parser("highlight-campaign-audit",
+        help="Audit ALL catalog source identities and prior episode coverage without ever touching source video paths")
+    campaign_audit.add_argument("--study",type=Path,
+        help="Optional frozen archive-value-study study.json for comparison")
+    campaign_audit.add_argument("--output-dir",type=Path,required=True,
+        help="NEW private workspace reports/ or exports/ directory")
+    campaign_scan=sub.add_parser("highlight-campaign-scan",
+        help="EXPLICITLY opt in to a full-duration coarse scan of SHA-verified HEALTHY LOCAL original videos")
+    campaign_scan.add_argument("--audit",type=Path,required=True,
+        help="Frozen campaign-audit.json produced by highlight-campaign-audit")
+    campaign_scan.add_argument("--output-dir",type=Path,required=True,
+        help="NEW scan directory; --resume uses the original")
+    campaign_scan.add_argument("--trusted-local-root",type=Path,
+        help="Extra verified local video directory; managed workspace/originals always allowed")
+    campaign_scan.add_argument("--allow-mounted-ssd",action="store_true",
+        help="Explicit acceptance of mounted SSD I/O. Do NOT use a problematic SDXC card")
+    campaign_scan.add_argument("--max-assets",type=int,default=8,
+        help="How many new sources to attempt per launch (1..256); repeat with --resume")
+    campaign_scan.add_argument("--fps",type=int,choices=[1,2],default=1,
+        help="Sparse low-resolution full-duration motion evidence, not event labels")
+    campaign_scan.add_argument("--workers",type=int,default=1,
+        help="Source full video passes are serial (1) until measured performance justifies parallelism")
+    campaign_scan.add_argument("--resume",action="store_true",
+        help="Resume unchanged frozen audit/settings and only incomplete sources")
+    campaign_scan.add_argument("--retry-failed",action="store_true",
+        help="Explicitly retry failures; never retries failed originals automatically")
     cached_overnight=sub.add_parser("archive-cached-secondlook-batches",
         help="Sequential checkpointed local Ollama batches over verified cached H264 previews; never reads camera sources")
     cached_overnight.add_argument("--assignments",required=True,type=Path,
@@ -865,6 +892,17 @@ def main(argv: list[str] | None = None) -> int:
             _print(report)
             if report.get("status")=="partial_failure":
                 return 1
+        elif args.command=="highlight-campaign-audit":
+            _print(create_campaign_audit(
+                root,args.output_dir,study=args.study))
+        elif args.command=="highlight-campaign-scan":
+            _print(scan_campaign(
+                root,args.audit,args.output_dir,
+                trusted_local_root=args.trusted_local_root,
+                allow_mounted_ssd=args.allow_mounted_ssd,
+                max_assets=args.max_assets,workers=args.workers,
+                fps=args.fps,resume=args.resume,
+                retry_failed=args.retry_failed))
         elif args.command=="archive-cached-secondlook-batches":
             _print(run_cached_secondlook_batches(
                 root,args.assignments,args.output_dir,
