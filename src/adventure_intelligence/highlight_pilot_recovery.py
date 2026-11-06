@@ -154,7 +154,7 @@ def _sha_file(path:Path,max_bytes:int)->str|None:
 
 
 def recover_local_pilot(workspace:Path,pilot_dir:Path,
-                        feedback_plan:Path,output_dir:Path)->dict:
+                        feedback_plan:Path|None,output_dir:Path)->dict:
     from .highlight_curation_review import render_blind_review
 
     root=Path(workspace).expanduser().resolve()
@@ -168,12 +168,17 @@ def recover_local_pilot(workspace:Path,pilot_dir:Path,
         raise ValueError("Original frozen pilot has wrong manifest version")
     valid=audit_highlight_curation_manifest(manifest_path)
     rows=manifest["records"]
-    plan_path=_safe_input(root,feedback_plan)
-    plan,_=_read_local(plan_path)
-    if (plan.get("version")!=PLAN_VERSION or
-            plan.get("frozenPilotManifestSha256")!=manifest_sha
-            or not isinstance(plan.get("decisions"),list)):
-        raise ValueError("Existing human feedback is NOT linked to this manifest; refusing recovery")
+    # Recovery is upstream of feedback-plan generation. Requiring a plan
+    # here made a missing presentation.json impossible to repair when the
+    # review plan did not yet exist. Validate it if supplied; never invent it.
+    if feedback_plan is not None:
+        plan_path=_safe_input(root,feedback_plan)
+        plan,_=_read_local(plan_path)
+        if (plan.get("version")!=PLAN_VERSION or
+                plan.get("frozenPilotManifestSha256")!=manifest_sha
+                or not isinstance(plan.get("decisions"),list)):
+            raise ValueError(
+                "Existing human feedback is NOT linked to this manifest; refusing recovery")
     existing={}
     original_presentation=pilot/"presentation.json"
     if _file_state(original_presentation,20_000_000)["status"]=="ready":
@@ -301,11 +306,12 @@ def recover_local_pilot(workspace:Path,pilot_dir:Path,
         "records":len(rows),"verifiedReviewProxies":ready,
         "missingReviewProxies":len(rows)-ready,
         "originalSelectionReportCopied":selection is not None,
+        "feedbackPlanChecked":feedback_plan is not None,
         "sourceProvenanceCounts":dict(sorted(status.items())),
         "notes":[
             "A recovered video is a previously receipt-verified local derivative, not newly verified original camera footage.",
             "No failed/missing preview is marked observed.",
-            "Original review export remains linked because frozen manifest SHA is identical.",
+            "Frozen manifest SHA is identical; human reviews can be linked later if their manifest SHA matches.",
             "If all proxies are unavailable, source media must be recovered separately on healthy storage.",
         ],
     }
