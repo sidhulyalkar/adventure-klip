@@ -212,6 +212,7 @@ def create_campaign_audit(workspace:Path,output_dir:Path,*,study:Path|None=None)
         "createdAtUtc":datetime.now(timezone.utc).isoformat(),
         "workspace":str(root),
         "catalogAssetCount":len(records),
+        "sourcePathsActuallyVerified":0,
         "validSourceIdentityCount":sum(x["identityValid"] for x in records),
         "validDurationCount":sum(x["durationValid"] for x in records),
         "totalDurationHoursFromCatalog":round(duration_total/3600,3),
@@ -283,8 +284,9 @@ def _require_local_path(path,root,trusted_root:Path|None,allow_mounted:bool):
     explicit=_lexical(trusted_root) if trusted_root is not None else None
     allowed=[managed]
     if explicit:
-        if explicit==root or root.is_relative_to(explicit):
-            raise ValueError("Trusted input root cannot contain workspace")
+        if (explicit in (Path("/"),Path("/Volumes"),Path.home())
+                or explicit==root or root.is_relative_to(explicit)):
+            raise ValueError("Trusted local source root must be a specific footage directory, not a broad filesystem root")
         if (explicit.is_relative_to(Path("/Volumes")) and not allow_mounted):
             raise ValueError("Mounted external input requires --allow-mounted-ssd; never use the stalled SDXC card")
         allowed.append(explicit)
@@ -296,6 +298,8 @@ def _require_local_path(path,root,trusted_root:Path|None,allow_mounted:bool):
     trusted_real=[x.resolve() for x in allowed]
     if not any(real.is_relative_to(x) for x in trusted_real):
         raise ValueError("Camera source path redirected outside trusted local root")
+    if real.is_relative_to(Path("/Volumes")) and not allow_mounted:
+        raise ValueError("Trusted source symlink resolves onto mounted media; requires explicit mounted-SSD authorization")
     if not real.is_file():
         return None
     return real
@@ -553,6 +557,8 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
         "checkpoint":str(dest/"scan-state.json"),
         "frozenCampaignSha256":digest,
         "eligibleTrustedLocalSourcePaths":len(eligible),
+        "totalCatalogSourceCount":len(audit["assets"]),
+        "eligibleSourceSubsetNotEntireArchive":len(eligible)<len(audit["assets"]),
         "completedSources":counts["coarse_completed"],
         "failedSources":counts["failed"],
         "blockedSourcePaths":counts["blocked_missing_local_media"],
