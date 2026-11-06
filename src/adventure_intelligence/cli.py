@@ -60,6 +60,8 @@ from .highlight_reel_studio import assemble_reel_studio
 from .highlight_reel_feedback import save_reel_feedback
 from .highlight_reel_render import render_local_reels
 from .highlight_adaptive_queue import save_adaptive_queue
+from .highlight_pilot_recovery import diagnose_local_pilot, recover_local_pilot
+from .cached_secondlook_batches import run_cached_secondlook_batches
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -264,6 +266,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Downloaded local reel-reactions JSON export")
     reel_feedback.add_argument("--output-dir",type=Path,required=True,
         help="NEW reports/ or exports/ directory for source-timed feedback")
+    doctor=sub.add_parser("highlight-pilot-doctor",
+        help="Name missing or mismatching pilot artifacts, and confirm feedback fingerprint without video reads")
+    doctor.add_argument("--pilot-dir",type=Path,required=True,
+        help="Existing private highlight curation pilot directory")
+    doctor.add_argument("--feedback",type=Path,
+        help="Optional existing review-discovery-plan.json")
+    recover=sub.add_parser("highlight-pilot-recover",
+        help="Rebuild a NEW source-safe curation packet from trusted local preview receipts, with frozen original manifest bytes")
+    recover.add_argument("--pilot-dir",type=Path,required=True,
+        help="Original frozen pilot; NEVER modified by recovery")
+    recover.add_argument("--feedback",type=Path,
+        help="Optional human feedback plan; if supplied, must match original pilot manifest SHA")
+    recover.add_argument("--output-dir",type=Path,required=True,
+        help="NEW workspace reports/ or exports/ recovered packet")
     reel_studio=sub.add_parser("highlight-reel-studio",
         help="Build offline interactive human-selected and sport-scout reels from verified LOCAL cached previews")
     reel_studio.add_argument("--pilot-dir",type=Path,required=True,
@@ -366,6 +382,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Omit this frozen ID from this run only; repeat to advance past failed items")
     temporal.add_argument("--run",action="store_true",
         help="Opt in to local Ollama inference using seven stills from verified cached H264 previews")
+    cached_overnight=sub.add_parser("archive-cached-secondlook-batches",
+        help="Sequential checkpointed local Ollama batches over verified cached H264 previews; never reads camera sources")
+    cached_overnight.add_argument("--assignments",required=True,type=Path,
+        help="Frozen workspace report assignments JSON")
+    cached_overnight.add_argument("--model",default="gemma3:4b",
+        help="Explicit locally installed Ollama image model")
+    cached_overnight.add_argument("--batches",type=int,default=16,
+        help="Up to 40 sequential small batches of eight verified cached candidates")
+    cached_overnight.add_argument("--output-dir",required=True,type=Path,
+        help="NEW output dir, or an existing checkpoint dir only with --resume")
+    cached_overnight.add_argument("--resume",action="store_true",
+        help="Continue exact prior model and frozen assignment fingerprint")
     archive_triage=sub.add_parser("archive-local-triage",
         help="Optionally judge a bounded balanced set of frozen review intervals with an installed localhost vision model")
     archive_triage.add_argument("--assignments",required=True,type=Path)
@@ -782,6 +810,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command=="highlight-reel-feedback":
             _print(save_reel_feedback(
                 root,args.studio_dir,args.annotations,args.output_dir))
+        elif args.command=="highlight-pilot-doctor":
+            _print(diagnose_local_pilot(root,args.pilot_dir,args.feedback))
+        elif args.command=="highlight-pilot-recover":
+            _print(recover_local_pilot(
+                root,args.pilot_dir,args.feedback,args.output_dir))
         elif args.command=="highlight-reel-studio":
             _print(assemble_reel_studio(
                 root,args.pilot_dir,args.feedback,args.output_dir,
@@ -832,6 +865,11 @@ def main(argv: list[str] | None = None) -> int:
             _print(report)
             if report.get("status")=="partial_failure":
                 return 1
+        elif args.command=="archive-cached-secondlook-batches":
+            _print(run_cached_secondlook_batches(
+                root,args.assignments,args.output_dir,
+                model=args.model,batches=args.batches,
+                resume=args.resume))
         elif args.command=="archive-local-triage":
             result=run_local_triage(root,args.assignments,
                 model=args.model,limit=args.limit,run=args.run,

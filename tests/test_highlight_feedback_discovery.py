@@ -634,3 +634,264 @@ def test_next_pass_is_metadata_only_on_unmounted_dji(frozen,tmp_path,monkeypatch
         root,packet,root/"reports"/"feedback-for-reels"/"review-discovery-plan.json",
         Path(studio["directory"]),root/"reports"/"no-media-queue",per_source=2)
     assert result["originalSourceReads"]==0
+
+
+def test_diagnose_missing_presentation_then_recover_exact_frozen_human_pilot(
+        frozen,tmp_path,monkeypatch):
+    from adventure_intelligence.highlight_pilot_recovery import (
+        diagnose_local_pilot,recover_local_pilot)
+    from adventure_intelligence.highlight_reel_studio import assemble_reel_studio
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "The footage contains a beautiful visible encounter")])
+    plan_root=root/"reports"/"human-feedback"
+    plan=save_review_discovery(root,packet,[human],plan_root)
+    original_bytes=Path(original["manifest"]).read_bytes()
+    (packet/"presentation.json").unlink()
+    result=diagnose_local_pilot(root,packet,Path(plan["report"]))
+    assert result["files"]["curationManifest"]["status"]=="ready"
+    assert result["files"]["presentation"]["status"]=="missing"
+    assert result["studioMetadataPreflightReady"] is False
+    assert result["originalMediaReads"]==0
+    with pytest.raises(ValueError,match=r"presentation\.json"):
+        assemble_reel_studio(root,packet,Path(plan["report"]),
+                             root/"reports"/"cannot-start")
+    assert not (root/"reports"/"cannot-start").exists()
+    recovered_dir=root/"reports"/"recovered-pilot"
+    recovered=recover_local_pilot(root,packet,Path(plan["report"]),recovered_dir)
+    assert recovered["originalSourceReads"]==0
+    assert recovered["originalPilotFilesModified"] is False
+    assert recovered["frozenManifestSha256"]==original["manifestSha256"]
+    assert (recovered_dir/"curation-manifest.json").read_bytes()==original_bytes
+    assert recovered["verifiedReviewProxies"]>0
+    assert recovered["missingReviewProxies"]>=0
+    healthy=diagnose_local_pilot(root,recovered_dir,Path(plan["report"]))
+    assert healthy["studioMetadataPreflightReady"]
+    studio=assemble_reel_studio(root,recovered_dir,Path(plan["report"]),
+                                root/"reports"/"studio-recovered",workers=2)
+    assert studio["humanSelectedAvailable"]==1
+    assert studio["sourceOriginalReads"]==0
+    assert (packet/"presentation.json").exists() is False
+    assert original_bytes==Path(original["manifest"]).read_bytes()
+
+
+def test_pilot_recovery_rejects_mismatched_reviews_and_never_mutates_original(frozen,tmp_path):
+    from adventure_intelligence.highlight_pilot_recovery import recover_local_pilot
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "Beautiful scene with clear action")])
+    plan=save_review_discovery(root,packet,[human],root/"reports"/"feedback-for-recovery")
+    forged=json.loads(Path(plan["report"]).read_text())
+    forged["frozenPilotManifestSha256"]="f"*64
+    forged_path=root/"reports"/"wrong-frozen-feedback.json"
+    forged_path.write_text(json.dumps(forged))
+    original_bytes=Path(original["manifest"]).read_bytes()
+    with pytest.raises(ValueError,match="NOT linked"):
+        recover_local_pilot(root,packet,forged_path,root/"reports"/"must-not-create")
+    assert not (root/"reports"/"must-not-create").exists()
+    assert Path(original["manifest"]).read_bytes()==original_bytes
+
+
+def test_pilot_recovery_never_follows_external_original_video_paths(frozen,tmp_path,monkeypatch):
+    from adventure_intelligence.highlight_pilot_recovery import recover_local_pilot
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "This scene has an interesting focal subject")])
+    plan=save_review_discovery(root,packet,[human],root/"reports"/"recovery-with-io-guard")
+    old_stat,old_is_file,old_resolve=Path.stat,Path.is_file,Path.resolve
+    def guard(fn):
+        def checked(self,*args,**kwargs):
+            if str(self).startswith("/Volumes/UNMOUNTED_DJI"):
+                pytest.fail("Never probe the unmounted original source card")
+            return fn(self,*args,**kwargs)
+        return checked
+    monkeypatch.setattr(Path,"stat",guard(old_stat))
+    monkeypatch.setattr(Path,"is_file",guard(old_is_file))
+    monkeypatch.setattr(Path,"resolve",guard(old_resolve))
+    result=recover_local_pilot(root,packet,Path(plan["report"]),
+                               root/"reports"/"recovered-without-sd")
+    assert result["originalSourceReads"]==0
+
+
+def test_recovery_marks_unverifiable_media_unavailable_instead_of_relabeling(frozen,tmp_path):
+    from adventure_intelligence.highlight_pilot_recovery import recover_local_pilot
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    from adventure_intelligence.studio_preview_judge import preview_paths
+    root,packet,original,ready=frozen
+    human=export(tmp_path/"human.json",original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "Wildlife encounter appears promising in this cut")])
+    plan=save_review_discovery(root,packet,[human],root/"reports"/"recovery-with-missing-cache")
+    rec=ready[0];rid=rec["recordId"];aid=rec["source"]["assetSha256"]
+    cache,receipt=preview_paths(root,aid,rec["event"]["startMs"],rec["event"]["endMs"])
+    receipt.unlink()
+    (packet/"presentation.json").unlink()
+    target=root/"reports"/"recovered-with-unknown"
+    recovered=recover_local_pilot(root,packet,Path(plan["report"]),target)
+    available=json.loads((target/"presentation.json").read_text())["records"][rid]
+    assert available["verifiedProxyReady"] is False
+    assert available["requiresSourceReadForPreview"] is True
+    assert not (target/"media"/(rid+".mp4")).exists()
+    assert recovered["originalSourceReads"]==0
+
+
+def test_cached_secondlook_batches_checkpoint_and_completed_resume(tmp_path,monkeypatch):
+    from adventure_intelligence import cached_secondlook_batches as module
+    root=tmp_path/"workspace"
+    assignments=root/"reports"/"review-assignments.json"
+    assignments.parent.mkdir(parents=True)
+    with connect(root):
+        pass  # The output safety guard requires a real local catalog.
+    assignments.write_text('{"version":"synthetic-frozen-fixture"}')
+    calls=[]
+    def fake_run(workspace,path,*,model,limit,run,exclude_review_ids):
+        calls.append((model,limit,run,tuple(exclude_review_ids)))
+        if len(calls)==1:
+            assert limit==8 and run
+            assert not exclude_review_ids
+            return {
+                "status":"completed","selected":2,"eligibleUnreviewed":2,
+                "items":[{"reviewId":"synthetic-a","status":"suggested"},
+                         {"reviewId":"synthetic-b","status":"failed"}],
+                "newLocalModelCalls":1,"cachedSecondLooksReused":0,"failed":1,
+            }
+        assert set(exclude_review_ids)=={"synthetic-a","synthetic-b"}
+        return {
+            "status":"completed","selected":0,"eligibleUnreviewed":0,
+            "items":[],"newLocalModelCalls":0,
+            "cachedSecondLooksReused":0,"failed":0,
+        }
+    monkeypatch.setattr(module,"inspect_temporal_candidates",fake_run)
+    output=root/"reports"/"checkpointed-secondlooks"
+    first=module.run_cached_secondlook_batches(
+        root,assignments,output,model="gemma3:4b",batches=1)
+    assert first["status"]=="cached_secondlook_budget_reached"
+    assert first["reviewIdsCovered"]==2
+    assert first["failed"]==1
+    assert (output/"secondlook-state.json").is_file()
+    second=module.run_cached_secondlook_batches(
+        root,assignments,output,model="gemma3:4b",batches=5,resume=True)
+    assert second["status"]=="cached_secondlook_batches_complete"
+    assert second["batchesRecorded"]==2
+    assert len(calls)==2
+    repeated=module.run_cached_secondlook_batches(
+        root,assignments,output,model="gemma3:4b",batches=5,resume=True)
+    assert repeated==second
+    assert len(calls)==2
+    with pytest.raises(ValueError,match="cannot change"):
+        module.run_cached_secondlook_batches(
+            root,assignments,output,model="different:4b",resume=True)
+
+
+def test_overnight_script_bash_syntax():
+    import shutil
+    import subprocess
+    shell=shutil.which("bash")
+    if not shell:
+        pytest.skip("bash unavailable")
+    script=Path(__file__).resolve().parents[1]/"scripts"/"klip_overnight_cache_only.sh"
+    assert script.is_file()
+    check=subprocess.run([shell,"-n",str(script)],
+                         stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                         timeout=15,check=False)
+    assert check.returncode==0,check.stderr.decode("utf-8","replace")
+    content=script.read_text()
+    assert "highlight-pilot-recover" in content
+    assert "highlight-next-pass" in content
+    assert "social-lens-temporal" in content
+    assert "archive-cached-secondlook-batches" in content
+    assert "--prepare-previews" in content  # documented prohibition only
+    assert "archive-local-triage " not in content  # never run source-reading triage
+
+
+def test_pilot_recovery_can_precede_human_feedback_when_no_plan_exists(frozen,tmp_path):
+    from adventure_intelligence.highlight_pilot_recovery import (
+        recover_local_pilot, diagnose_local_pilot
+    )
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,original,metadata,ready=frozen
+    manifest_before=Path(metadata["manifest"]).read_bytes()
+    (original/"presentation.json").unlink()
+    (original/"selection-report.json").unlink()
+    recovered=root/"reports"/"recovered-no-human-plan"
+    result=recover_local_pilot(root,original,None,recovered)
+    assert result["originalSourceReads"]==0
+    assert recovered.joinpath("curation-manifest.json").read_bytes()==manifest_before
+    assert not (recovered/"selection-report.json").exists()
+    review_file=export(tmp_path/"real-human-review.json",metadata["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "A nice visible highlight in this exact window"),
+    ])
+    planned=save_review_discovery(
+        root,recovered,[review_file],root/"reports"/"newly-discovered-feedback")
+    doc=json.loads(Path(planned["report"]).read_text())
+    assert doc["selectionReportPresent"] is False
+    assert doc["selectionRosterSource"]=="audited-frozen-manifest"
+    assert doc["provisionalHighlightCount"]==1
+    assert result["originalPilotFilesModified"] is False
+
+
+def test_feedback_locator_matches_frozen_manifest_and_prefers_matching_plan(frozen,tmp_path):
+    from adventure_intelligence.highlight_night_feedback import resolve_human_feedback
+    from adventure_intelligence.highlight_feedback_discovery import save_review_discovery
+    root,pilot,original,ready=frozen
+    manifest=pilot/"curation-manifest.json"
+    wrong=root/"reports"/"not-there"/"review-discovery-plan.json"
+    none=resolve_human_feedback(root,manifest,preferred_plan=wrong)
+    assert none["status"]=="no_matching_human_feedback"
+    assert none["noSourceMediaReads"] is True
+    reviews=export(root/"exports"/"my-curation-reviews.json",
+                   original["manifestSha256"],[
+        feedback(ready[0]["recordId"],"reviewer-001","keep",
+                 "A noteworthy visible source event")
+    ]) if (root/"exports").is_dir() else None
+    if reviews is None:
+        (root/"exports").mkdir(parents=True)
+        reviews=export(root/"exports"/"my-curation-reviews.json",
+                       original["manifestSha256"],[
+            feedback(ready[0]["recordId"],"reviewer-001","keep",
+                     "A noteworthy visible source event")
+        ])
+    found=resolve_human_feedback(root,manifest,preferred_plan=wrong,
+                                  preferred_reviews=reviews)
+    assert found["status"]=="matching_raw_review_export"
+    assert found["reviewedWindows"]==1
+    assert found["selectedPath"]==str(reviews)
+    plan=save_review_discovery(
+        root,pilot,[reviews],root/"reports"/"confirmed-human-plan")
+    chosen=resolve_human_feedback(root,manifest,
+                                  preferred_plan=Path(plan["report"]))
+    assert chosen["status"]=="matching_existing_plan"
+    assert chosen["selectedPath"]==str(Path(plan["report"]).resolve())
+
+
+def test_overnight_heredoc_python_syntax():
+    import ast
+    from pathlib import Path
+    script=Path(__file__).resolve().parents[1]/"scripts"/"klip_overnight_cache_only.sh"
+    lines=script.read_text().splitlines()
+    snippets=[]
+    collecting=False
+    fragment=[]
+    for line in lines:
+        if not collecting and line.endswith("<<'PY'"):
+            collecting=True
+            fragment=[]
+        elif collecting and line=="PY":
+            snippets.append("\n".join(fragment)+"\n")
+            collecting=False
+        elif collecting:
+            fragment.append(line)
+    assert not collecting
+    assert len(snippets)>=5
+    for code in snippets:
+        ast.parse(code)
+    assert "highlight-pilot-recover" in script.read_text()
+    assert "highlight-feedback-plan" in script.read_text()
+    assert "matching_raw_review_export" in script.read_text()

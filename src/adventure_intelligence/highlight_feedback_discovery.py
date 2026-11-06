@@ -139,23 +139,33 @@ def plan_review_discovery(workspace:Path,pilot_dir:Path,
     # Structural audit does not independently approve training or labels.
     audited=audit_highlight_curation_manifest(pilot/"curation-manifest.json")
     presentations,_=_sha_bytes(pilot/"presentation.json",5_000_000)
-    selection,_=_sha_bytes(pilot/"selection-report.json",5_000_000)
     if (presentations.get("version")!=PILOT_VERSION or
             presentations.get("manifestSha256")!=manifest_sha or
-            not isinstance(presentations.get("records"),dict) or
-            selection.get("version")!=PILOT_VERSION or
-            selection.get("manifestSha256")!=manifest_sha or
-            not isinstance(selection.get("selections"),list)):
-        raise ValueError("Pilot metadata and frozen manifest fingerprints do not match")
+            not isinstance(presentations.get("records"),dict)):
+        raise ValueError("Pilot presentation and frozen manifest fingerprints do not match")
     by_id={row["recordId"]:row for row in manifest["records"]}
     if any(not re.fullmatch(r"[0-9a-f]{24}",rid) for rid in by_id):
         raise ValueError("Unsafe/nonstandard frozen review identifier")
     if (len(by_id)!=len(manifest["records"]) or
             set(by_id)!=set(presentations["records"])):
         raise ValueError("Pilot record identities are missing or duplicated")
-    selection_keys={row["recordId"] for row in selection["selections"]}
-    if selection_keys!=set(by_id):
-        raise ValueError("Pilot source-selection roster does not match manifest")
+    # A valid frozen curation manifest is the source-of-truth roster. Older
+    # interrupted pilots may lack the auxiliary selection-report.json. In
+    # that case record the gap explicitly; never synthesize a historical
+    # selection score or claim that report was observed.
+    selection_path=pilot/"selection-report.json"
+    if selection_path.is_symlink():
+        raise ValueError("Frozen selection report is a symlink")
+    selection_present=selection_path.is_file()
+    if selection_present:
+        selection,_=_sha_bytes(selection_path,5_000_000)
+        if (selection.get("version")!=PILOT_VERSION or
+                selection.get("manifestSha256")!=manifest_sha or
+                not isinstance(selection.get("selections"),list)):
+            raise ValueError("Pilot selection report and frozen manifest fingerprints do not match")
+        selection_keys={row["recordId"] for row in selection["selections"]}
+        if selection_keys!=set(by_id):
+            raise ValueError("Pilot source-selection roster does not match manifest")
     reviews=defaultdict(list)
     seen=set()
     digest_files=[]
@@ -284,6 +294,8 @@ def plan_review_discovery(workspace:Path,pilot_dir:Path,
     assert len(decisions)==len(reviews)
     return {
         "version":VERSION,
+        "selectionReportPresent":selection_present,
+        "selectionRosterSource":"selection-report" if selection_present else "audited-frozen-manifest",
         "frozenPilotManifestSha256":manifest_sha,
         "reviewExportSha256":digest_files,
         "reviewedWindows":len(decisions),
