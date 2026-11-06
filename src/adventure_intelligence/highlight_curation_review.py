@@ -116,7 +116,9 @@ progress{width:140px;accent-color:var(--salmon)}
 </main>
 <script>
 'use strict';
-const items=__ITEMS__;
+const allItems=__ITEMS__;
+const items=allItems.filter(item=>item.ready);
+const missingCount=allItems.length-items.length;
 const manifestSha='__MANIFEST_SHA__';
 const version='klip-highlight-curation-review-export-v1';
 const decisions=new Map();
@@ -133,13 +135,21 @@ function highlightChoice(){
     b.classList.toggle('selected',b.dataset.choice===choice);
 }
 function show(){
-  if(!items.length){$('error').textContent='No candidates in this pilot';return;}
+  if(!items.length){
+    $('counter').textContent='0 / 0 ready';
+    $('review-count').textContent=missingCount+' candidates lack verified previews';
+    $('video').hidden=true;
+    $('no-video').hidden=false;
+    $('error').textContent='No verified previews in this pilot. The source footage must remain UNKNOWN until evidence is available.';
+    $('prev').disabled=true;$('next').disabled=true;$('save').disabled=true;
+    return;
+  }
   const item=items[index];
   $('video').pause();$('video').removeAttribute('src');$('video').load();
   $('counter').textContent=(index+1)+' / '+items.length;
   $('activity').textContent=item.sport==='unknown'?'Unclassified activity':item.sport;
   $('progress').max=items.length;$('progress').value=decisions.size;
-  $('review-count').textContent=decisions.size+' saved reviews';
+  $('review-count').textContent=decisions.size+' saved · '+missingCount+' missing verified previews';
   $('video').hidden=!item.ready;$('no-video').hidden=item.ready;
   if(item.ready){$('video').src=item.url;$('video').load();}
   $('save').disabled=!item.ready;
