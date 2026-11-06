@@ -66,6 +66,7 @@ def _required_clip(record:dict,presentation:dict,decision:dict|None,scout:bool)-
         "sourceAssetSha256":source["assetSha256"],
         "startMs":start,"endMs":end,
         "durationMs":end-start,
+        "sourceDurationMsFromCatalog":source["sourceDurationMs"],
         "sportFromCatalog":record["sportContext"]["sport"],
         "category":category,
         "provenance":"human_keep_window" if not scout else "unreviewed_scout_window",
