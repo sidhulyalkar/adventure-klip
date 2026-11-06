@@ -5,38 +5,29 @@ cut** is not equivalent to **this source video contains no highlights** or
 **delete the original**. It uses deliberate, transparent routing from
 previously collected independent human reviews.
 
-## Example observation categories from the first user pilot
+## Generalized review routing examples
 
-The submitted private review export contains 10 completed window reviews:
-4 keep and 6 skip. The goals include nature encounter, visual quality,
-athletic skill and personal memory. No recordId-to-filename or time-code
-mapping is possible from the exported reviewer JSON *alone*. Only the
-matching frozen local pilot manifest can supply that identity.
+No private user review text, choices, source IDs, trip details or personal
+memories are checked into the repository. The following are **hypothetical**
+examples of annotation implications, not claims about a particular user's
+recordings:
 
-Useful distinctions expressed by the user's comments, paraphrased here
-without storing their private review file in the repository:
+- A Keep judgment on a wildlife encounter suggests checking a complete
+  setup and outcome window before promoting it into a reel.
+- A Skip judgment accompanied by preserve-original language indicates
+  the selected cut is weak, not that the original event is worthless.
+- A low-value starting segment with a comment about the rest of a run
+  suggests searching later intervals of that same source recording.
+- A visually blurry view with a valuable event may warrant checking
+  alternative time windows instead of erasing the source.
+- A deletion word in an annotation is never an instruction to delete
+  media; it triggers a manual-only hold for explicit future confirmation.
+- Keep/Skip and cinematic quality can disagree because personal memory,
+  event consequence, technical accomplishment and visual polish are
+  different objectives.
 
-- A close ray interaction is considered a highlight even without a
-  measured action peak timestamp. The particular ray species and
-  interaction details remain the reviewer's claims until verified.
-- A strong underwater kayaking viewpoint is valuable for framing even
-  when event readability is less strong.
-- A group of fish is selected as a natural-history highlight.
-- A family kayaking moment is retained for personal/trip memories
-  despite low technical/aesthetic ratings.
-- A deeper/blurrier eagle-ray shot is not chosen for a polished reel,
-  but the source encounter is explicitly worth preserving.
-- A low-value beginning of a ski run should trigger forward context
-  inspection, not rejection of the entire run.
-- A ski-lift queue is undesirable for highlights; the review contains
-  deletion language, which is treated ONLY as a request for future
-  manual deletion confirmation. No original files may be deleted.
-- An ordinary/easy ski segment is uninteresting under the selected
-  goal, not a general rule that more companions or more motion is best.
-
-These are all observations and preferences from ONE reviewer; not an
-unbiased supervised training corpus, species identification or a
-scientific assessment of visual footage by the assistant.
+These examples must not be turned into pseudo-ground-truth labels, and
+automatic interpretation of free text remains an auditable heuristic.
 
 ## CLI: make a source-linked plan without opening the SD card
 
