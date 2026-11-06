@@ -219,3 +219,26 @@ def test_cli_plan_is_metadata_only(frozen,tmp_path,capsys,monkeypatch):
     assert printed["sourceVideoReads"]==0
     assert printed["provisionalHighlights"]==1
     assert printed["filesDeleted"]==0
+
+
+def test_altered_report_local_preview_rejects_human_source_link(frozen,tmp_path):
+    root,packet,result,ready=frozen
+    rid=ready[0]["recordId"]
+    path=export(tmp_path/"tamper.json",result["manifestSha256"],[
+        feedback(rid,"reviewer-001","keep","A very nice action highlight")])
+    proxy=packet/"media"/(rid+".mp4")
+    proxy.write_bytes(b"tampered local preview"*20)
+    with pytest.raises(ValueError,match="derivative missing/altered"):
+        plan_review_discovery(root,packet,[path])
+
+
+def test_report_media_symlink_never_dereferences_original(frozen,tmp_path):
+    root,packet,result,ready=frozen
+    rid=ready[0]["recordId"]
+    path=export(tmp_path/"symlink.json",result["manifestSha256"],[
+        feedback(rid,"reviewer-001","keep","Excellent natural encounter here")])
+    proxy=packet/"media"/(rid+".mp4")
+    proxy.unlink()
+    proxy.symlink_to("/Volumes/UNMOUNTED_DJI/DCIM/evil.MP4")
+    with pytest.raises(ValueError,match="derivative missing/altered"):
+        plan_review_discovery(root,packet,[path])
