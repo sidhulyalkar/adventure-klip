@@ -152,6 +152,8 @@ def test_creates_blind_review_without_source_reads_and_only_verified_cache(datas
     html=Path(result["reviewPage"]).read_text()
     assert "Blind Action Review" in html
     assert "Export JSON reviews" in html
+    assert "Mark action peak at playhead" in html
+    assert "Mark observed resolution" in html
     assert 'media/' in html
     assert "Heuristic" not in html
     assert "source_original" not in html
@@ -176,8 +178,10 @@ def test_import_two_independent_humans_without_collapsing_disagreement(dataset,t
            if entry["verifiedProxyReady"]]
     assert len(ready)==1
     rid=ready[0]
-    a=_save_reviews(tmp_path/"a.json",created["manifestSha256"],
-                    [_review(rid,"reviewer-a","keep","unknown","no")])
+    first=_review(rid,"reviewer-a","keep","unknown","no")
+    first["eventPeakMs"]=7500
+    first["resolutionMs"]=12000
+    a=_save_reviews(tmp_path/"a.json",created["manifestSha256"],[first])
     b=_save_reviews(tmp_path/"b.json",created["manifestSha256"],
                     [_review(rid,"reviewer-b","skip","failed","yes")])
     summary=import_curation_reviews(root,pilot,[a,b],root/"reports"/"import")
@@ -189,6 +193,9 @@ def test_import_two_independent_humans_without_collapsing_disagreement(dataset,t
     item=next(x for x in rows if x["recordId"]==rid)
     assert len(item["observerJudgments"])==2
     assert item["event"]["observedOutcome"]=="unknown"
+    assert item["event"]["peakMs"] is None
+    assert item["observerJudgments"][0]["eventPeakMs"]==7500
+    assert item["observerJudgments"][0]["resolutionMs"]==12000
     assert item["filming"]["technicalQuality"] is None
     assert item["rights"]["sourceTrainingAuthorized"] is False
     assert item["evidenceStatus"]["humanRatingsFrozen"] is False
@@ -205,7 +212,14 @@ def test_bad_reviews_or_missing_proxy_cannot_forge_event_grounding(dataset,tmp_p
     pres=json.loads((pilot/"presentation.json").read_text())["records"]
     ready=next(r for r in pres if pres[r]["verifiedProxyReady"])
     missing=next(r for r in pres if not pres[r]["verifiedProxyReady"])
+    invalid_peak=_review(ready,"reviewer-a")
+    invalid_peak["eventPeakMs"]=21000
+    invalid_order=_review(ready,"reviewer-a")
+    invalid_order["eventPeakMs"]=13000
+    invalid_order["resolutionMs"]=4000
     cases=[
+        [invalid_peak],
+        [invalid_order],
         [_review(missing,"reviewer-a")],
         [_review(ready,"reviewer-a","keep","completed","no")],
         [_review(ready,"reviewer-a","keep","unknown","ambiguous"),
