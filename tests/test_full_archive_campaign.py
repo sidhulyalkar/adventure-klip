@@ -208,3 +208,150 @@ def test_frozen_audit_refuses_catalog_mutation_until_new_audit(sources):
         campaign.scan_campaign(
             root,Path(audit["audit"]),root/"reports"/"scan",max_assets=1)
     assert not (root/"reports"/"scan").exists()
+
+
+def _scanned_local_campaign(sources,monkeypatch):
+    root,local,aid,external,study,body=sources
+    audit=campaign.create_campaign_audit(root,root/"reports"/"audit")
+    monkeypatch.setattr(campaign,"probe",lambda _:{"duration":60.0})
+    monkeypatch.setattr(campaign,"motion_series",lambda path,**kwargs:[
+        {"t_ms":1100,"change":.2},
+        {"t_ms":16000,"change":.6},
+        {"t_ms":30000,"change":.4},
+        {"t_ms":46000,"change":.5},
+    ])
+    scanned=campaign.scan_campaign(
+        root,Path(audit["audit"]),root/"reports"/"scan",max_assets=1)
+    assert scanned["completedSources"]==1
+    return root,local,aid,Path(audit["audit"]),root/"reports"/"scan"
+
+
+def test_campaign_packet_cached_only_never_opens_originals(sources,monkeypatch):
+    from adventure_intelligence.full_archive_review_packet import prepare_campaign_packet
+    root,local,aid,audit,scans=_scanned_local_campaign(sources,monkeypatch)
+    old_stat=Path.stat
+    old_resolve=Path.resolve
+    old_is_file=Path.is_file
+    def forbid_original(func):
+        def wrapped(self,*args,**kwargs):
+            if str(self)==str(local) or str(self).startswith("/Volumes/UNMOUNTED_DJI"):
+                pytest.fail("Cached-only review packet must not touch original video")
+            return func(self,*args,**kwargs)
+        return wrapped
+    monkeypatch.setattr(Path,"stat",forbid_original(old_stat))
+    monkeypatch.setattr(Path,"resolve",forbid_original(old_resolve))
+    monkeypatch.setattr(Path,"is_file",forbid_original(old_is_file))
+    result=prepare_campaign_packet(
+        root,audit,scans,root/"reports"/"packet-only-cache",
+        limit=5,per_source=4,prepare_missing=False)
+    assert result["status"]=="blocked_no_verified_previews"
+    assert result["distinctOriginalHashPasses"]==0
+    assert result["newPreviewDerivatives"]==0
+    assert result["candidateWindows"]>0
+    assert result["verifiedReviewableClips"]==0
+    assert result["missingVerifiedPreviews"]==result["candidateWindows"]
+    assert (Path(result["directory"])/"index.html").is_file()
+    manifest=json.loads(Path(result["manifest"]).read_text())
+    assert all(r["rights"]["rightsStatus"]=="pending" for r in manifest["records"])
+    assert all(r["event"]["observedOutcome"]=="unknown" for r in manifest["records"])
+
+
+def test_campaign_packet_generates_several_previews_with_one_source_sha_pass(
+        sources,monkeypatch):
+    from adventure_intelligence import full_archive_review_packet as packet
+    from adventure_intelligence.studio_preview_judge import preview_paths
+    root,local,aid,audit,scans=_scanned_local_campaign(sources,monkeypatch)
+    made=[]
+    def fake_generate(workspace,source,asset,start,end):
+        assert source==local.resolve()
+        assert asset==aid
+        path,receipt=preview_paths(workspace,asset,start,end)
+        path.parent.mkdir(parents=True,exist_ok=True)
+        payload=(f"synthetic-derived-proxy-{start}-{end}".encode())*5
+        path.write_bytes(payload)
+        receipt.write_text(json.dumps({
+            "version":"studio-preview-local-judge-v1",
+            "assetId":asset,"startMs":start,"endMs":end,
+            "previewSha256":sha256(payload).hexdigest(),
+            "originalSha256Verified":True,
+        }))
+        made.append((start,end))
+        return True,None
+    monkeypatch.setattr(packet,"_generate_cached",fake_generate)
+    result=packet.prepare_campaign_packet(
+        root,audit,scans,root/"reports"/"packet-with-local-previews",
+        limit=5,per_source=4,prepare_missing=True,workers=2)
+    assert result["status"]=="review_packet_ready"
+    assert result["distinctOriginalHashPasses"]==1
+    assert result["verifiedReviewableClips"]==len(made)>1
+    assert result["newPreviewDerivatives"]==len(made)
+    recorded=json.loads(
+        (Path(result["directory"])/"selection-report.json").read_text())
+    assert recorded["selectionIsBalancedExplorationNotQualityRanking"]
+    assert recorded["selectionRoles"].get("uniform_timeline_control",0)>0
+    assert recorded["selectionRoles"].get("motion_change_hypothesis",0)>0
+    assert recorded["sourceOriginalReads"]==1
+    assert recorded["trainingAuthorized"] is False
+    assert (Path(result["directory"])/"index.html").is_file()
+    manifest=json.loads(Path(result["manifest"]).read_text())
+    assert all(x["observerJudgments"]==[] for x in manifest["records"])
+
+
+def test_campaign_packet_reuses_verified_existing_previews_without_source_reads(
+        sources,monkeypatch):
+    from adventure_intelligence import full_archive_review_packet as packet
+    from adventure_intelligence.studio_preview_judge import preview_paths
+    root,local,aid,audit,scans=_scanned_local_campaign(sources,monkeypatch)
+    scan=json.loads((scans/"per-source"/(aid+".json")).read_text())
+    window=scan["candidateHypotheses"][0]
+    a,b=window["startMs"],window["endMs"]
+    preview,receipt=preview_paths(root,aid,a,b)
+    preview.parent.mkdir(parents=True,exist_ok=True)
+    blob=b"verified-preexisting-derived-video"*5
+    preview.write_bytes(blob)
+    receipt.write_text(json.dumps({
+        "version":"studio-preview-local-judge-v1",
+        "assetId":aid,"startMs":a,"endMs":b,
+        "previewSha256":sha256(blob).hexdigest(),
+        "originalSha256Verified":True,
+    }))
+    def forbid(*args,**kwargs):
+        pytest.fail("Packet should not generate from source media")
+    monkeypatch.setattr(packet,"_hash_verified",forbid)
+    monkeypatch.setattr(packet,"_generate_cached",forbid)
+    result=packet.prepare_campaign_packet(
+        root,audit,scans,root/"reports"/"packet-reused",limit=5,
+        prepare_missing=False)
+    assert result["verifiedReviewableClips"]>=1
+    assert result["distinctOriginalHashPasses"]==0
+    assert result["newPreviewDerivatives"]==0
+
+
+def test_campaign_packet_refuses_tampered_source_scan_receipt(sources,monkeypatch):
+    from adventure_intelligence.full_archive_review_packet import prepare_campaign_packet
+    root,local,aid,audit,scans=_scanned_local_campaign(sources,monkeypatch)
+    src=scans/"per-source"/(aid+".json")
+    data=json.loads(src.read_text())
+    data["candidateHypotheses"][0]["role"]="confirmed_ski_trick"
+    src.write_text(json.dumps(data))
+    with pytest.raises(ValueError,match="report changed"):
+        prepare_campaign_packet(
+            root,audit,scans,root/"reports"/"must-not-exist",limit=8)
+    assert not (root/"reports"/"must-not-exist").exists()
+
+
+def test_full_campaign_launch_shell_syntax():
+    import shutil, subprocess
+    shell=shutil.which("bash")
+    if not shell:
+        pytest.skip("bash unavailable")
+    path=Path(__file__).resolve().parents[1]/"scripts"/"klip_full_archive_highlights.sh"
+    assert path.is_file()
+    check=subprocess.run([shell,"-n",str(path)],capture_output=True,timeout=15)
+    assert check.returncode==0,check.stderr.decode("utf-8","replace")
+    source=path.read_text()
+    assert "ENABLE_ORIGINAL_READS" in source
+    assert "PHASE" in source
+    assert "highlight-campaign-audit" in source
+    assert "highlight-campaign-scan" in source
+    assert "--prepare-previews" not in source
