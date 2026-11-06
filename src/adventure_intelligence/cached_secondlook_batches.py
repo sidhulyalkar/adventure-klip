@@ -10,6 +10,7 @@ from pathlib import Path
 from collections import Counter
 import json
 import os
+import tempfile
 
 from .highlight_feedback_discovery import _safe_input
 from .highlight_curation_pilot import _safe_dest
@@ -19,13 +20,18 @@ VERSION="klip-cached-secondlook-overnight-v1"
 
 
 def _write_atomic(path:Path,data:dict):
-    tmp=path.with_suffix(path.suffix+".tmp")
-    with tmp.open("x",encoding="utf-8") as f:
-        json.dump(data,f,indent=2,sort_keys=True,allow_nan=False)
-        f.write("\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp,path)
+    fd,name=tempfile.mkstemp(prefix=".klip-secondlook-",suffix=".tmp",
+                             dir=path.parent)
+    try:
+        with os.fdopen(fd,"w",encoding="utf-8") as f:
+            json.dump(data,f,indent=2,sort_keys=True,allow_nan=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(name,path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
 
 
 def run_cached_secondlook_batches(workspace:Path,assignments:Path,output_dir:Path,*,
@@ -99,7 +105,6 @@ def run_cached_secondlook_batches(workspace:Path,assignments:Path,output_dir:Pat
         checkpoint["lastSelected"]=selected
         if selected==0:
             checkpoint["completed"]=True
-        state_file.unlink()
         _write_atomic(state_file,checkpoint)
         print(f"[klip-secondlook] batch {i+1}, selected {selected}, "
               f"total qualified IDs {len(excluded)}, failures {checkpoint['failures']}",
