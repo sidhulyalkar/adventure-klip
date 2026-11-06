@@ -1,233 +1,258 @@
-# Klip experimental: NVIDIA NIM clip-judge benchmark
+<div align="center">
+  <h1>Adventure-Klip</h1>
+  <h3>Understand the action. Preserve the experience.</h3>
+  <p><strong>Local-first, evidence-grounded temporal video intelligence for skiing, mountain biking, snorkeling, and exploratory footage.</strong></p>
+  <p>
+    <a href="https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+    <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-346D95">
+    <img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache--2.0-6D8793">
+    <img alt="Research stage" src="https://img.shields.io/badge/Status-Research%20stage-D77C6A">
+  </p>
+  <p>
+    <a href="#the-problem">The problem</a> ·
+    <a href="#the-mathematics">The mathematics</a> ·
+    <a href="#system-design">System design</a> ·
+    <a href="#run-it-locally">Run locally</a> ·
+    <a href="#research-roadmap">Research roadmap</a> ·
+    <a href="#contribute">Contribute</a>
+  </p>
+</div>
 
-Optional and **off by default**: sample candidate plus independently
-random video intervals, extract small local preview frames only on request,
-then obtain independent NVIDIA NIM vision-language assessments after explicit
-approval to upload. Compare model assessments to held-out human Keep/Skip
-reviews; AI consensus is not ground truth.
+---
 
-See [NVIDIA NIM Clip Benchmark](docs/NIM_CLIP_BENCHMARK.md) for safety,
-CLI commands, model constraints and evaluation design.
+> **The central idea:** A remarkable moment is rarely a single remarkable frame. It is a sequence: the approach, the change, the action, and the resolution. Adventure-Klip aims to discover those sequences without confusing visual motion with real-world events, or machine-generated scores with human experience.
+>
+> **Current status:** The baseline local video index, visual and motion evidence, review workflows, and reel tools are available on `main`. More advanced adaptive sampling, multi-scale temporal investigations, preference studies, and archive pipelines live in **unmerged experimental PRs**. Read the [implementation-status guide](docs/README.md) before following commands from an experimental branch.
 
-## Prior release history
+## The problem
 
-# Klip 1.0 candidate · Auditable run performance
+Suppose a first-person snorkeling camera records 20 minutes of ocean footage. A ray might enter the image after a long quiet swim, approach, pass the camera, and disappear. A high-scoring still frame may show the animal beautifully while leaving out everything that made the encounter meaningful.
 
-`klip audit-log <log-file>` summarizes stage progress, sparse FFmpeg output
-throughput, source-verification heartbeats and restarts using only an existing
-append-only log. It does **not** read source footage, open the project catalog,
-run processing, acquire a workspace lock or estimate whole-library completion.
+| A frame-based system notices | A temporal system should investigate | An editor must decide |
+|:--|:--|:--|
+| An animal-like shape | **Discovery → approach → pass → departure** | Which portion preserves the encounter? |
+| A sharp ski-camera movement | **Preparation → motion → possible airborne phase → landing** | Was a complete maneuver actually visible? |
+| A dramatic turn on singletrack | **Obstacle approach → trajectory change → recovery** | Did the proposed cut preserve cause and consequence? |
+| A loud transient or a splash | **Audio and visual changes with uncertain origin** | Is it relevant, misleading, or unobservable? |
 
-While a library processing run is active, test the audit utility in a
-**separate checkout/environment** rather than changing the running one.
-See [run log audit](docs/PROCESSING.md#run-log-audit-and-performance-evaluation).
+**The objective is not to maximize motion, novelty, or model certainty.** It is to build a **verifiable account of an unfolding event**, then ask whether people prefer the resulting clips.
 
-## Earlier releases
+The four distinct questions are:
 
-# Klip 0.9 · Preserve the original proposal when saving reviews
+1. **What was observed?** Frames, audio, camera movement, objects, timestamps, and missing evidence.
+2. **What might have happened?** Event and temporal-phase hypotheses, with uncertainty and alternatives.
+3. **What makes a complete clip?** Context, event-core retention, continuity, and pacing.
+4. **Was the outcome useful?** Blind human preference, discovery recall, editing time, and failure analysis.
 
-Each new user review can record the shown candidate and suggested in/out
-alongside the final chosen interval, using an append-only linked SQLite record.
-This makes future boundary-quality evaluation possible without asserting
-that the candidate's scene label is correct or altering source media.
-See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md).
+**A classifier's confidence is not editorial value.** A frame similarity is not an animal identification. A camera jerk is not proof of a jump, fall, or injury.
 
-## Previous: Cached boundary inspector (opt-in)
+## A scene has a timeline, not just a thumbnail
 
-Inspect local, cached motion evidence around an in/out range without
-reprocessing source files. A **Preview 5 local frames** button decodes at
-most five frames from one recording only when explicitly clicked.
-Neither feature modifies source clips or automatically applies edits.
-See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md).
-
-## Previous: Evidence-aware clip boundaries
-
-The focused review screen now offers an optional **Preview suggested trim**
-action. A deterministic, versioned trim policy protects complete multi-frame
-events, adds bounded context, respects human Skip/manual exclusion intervals,
-and **requires explicit review** before saving. It does not start any new
-processing or alter original DJI files.
-
-See [Clip Trim Policy](docs/CLIP_TRIM_POLICY.md) for rules, guardrails, failure
-modes and the human evaluation plan.
-
-## Prior UI: Quiet Review + Library
-
-The focused studio now uses a low-noise navy, grey, white and salmon palette. **Refresh catalog** reads newly indexed metadata during a long-running processing job without restarting analysis. A large clip viewer includes optional fullscreen, while the Library defaults to collapsed collections and renders 60 recording rows at a time. These are UI-only optimizations and do not change the source videos.
-
-See [Focused Review + Library](docs/FOCUS_REVIEW_LIBRARY.md) for the full interface and shortcuts.
-
-## Original Focused Review and Library
-
-**The default page is now Review:** one large clip at a time, with Keep / Later / Skip and optional annotations. Switch to **Library** for virtual folders by recording day, original folder, manually assigned region, activity, and review status. Search recordings and inspect suggested or previously reviewed intervals. The old multipanel editorial UI remains at `/classic`.
-
-See [Focused Review + Library](docs/FOCUS_REVIEW_LIBRARY.md) for shortcuts, workflow, data safety and limitations.
-
-## Previous studio: Inbox and Sequence Editor
-
-The local Field Studio now starts with a small, prioritized **editorial Inbox** instead of every raw motion proposal. Preview each moment, Keep it, or Reject with a note explaining a wrong label or boring scene. Approved moments appear on the **Sequence** tab, where you can drag them into order, review transitions, save revisioned drafts, and export a render-compatible JSON plan. The original DJI files remain untouched.
-
-```sh
-klip --workspace ~/AdventureAI studio
+```mermaid
+flowchart LR
+    A["Quiet exploration"] --> B["First visible change"]
+    B --> C["Approach / build-up"]
+    C --> D["Main encounter or action"]
+    D --> E["Outcome / resolution"]
+    style B fill:#dbe8ec,color:#24333c,stroke:#718e9b
+    style C fill:#f5e4d7,color:#513b2b,stroke:#c99779
+    style D fill:#f3cdbf,color:#4b302a,stroke:#c98673
+    style E fill:#dce9e6,color:#243c37,stroke:#75a69b
 ```
 
-See [Curation Inbox and Sequence](docs/CURATION_INBOX_AND_SEQUENCE.md) for the workflow and limitations.
+This is an **illustrative narrative template**, not a current verified action classifier. Some clips contain multiple events, non-linear structure, interruptions, or no identifiable payoff. A correct system must allow all of those.
 
-## Klip Field Studio
+| Temporal level | Initial working range | Question |
+|---|---|---|
+| **Micro** | ~0.25–2 s | Did the image, sound, camera, or object motion change? |
+| **Meso** | ~2–30 s | Was there a complete approach, maneuver, interaction, or transition? |
+| **Macro** | ~10–120+ s | How does a sequence of events form an interpretable experience? |
 
-Review and compare your indexed adventure footage in a private, local web UI. The player opens originals read-only, while labels and A/B preferences are appended to the separate workspace database.
+These time scales are **research design ranges**, not universal constants or validated physiological/sport thresholds.
 
-~~~bash
-klip --workspace ~/AdventureAI studio
-~~~
+## The mathematics
 
-See [Field Studio guide](docs/FIELD_STUDIO.md) for setup, keyboard shortcuts, safety, and codec limitations.
+### 1. Evidence is time-indexed and source-grounded
 
-## Evidence-first scene atlas and reviewed clips
+A recording is an observation stream, not an already labeled set of actions:
 
-Klip can now save append-only human-reviewed source intervals and compare already
-cached semantic embeddings without re-encoding original footage. Audio is an
-inexpensive **review-prioritization cue**, not a classifier for maneuvers,
-breathing, crashes or boring moments.
+$$
+\mathcal{X}=\{(t_i,\mathbf{v}_i,\mathbf{a}_i,\mathbf{m}_i,\mathbf{p}_i)\}_{i=1}^{N}
+$$
 
-See [Review-driven scene atlas](docs/REVIEW_DRIVEN_SCENE_ATLAS.md) for the staged
-local workflow and safety/evaluation limitations. Useful commands:
+Here, \(\mathbf{v}\) denotes visual representations, \(\mathbf{a}\) audio cues, \(\mathbf{m}\) motion measurements, and \(\mathbf{p}\) provenance and timing metadata. Any modality can be missing. Source-video-relative timestamps, decoded presentation timestamps, and rendered timestamps must not be assumed identical.
 
-```sh
-klip --workspace ~/AdventureAI acoustics
-klip --workspace ~/AdventureAI scout --recipe ski-highlights --top 20
-klip --workspace ~/AdventureAI examples audit
-klip --workspace ~/AdventureAI examples evaluate
-klip --workspace ~/AdventureAI plan --recipe ski-highlights --ranking context --diversity visual --provider siglip2 --seconds 90
+### 2. Visual change is a clue, not an event
+
+For compatible frozen frame embeddings, a useful inexpensive proposal signal is:
+
+$$
+\Delta_i=1-\frac{\mathbf{v}_i^\top\mathbf{v}_{i-1}}
+{\lVert\mathbf{v}_i\rVert_2\lVert\mathbf{v}_{i-1}\rVert_2}
+$$
+
+A high \(\Delta_i\) can reflect a meaningful event **or** a pan, bubbles, occlusion, lighting change, scene cut, or equipment shake. Sampling gaps are recorded as **unknown** instead of quietly interpolated into evidence. This is the idea behind the optional [Temporal Lite prototype, PR #82](https://github.com/sidhulyalkar/adventure-klip/pull/82), **not a feature released on `main`**.
+
+### 3. The research objective is complete, useful clips
+
+Let \(E\) be candidate events and \(C\) an edit composed of source-relative intervals. One conceptual objective is:
+
+$$
+\max_{C}\;
+\underbrace{\alpha\,R_{\mathrm{event}}(C,E)}_{\text{preserve critical action}}
++\underbrace{\beta\,U_{\mathrm{human}}(C)}_{\text{human preference}}
++\underbrace{\gamma\,D(C)}_{\text{diversity}}
+-\underbrace{\delta\,J(C)}_{\text{jarring or incomplete cuts}}
+$$
+
+subject to a duration budget \(\sum_{c\in C}|c|\le B\), source bounds, human exclusion intervals, and explicit approval for publishing. These are **proposed research terms**, not a trained or calibrated production objective. Event-core retention is measurable against independent human annotations. Human utility must be evaluated with **blind preferences**, not assumed from a model's explanation.
+
+The [full problem formulation](docs/PROBLEM_FORMULATION.md) defines hypotheses, temporal uncertainty, evaluation metrics, failure cases, and experimental baselines.
+
+## System design
+
+```mermaid
+flowchart TB
+    SRC["Original action-camera recordings"] --> ID["SHA-256 identities, metadata & source verification"]
+    ID --> OBS["Time-indexed observations"]
+    OBS --> MOT["Cheap motion & acoustic evidence"]
+    OBS --> VIS["Optional frozen visual embeddings / object proposals"]
+    MOT --> CAND["Unverified event & episode candidates"]
+    VIS --> CAND
+    CAND --> CUT["Context-aware clip suggestions"]
+    CUT --> HUMAN["Human review: Keep / Later / Skip + boundaries"]
+    HUMAN --> PLAN["Reviewed sequences and local render"]
+    HUMAN --> EVAL["Preference study, event retention & error audit"]
+    VIS -. "Research: change points and video embeddings" .-> T["Temporal event graph"]
+    T -. "Only after qualification" .-> CUT
+    HUMAN -. "Independent labels / provenance" .-> T
+    classDef research fill:#f5e4d7,stroke:#ce917c,color:#513b2b
+    class T research
 ```
 
-# Adventure Klip 🏔️ 🐠 🚵
+**Solid arrows:** the existing architecture on the repository's baseline, with optional components explicitly enabled. **Dashed arrows:** research and future integration. Models should create *inspectable proposals* and retain their source evidence. Human review, exclusions, and export approval remain independent gates.
 
-Incrementally process a permanent DJI folder without moving footage:
+### What is implemented, experimental, and still missing?
 
-```sh
-klip --workspace ~/AdventureAI process ~/Movies/DJI --activity ski
-```
+| Capability | Implementation state | Where to look |
+|---|---|---|
+| Local catalog, hash identities and managed ingest | **Core on `main`; known indexed-to-managed import fix still open in [#2](https://github.com/sidhulyalkar/adventure-klip/pull/2)** | [Processing](docs/PROCESSING.md) |
+| Basic activity/motion evidence and video-local timelines | **Core on `main`** | [Architecture](docs/ARCHITECTURE.md) |
+| Optional image embeddings and open-vocabulary object proposals | **On `main`, opt-in** | [Review-driven scene atlas](docs/REVIEW_DRIVEN_SCENE_ATLAS.md) |
+| Event proposals, human reviews, context-aware trim suggestions | **On `main`, provisional** | [Trim policy](docs/CLIP_TRIM_POLICY.md) |
+| Local Studio, review history, candidate reels and rendering | **On `main`** | [Focused review](docs/FOCUS_REVIEW_LIBRARY.md) |
+| Adaptive frame budgets, richer segmentation and temporal investigation | **Unmerged PR stack** | [Integration map](docs/PR_INTEGRATION_PLAN.md) |
+| Cache-only visual transition graph | **Unmerged draft PR #82** | [Temporal Action Intelligence](https://github.com/sidhulyalkar/adventure-klip/blob/feat/temporal-lite-action-graph-v1/docs/TEMPORAL_ACTION_INTELLIGENCE.md) |
+| Validated action-phase recognition, learned temporal utility, calibrated event ranking | **Research goals, not validated** | [Problem formulation](docs/PROBLEM_FORMULATION.md) |
 
-See [folder processing](docs/PROCESSING.md) for restart behavior, source verification,
-cache migration and current limitations. This runs the lightweight baseline pipeline.
+## Run it locally
 
-
-**Local-first action-camera intelligence.** Index recordings from existing Mac folders without moving footage; import removable DJI media with verified copies; extract timestamped evidence, group confirmed maneuvers, draft reels, and publish approved Sid's iLand discovery bindings.
-
-[![CI](https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml/badge.svg)](https://github.com/sidhulyalkar/adventure-klip/actions/workflows/ci.yml)
-
-> **Research-stage software:** Camera motion is evidence, not proof of a ski jump or a speed measurement. Semantic object labels are unverified proposals until reviewed. Models are optional, downloaded only when explicitly enabled; no media leaves your computer by default.
-
-## Install
-
-Python 3.11+ and FFmpeg/FFprobe required. On macOS:
+**Requirements:** Python 3.11+, FFmpeg / FFprobe, and a local workspace. The Python distribution is `adventure-klip`; its import module remains `adventure_intelligence`.
 
 ```bash
+# macOS example
 brew install ffmpeg
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[vision,images,dev]'
-klip init
+python -m pip install -e '.[vision,images,dev]'
+
+# A separate workspace preserves the original media directory.
+export WS="$HOME/AdventureAI"
+klip --workspace "$WS" init
 ```
 
-The old `adventure` command remains as a compatibility alias. The Python import package remains `adventure_intelligence` while the distribution and primary CLI are named `adventure-klip` / `klip`.
+### One small, reproducible first pass
 
-## Use existing folders, without moving anything
+Use a **small stable test folder**, not your complete removable SSD archive:
 
 ```bash
-# 1. Index videos right where they already live, including new nested folders.
-klip index "$HOME/Movies/DJI Footage" --activity ski --dry-run
-klip index "$HOME/Movies/DJI Footage" --activity ski
+# Index without copying or moving existing footage.
+klip --workspace "$WS" index "$HOME/Movies/DJI Pilot" --activity ski --dry-run
+klip --workspace "$WS" index "$HOME/Movies/DJI Pilot" --activity ski
 
-# 2. Lightweight measured motion evidence and video-local timeline.
-klip analyze
-klip analyze --detector flow              # needs [vision]
-klip timeline --source pixel-change
-klip timeline --source optical-flow
+# Start with inexpensive observable evidence.
+klip --workspace "$WS" analyze
+klip --workspace "$WS" timeline --source pixel-change
+klip --workspace "$WS" scenes --backend histogram --every 4
 
-# 3. Sparse visual descriptors (no model download).
-klip scenes --backend histogram --every 4
-klip timeline --source pixel-change       # merges existing scene descriptors
-
-# 4. Review candidate episodes and draft an editable reel.
-klip sessions
-klip review
-klip plan --recipe ski-highlights --style chronological --seconds 75 --output "$HOME/AdventureAI/exports/plan.json"
-klip render "$HOME/AdventureAI/exports/plan.json" --transition fade --output "$HOME/AdventureAI/reels/ski.mp4"
+# Inspect and edit. Nothing is published automatically.
+klip --workspace "$WS" studio
 ```
 
-`klip index` registers content-addressed identities with **original local paths**. It reads but does not copy/move/rename footage. If a video changes in-place, re-index the folder. Originals must remain accessible to analyze or render; missing paths are reported, not fabricated. The first scan hashes every file, later unchanged scans reuse the catalog. All generated artifacts are placed under `~/AdventureAI` or `ADVENTURE_HOME`, not in your source folder. The `fade` transition is currently a **fade-through-black** (audio and video), not a cross-dissolve.
-
-## DJI SD cards: verified import instead of zero-copy
+To generate a draft review plan and a separate MP4:
 
 ```bash
-klip ingest '/Volumes/YOUR_DJI_CARD/DCIM' --activity ski --dry-run
-klip ingest '/Volumes/YOUR_DJI_CARD/DCIM' --activity ski
-klip analyze
+klip --workspace "$WS" plan --recipe ski-highlights \
+  --seconds 75 --output "$WS/exports/plan.json"
+
+klip --workspace "$WS" render "$WS/exports/plan.json" \
+  --output "$WS/reels/ski-review.mp4" --transition cut
 ```
 
-Reading removable cards in-place is possible with `klip index --allow-removable`, but strongly discouraged: the card may disappear before analysis or rendering. The normal `ingest` mode copies originals to content-addressed local storage and verifies them, preserving sidecars when available. It **never deletes** source files. The optional macOS mount-triggered agent is in `macos/` and should be tested manually before enabling unattended imports.
+For stable permanent folders, `klip --workspace "$WS" process PATH --activity ski` can index and analyze incrementally. An asset indexed externally is **not proof that a managed import copy exists**; see [the pending import-safety fix in PR #2](https://github.com/sidhulyalkar/adventure-klip/pull/2) and verify managed copies before removing original media. For removable DJI cards, prefer `klip ingest CARD/DCIM` to make checksum-verified managed copies. Never assume a disconnected SSD is safely replaceable, and do not switch checkouts, reinstall dependencies, or initiate a full video pass while an existing processing job is running. See [Processing](docs/PROCESSING.md).
 
-## Optional semantic understanding
-
-Frame observations can be indexed using multiple feature families, with timestamps and versioned provenance:
-
-| CLI backend | Outputs | Limitations |
-|---|---|---|
-| `histogram` | Cheap 48D RGB histogram for visual similarity | Not semantic; no objects |
-| `siglip2` | Real semantic image embeddings via Hugging Face | Downloads model weights; no object boxes |
-| `owlv2` | Open-vocabulary objects + boxes + scores | Labels are proposals, not species-verified |
-| `stack` | SigLIP2 embeddings + OWLv2 objects, optional human pose | Heavy; needs adequate memory and validated model versions |
-
-Install the opt-in dependencies first:
+### Optional semantic evidence
 
 ```bash
-pip install -e '.[semantic]'
-klip scenes --backend siglip2 --every 4 --limit 1
-klip scenes --backend owlv2 --every 4 --limit 1
-klip scenes --backend stack --every 6 --limit 1
+python -m pip install -e '.[semantic]'
+klip --workspace "$WS" scenes --backend siglip2 --every 4 --limit 1
+klip --workspace "$WS" scenes --backend owlv2 --every 4 --limit 1
 ```
 
-Optional human-pose keypoints on frames with a *visible person*:
+The optional providers download model weights when deliberately invoked. SigLIP2 produces appearance embeddings, **not verified motion or animal identity**; OWLv2 object boxes are unverified detections. A sparse sample can miss short events. Use `klip --help` and the linked branch-specific documentation for other commands.
 
-```bash
-pip install -e '.[semantic,pose]'
-klip scenes --backend stack --pose-model /path/to/pose_landmarker.task --limit 1
+## Research roadmap
+
+```mermaid
+flowchart LR
+  B0["Baseline: trustworthy sources"] --> B1["T0: frozen visual change graphs"]
+  B1 --> B2["T1: timestamp & preview parity"]
+  B2 --> B3["T2: multiscale event phases"]
+  B3 --> B4["T3: object vs camera motion"]
+  B4 --> B5["T4: frozen video encoder ablation"]
+  B5 --> B6["T5: blind editorial qualification"]
+  B6 --> B7["T6: reproducible public benchmark"]
 ```
 
-You must independently obtain a compatible MediaPipe `.task` model. A helmet-mounted first-person video typically cannot show your own body's pose, so human-pose landmarks should not be mistaken for skier kinematics. For ski and bike POV biomechanics, future stages should include camera-ego-motion compensation, calibrated IMUs and visually observed body/equipment landmarks where available.
+**Research question:** Can hierarchical temporal event representations improve **human-preferred clip completeness and action retrieval** compared with frame novelty and fixed-context rules, at a justified compute and annotation cost?
 
-Large foundation-model weights aren't packaged in the wheel. By default, Klip does not access any remote video API or transmit personal media. Model-host downloads are opt-in and subject to upstream model licenses. On Apple Silicon, the SigLIP backend attempts to use MPS; object detection is model/backend dependent. Run the baseline first and benchmark with a small verified sample before a full library scan.
+A first controlled study will compare the existing baseline, deterministic context padding, a cache-only temporal representation, and a frozen contiguous-video encoder. It will include random-source negatives, different trips in held-out evaluation, multi-rater onset/peak/resolution annotations, and blind same-event A/B edits.
 
-## What is actually calibrated
+We will report **event-core retention, preference with uncertainty, time to usable edit, missed events in random-source footage, computational cost, and abstention/coverage**. We will not claim improvement before that experiment exists.
 
-`klip timeline` produces `~/AdventureAI/timelines/<asset>-<detector>-<bin>.json`, with each time bin containing raw video motion, robust per-video normalized scores, event references, and optional timestamped object/keypoint candidates and embedding locations. **Per-video normalization is not cross-video probability calibration**. The score is a visual-activity heuristic, not scientific confidence that a maneuver occurred or automatic highlight quality.
+Track research [milestones in issue #83](https://github.com/sidhulyalkar/adventure-klip/issues/83) and [the unmerged PR integration plan](docs/PR_INTEGRATION_PLAN.md).
 
-Human review labels use `klip labels examples/labels.example.json`. Sequence patterns include jump chains, carving flow, tree weaving, and technical-feature chains **only from appropriately labeled events**. Automatically inferred flow candidates retain camera-motion labels. See [Architecture](docs/ARCHITECTURE.md) and [iLand adapter](docs/ILAND_INTEGRATION.md).
+## Scientific and data-safety commitments
 
-## Editing and publishing
+- **Source immutable by default:** source content identities are verified and generated artifacts belong in a separate workspace. No automatic deletion, public export, or third-party video upload.
+- **Observation ≠ ground truth:** optical flow is not athlete speed; camera jolts do not establish crashes; an audio transient does not prove breathing; object-text similarity does not verify species.
+- **Absent evidence ≠ negative evidence:** missing frames, inaccessible files, sparse sample gaps and failed model calls remain distinguishable.
+- **Source-relative time is explicit:** timestamps are not fabricated from frame numbers or silently conflated with decoded PTS.
+- **People decide what matters:** model proposals are not training labels or publication approvals. Later training requires provenance, review separation, privacy controls, and appropriate rights.
+- **Failure preservation:** report difficult negatives, disagreement, false positives, misses, and model abstentions alongside any apparent success.
 
-- `klip plan` selects non-overlapping candidate episodes under a time budget. `--style chronological` honors verified capture dates when present; `--style crescendo` orders source groups from lower to higher episode score while keeping each video's events in source order. These are transparent heuristics, not a learned film editor.
-- `klip render --transition cut|fade` makes reproducible MP4 review exports. The fade option is a tested black fade, not an optical cross-dissolve.
-- `klip bind ... --approve` and `klip export` enforce explicit approvals and real playback URLs for discovery objects, preventing model hallucinations from appearing on the public site.
+## Repository guide
 
-## Validation and development
+| Directory | Purpose |
+|---|---|
+| `src/adventure_intelligence/` | Core indexing, evidence, curation, timelines, local Studio and rendering |
+| `tests/` | Synthetic and integration regressions; not evidence of real-video recognition accuracy |
+| `docs/` | Architecture, experimental contracts, tutorials and evaluation protocols |
+| `examples/` | Synthetic/example inputs; not private DJI recordings |
+| `macos/` | Optional local mount-agent experiments |
+| `.github/` | CI and collaboration workflows |
+
+Use the [documentation index](docs/README.md) to find the correct guide and avoid confusing merged `main` capabilities with unfinished branch experiments.
+
+## Contribute
+
+Adventure-Klip is Apache-2.0 licensed. Contributions are welcome for improved temporal representations, human-centered evaluation, source-safe decoding, motion compensation, ecology observations, annotation methods and reproducibility.
+
+Before opening a PR, start with [CONTRIBUTING.md](CONTRIBUTING.md), add synthetic false-positive controls, name your model and data provenance, specify how a hypothesis could fail, and keep private videos, location histories, identifiable bystanders, licenses and pretrained weights **out of Git**.
 
 ```bash
-pip install -e '.[vision,images,dev]'
-pytest -q
+python -m pytest -q
 python -m build
 ```
 
-CI tests the core in Python 3.11 and 3.12. Test media is synthetically generated; no personal recordings or pretrained model weights are committed. An evaluation set of genuine DJI POV skiing, biking, and underwater footage is required to quantify semantic object accuracy, athletic-event recall, and editorial quality. See [Contributing](CONTRIBUTING.md).
-
-## Roadmap
-
-1. Calibrate event boundaries against human-annotated DJI footage; add motion compensation and activity-specific multi-signal event detectors.
-2. Review interface with frame/episode-level feedback, label correction, and an explicit train/validation/test split by trip/camera.
-3. Sequence-based editor with shot diversity, pacing, subject motion, music licensing, and optional true cross-dissolves when verified on supported FFmpeg builds.
-4. Distill embeddings, object tracks and labeled maneuvers into trainable temporal models; quantify out-of-trip generalization and uncertainty.
-5. Sid's iLand discovery matches with real-place vs virtual-place disambiguation and sourced species annotation.
-
-Apache-2.0 licensed. Raw footage, private data, and model weights are deliberately excluded from Git.
+**The goal:** move from *"this frame looks interesting"* to *"this complete event is worth watching, and here is the evidence and human evaluation behind that decision."*
