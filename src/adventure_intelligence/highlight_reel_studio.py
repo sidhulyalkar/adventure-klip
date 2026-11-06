@@ -9,7 +9,7 @@ never implies successful actions or editorial approval.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
@@ -18,6 +18,7 @@ import os
 import re
 import stat
 import tempfile
+import sys
 
 from .highlight_curation_pilot import _safe_dest, VERSION as PILOT_VERSION
 from .highlight_feedback_discovery import VERSION as PLAN_VERSION, _safe_input
@@ -98,6 +99,10 @@ def _copy_verified_proxy(pilot:Path,media:Path,clip:dict)->tuple[str,bool,str|No
     if not isinstance(expected,str) or not _SHA.fullmatch(expected):
         return rid,False,"invalid_proxy_digest"
     src=pilot/"media"/(rid+".mp4")
+    # Reject a local cache directory redirected toward removable original
+    # media through a symlink, including when the leaf itself is regular.
+    if src.parent.is_symlink():
+        return rid,False,"unsafe_media_directory_symlink"
     if src.is_symlink():
         return rid,False,"unsafe_proxy_symlink"
     fd=None
@@ -203,6 +208,8 @@ def assemble_reel_studio(workspace:Path,pilot_dir:Path,
     candidate_scout=[]
     seen_sources=set()
     for record in frozen["records"]:
+        if scout_limit==0:
+            break
         rid=record["recordId"]
         source=record["source"]["sourceFamilyId"]
         sport=record["sportContext"]["sport"]
@@ -220,10 +227,16 @@ def assemble_reel_studio(workspace:Path,pilot_dir:Path,
     dest.mkdir(parents=True,mode=0o700,exist_ok=False)
     media=dest/"media"
     media.mkdir(mode=0o700)
+    result_map={}
     with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="klip-reel-cache") as pool:
-        results=list(pool.map(
-            lambda clip:_copy_verified_proxy(pilot,media,clip),selected))
-    result_map={rid:(ready,err) for rid,ready,err in results}
+        futures={pool.submit(_copy_verified_proxy,pilot,media,clip):
+                 clip["clipId"] for clip in selected}
+        for completed in as_completed(futures):
+            rid,ready,reason=completed.result()
+            result_map[rid]=(ready,reason)
+            print(f"[reel-studio] verified local clip {len(result_map)}/{len(selected)} "
+                  f"{rid[:10]}: {'ready' if ready else reason}",
+                  file=sys.stderr,flush=True)
     errors=Counter()
     for clip in selected:
         ready,reason=result_map[clip["clipId"]]
