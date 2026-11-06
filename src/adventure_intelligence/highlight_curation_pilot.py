@@ -66,6 +66,19 @@ def _sport(value:str)->str:
     return value if value in ("ski","bike","snorkeling") else "unknown"
 
 
+def _balance_sports(keys:list[tuple],sources:dict)->list[tuple]:
+    """Round-robin across OBSERVED catalog sports, never infer unknown."""
+    groups={k:[] for k in ("ski","bike","snorkeling","unknown")}
+    for key in keys:
+        groups[_sport(sources[key[0]]["activity"])].append(key)
+    balanced=[]
+    while any(groups.values()):
+        for group in ("ski","bike","snorkeling","unknown"):
+            if groups[group]:
+                balanced.append(groups[group].pop(0))
+    return balanced
+
+
 def _id(aid:str,start:int,end:int)->str:
     return sha256(f"{RECORD_VERSION}:{aid}:{start}:{end}".encode()).hexdigest()[:24]
 
@@ -212,11 +225,14 @@ def make_curation_pilot(workspace:Path,study_file:Path,features_file:Path,*,
     # Each quota is approximate because coverage and sources may be limited.
     per_role={k:[] for k in ROLES}
     ordered=sorted(ranked,key=lambda pair:(-pair[1],pair[0]))
-    per_role["frozen_pilot"]=sorted(
-        baseline,key=lambda x:sha256(f"{seed}:pilot:{x}".encode()).hexdigest())
-    per_role["ranked_high"]=[key for key,_ in ordered]
+    per_role["frozen_pilot"]=_balance_sports(sorted(
+        baseline,key=lambda x:sha256(f"{seed}:pilot:{x}".encode()).hexdigest()),
+        valid)
+    per_role["ranked_high"]=_balance_sports(
+        [key for key,_ in ordered],valid)
     by_middle=sorted(ordered,key=lambda pair:(abs(pair[1]-.5),pair[0]))
-    per_role["ranked_middling"]=[key for key,_ in by_middle]
+    per_role["ranked_middling"]=_balance_sports(
+        [key for key,_ in by_middle],valid)
     # Source-time controls are sampled from sources that never made the
     # *reported* ranked candidate list. Do not interpret them as negatives.
     not_ranked=sorted(aid for aid in valid if aid not in {
@@ -230,6 +246,8 @@ def make_curation_pilot(workspace:Path,study_file:Path,features_file:Path,*,
         start=random.Random(f"{VERSION}:{seed}:{aid}:time").randint(
             0,max(0,duration-width))
         per_role["unrepresented_source_control"].append((aid,start,start+width))
+    per_role["unrepresented_source_control"]=_balance_sports(
+        per_role["unrepresented_source_control"],valid)
     selected=[]
     used_keys=set()
     per_asset=Counter()
@@ -281,6 +299,7 @@ def make_curation_pilot(workspace:Path,study_file:Path,features_file:Path,*,
         "sourceFilesModified":False,"externalUploads":0,
         "activityInSelected":dict(sorted(Counter(
             r["sportContext"]["sport"] for r in records).items())),
+        "stratificationNote":"Round-robin by catalog-confirmed activity within diagnostic strata; unresolved sources stay unknown.",
         "selections":[{
             "recordId":records[i]["recordId"],"sourceAssetId":s["key"][0],
             "startMs":s["key"][1],"endMs":s["key"][2],
