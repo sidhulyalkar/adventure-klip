@@ -148,6 +148,8 @@ def plan_review_discovery(workspace:Path,pilot_dir:Path,
             not isinstance(selection.get("selections"),list)):
         raise ValueError("Pilot metadata and frozen manifest fingerprints do not match")
     by_id={row["recordId"]:row for row in manifest["records"]}
+    if any(not re.fullmatch(r"[0-9a-f]{24}",rid) for rid in by_id):
+        raise ValueError("Unsafe/nonstandard frozen review identifier")
     if (len(by_id)!=len(manifest["records"]) or
             set(by_id)!=set(presentations["records"])):
         raise ValueError("Pilot record identities are missing or duplicated")
@@ -176,6 +178,7 @@ def plan_review_discovery(workspace:Path,pilot_dir:Path,
             proxy=pilot/"media"/(rid+".mp4")
             if (not isinstance(expected,str) or
                     not re.fullmatch(r"[a-f0-9]{64}",expected)
+                    or proxy.is_symlink()
                     or not proxy.is_file() or not 64<=proxy.stat().st_size<=45*1024*1024
                     or sha256(proxy.read_bytes()).hexdigest()!=expected):
                 raise ValueError(
