@@ -389,3 +389,32 @@ def test_zero_copy_reindex_never_rehashes_old_stalled_sdcard(tmp_path,monkeypatc
                           (aid,)).fetchone()[0]
     assert stored==str(source)
     assert not any(x.startswith("/Volumes") for x in touched)
+
+
+def test_zero_eligible_local_ollama_jobs_explicitly_report_blocker(tmp_path,monkeypatch):
+    from adventure_intelligence import cached_secondlook_batches as second
+    root=tmp_path/"workspace"
+    assignments=root/"reports"/"frozen-assignments.json"
+    assignments.parent.mkdir(parents=True)
+    with connect(root):
+        pass
+    assignments.write_text(json.dumps({"version":"synthetic"}))
+    calls=[]
+    def no_work(workspace,path,*,model,limit,run,exclude_review_ids):
+        calls.append(True)
+        return {"selected":0,"eligibleUnreviewed":0,"items":[],
+                "missingVerifiedPreviews":20,"awaitingAdaptiveV2":3,
+                "firstPassNotFlaggedForInvestigation":0,
+                "newLocalModelCalls":0,"cachedSecondLooksReused":0,
+                "failed":0}
+    monkeypatch.setattr(second,"inspect_temporal_candidates",no_work)
+    out=root/"reports"/"zero-input-result"
+    result=second.run_cached_secondlook_batches(
+        root,assignments,out,batches=15)
+    assert len(calls)==1
+    assert result["status"]=="blocked_no_eligible_model_inputs"
+    assert result["zeroModelCallsNotScientificCompletion"] is True
+    assert result["inputGate"]["missingVerifiedPreviews"]==20
+    assert result["inputGate"]["awaitingAdaptiveV2"]==3
+    assert result["newLocalModelOutputs"]==0
+    assert result["sourceVideoReads"]==0
