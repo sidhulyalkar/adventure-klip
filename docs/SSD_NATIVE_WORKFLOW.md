@@ -117,6 +117,26 @@ are **not necessarily new unique videos**. Investigate them later with
 content-addressed indexing, never assume the difference in counts equals new
 recordings.
 
+After verifying an unlisted file really belongs to this SSD, the index CLI
+also accepts that **single existing video** directly. No source video is
+copied and adjacent files are not hashed:
+
+```bash
+# Replace with an actual file from localPathsNotInCatalogSample.
+VIDEO="/Volumes/YourHealthySSD/DCIM/DJI_001/NEW.MP4"
+python scripts/klip_ssd_mount_guard.py verify \
+  --workspace "$WS" --root "$HEALTHY_SOURCE_ROOT" \
+  --identity "$SSD_IDENTITY_FILE"
+klip --workspace "$WS" index "$VIDEO" --allow-removable --dry-run
+klip --workspace "$WS" index "$VIDEO" --allow-removable
+```
+
+This verifies a content SHA for exactly one selected file; check the returned
+result/error before assuming it was registered. New catalog registration or
+remapping requires a **new frozen campaign audit**, not mutation of an existing
+campaign receipt. The selected file can be a duplicate under a new name; the
+SHA, not the filename, determines identity.
+
 If the existing catalog is entirely outside the selected root or files
 have moved, index the stable SSD first, then freeze a **new** audit. Existing
 per-source receipts must never be silently relinked to a different path.
