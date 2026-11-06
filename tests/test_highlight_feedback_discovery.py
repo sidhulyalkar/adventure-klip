@@ -347,6 +347,11 @@ def test_reel_feedback_grounding_and_exact_trim_proposals(frozen,tmp_path):
     assert report["humanMarkerCount"]==2
     assert report["annotatedClips"]==1
     assert len(report["humanProposedRetrims"])==1
+    assert len(report["humanInterestDiscoveryProposals"])==1
+    interest=report["humanInterestDiscoveryProposals"][0]
+    assert interest["sourceMediaReadAuthorized"] is False
+    assert interest["humanHighlightApprovedAutomatically"] is False
+    assert interest["startMs"]<=b<interest["endMs"]
     assert report["humanProposedRetrims"][0]["startMs"]==a
     assert report["humanProposedRetrims"][0]["endMs"]==b
     assert report["sourceOriginalReads"]==0
@@ -354,6 +359,8 @@ def test_reel_feedback_grounding_and_exact_trim_proposals(frozen,tmp_path):
     dest=root/"reports"/"timed-feedback"
     saved=save_reel_feedback(root,studio_dir,path,dest)
     assert saved["proposedRetrims"]==1
+    assert saved["interestWindowProposals"]==1
+    assert Path(saved["interestWindows"]).is_file()
     assert saved["sourceOriginalReads"]==0
     assert Path(saved["retrims"]).is_file()
     review["notes"][0]["endMs"]=clip["endMs"]
