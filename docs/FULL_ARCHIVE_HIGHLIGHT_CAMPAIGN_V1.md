@@ -195,3 +195,44 @@ adaptive high-res rescoring of salient/uncertain intervals, verified
 outing/source grouping, independent benchmarks and original-resolution
 finished music/audio video exports. Do not label these as complete
 merely because the coarse campaign reports finished.
+
+
+## Operational campaign status: do not mistake no-op for completion
+
+Each launcher phase writes progress.json using the new command:
+
+    klip --workspace "$WS" highlight-campaign-status \
+      --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+      --scan-dir "$CAMPAIGN_DIR/coarse-scan" \
+      --packet-dir "$CAMPAIGN_DIR/review-packet"
+
+Before scanning, omit --scan-dir. Before a review packet exists,
+omit --packet-dir. This is a source-file-free status check.
+
+It computes:
+- exact catalog denominator, valid identity/duration and previous
+  candidate coverage;
+- SHA-backed completed scans, verified video duration percentage,
+  attempted hash passes, remaining/failed/blocked source counts;
+- catalog compressed original GiB covered (not live disk space),
+  coarse motion samples and candidate intervals proposed;
+- measured decoder throughput, available playable H264 review proxies,
+  and whether the packet matches the current source scan checkpoint;
+- explicit go/no-go blockers. Even 100% coarse scan exposure is NOT
+  proof that all athletic highlights were discovered.
+
+The status tool never stats an original stored_path, decodes media,
+re-hashes camera videos, calls Ollama or changes human reviews.
+
+The cross-platform integration test constructs a real ORIGINAL
+SYNTHETIC H264 sample and exercises actual SHA verification, entire
+timeline FFmpeg decoding, preparation of playable cached H264 previews,
+and the existing offline blind review packet. It is an engineering
+qualification test, not evidence of quality on a DJI archive. To run:
+
+    python -m pytest -q tests/test_full_archive_campaign.py
+
+An uninterruptible macOS kernel read on unhealthy media still cannot
+reliably be cancelled from Python. Never point any overnight job at
+the previously stalled SDXC reader. Repair/stage to healthy local
+storage before enabling camera-original reads.
