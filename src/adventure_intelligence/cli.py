@@ -64,6 +64,7 @@ from .highlight_pilot_recovery import diagnose_local_pilot, recover_local_pilot
 from .cached_secondlook_batches import run_cached_secondlook_batches
 from .full_archive_campaign import create_campaign_audit, scan_campaign
 from .full_archive_review_packet import prepare_campaign_packet
+from .full_archive_campaign_status import campaign_progress
 from .social_temporal_evidence import save_temporal_evidence
 from .social_blind_pairs import write_pair_study, write_pair_results
 from .social_scene_stories import save_scene_stories
@@ -404,6 +405,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Extra trusted local footage directory; never point this at an unresponsive SD card")
     campaign_packet.add_argument("--allow-mounted-ssd",action="store_true",
         help="Explicitly authorize healthy mounted SSD reads only, not a broken SDXC device")
+    campaign_status=sub.add_parser("highlight-campaign-status",
+        help="Report truthful recording/time/preview coverage and blockers with no original-media I/O")
+    campaign_status.add_argument("--audit",required=True,type=Path,
+        help="Exact frozen campaign-audit.json for this workspace")
+    campaign_status.add_argument("--scan-dir",type=Path,
+        help="Optional active coarse-scan directory (checks SHA receipts)")
+    campaign_status.add_argument("--packet-dir",type=Path,
+        help="Optional offline blind review packet directory")
     campaign_audit=sub.add_parser("highlight-campaign-audit",
         help="Audit ALL catalog source identities and prior episode coverage without ever touching source video paths")
     campaign_audit.add_argument("--study",type=Path,
@@ -920,6 +929,10 @@ def main(argv: list[str] | None = None) -> int:
                 prepare_missing=args.prepare_missing,workers=args.workers,
                 trusted_local_root=args.trusted_local_root,
                 allow_mounted_ssd=args.allow_mounted_ssd))
+        elif args.command=="highlight-campaign-status":
+            _print(campaign_progress(
+                root,args.audit,scan_dir=args.scan_dir,
+                packet_dir=args.packet_dir))
         elif args.command=="highlight-campaign-audit":
             _print(create_campaign_audit(
                 root,args.output_dir,study=args.study))
