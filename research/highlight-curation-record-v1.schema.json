@@ -504,6 +504,22 @@
             ],
             "minimum": 1,
             "maximum": 5
+          },
+          "eventPeakMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Human-localized source timeline peak, not canonical event peak"
+          },
+          "resolutionMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Human-localized source timeline resolution, not canonical verified outcome"
           }
         }
       },
