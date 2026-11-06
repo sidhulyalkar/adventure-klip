@@ -132,8 +132,10 @@ def audit_highlight_curation_manifest(path:Path)->dict:
             if (phase["startMs"]<event["startMs"]
                     or phase["endMs"]>event["endMs"]):
                 raise ValueError(f"Phase outside event interval for {rid}")
-        if not isinstance(sport.get("sport"),str):
-            raise ValueError(f"Sport unrecorded for {rid}")
+        if sport.get("sport") not in {
+                "ski","snowboard","mountain_bike","bike","skateboard",
+                "longboard","surf","soccer","snorkeling","other","unknown"}:
+            raise ValueError(f"Sport unrecorded or outside ontology for {rid}")
         sports[sport["sport"]]+=1
         if (filming.get("technicalQuality") is not None
                 and (not _integer(filming["technicalQuality"])
@@ -147,12 +149,37 @@ def audit_highlight_curation_manifest(path:Path)->dict:
                 and (not _integer(filming["eventReadability"])
                      or not 1<=filming["eventReadability"]<=5)):
             raise ValueError(f"Event readability outside human rubric for {rid}")
+        review_ids=set()
         for review in reviews:
             if (not isinstance(review,dict)
                     or review.get("role") not in _OBSERVER
                     or type(review.get("blindActionOnly")) is not bool):
                 raise ValueError(f"Invalid observer perspective for {rid}")
             observer_roles[review["role"]]+=1
+            if review.get("reviewStatus") not in {
+                    "human_verified","model_hypothesis","unverified"}:
+                raise ValueError(f"Missing observer evidence provenance for {rid}")
+            annotator=review.get("annotatorId")
+            if not isinstance(annotator,str) or not annotator.strip():
+                raise ValueError(f"Missing annotator pseudonym for {rid}")
+            if annotator in review_ids:
+                raise ValueError(f"Duplicate independent reviewer for {rid}")
+            review_ids.add(annotator)
+            if review.get("preference") is not None and review["preference"] not in {
+                    "keep","skip","tie","neither","cannot_tell","not_assessed"}:
+                raise ValueError(f"Invalid personal preference for {rid}")
+            if review.get("observedOutcome") is not None:
+                if review["observedOutcome"] not in _OUTCOMES:
+                    raise ValueError(f"Invalid per-review outcome for {rid}")
+                if (review["observedOutcome"] in ("completed","failed")
+                        and review.get("outcomeVisible")!="yes"):
+                    raise ValueError(
+                        f"Per-review definite outcome must have visible evidence for {rid}")
+            for quality in ("technicalQuality","aestheticQuality","eventReadability"):
+                val=review.get(quality)
+                if (val is not None and
+                        (not _integer(val) or not 1<=val<=5)):
+                    raise ValueError(f"Per-review {quality} outside human scale for {rid}")
             if review.get("reviewStatus")=="human_verified":
                 has_human+=1
         for reaction in reactions:
