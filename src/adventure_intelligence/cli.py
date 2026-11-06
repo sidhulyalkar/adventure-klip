@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     imp.add_argument("source",type=Path)
     imp.add_argument("--activity",choices=["unknown","ski","bike","snorkeling"],default="unknown")
     imp.add_argument("--dry-run",action="store_true")
-    idx=sub.add_parser("index",help="Zero-copy, read-only index of a stable local footage folder")
+    idx=sub.add_parser("index",help="Zero-copy, read-only index of a stable local footage folder or selected video file")
     idx.add_argument("source",type=Path)
     idx.add_argument("--activity",choices=["unknown","ski","bike","snorkeling"],default="unknown")
     idx.add_argument("--dry-run",action="store_true")
