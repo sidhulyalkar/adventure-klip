@@ -78,10 +78,21 @@ def _candidates(audit:dict,scan:dict,scan_dir:Path,limit:int,per_source:int):
             })
     # Role balance prevents motion-only POV bias against still wildlife
     # or personally meaningful moments. This is sampling, NOT ranking.
-    for v in groups.values():
-        v.sort(key=lambda x:(
-            x["selectionRole"]!="motion_change_hypothesis",
-            x["startMs"],x["endMs"]))
+    for aid,v in list(groups.items()):
+        # Alternate motion peaks and uniform controls within each source;
+        # otherwise a per-source cap would select only motion-heavy views.
+        peaks=sorted((x for x in v if x["selectionRole"]=="motion_change_hypothesis"),
+                     key=lambda x:(-float(x["motionChangeForAuditOnly"] or 0),
+                                   x["startMs"]))
+        controls=sorted((x for x in v if x["selectionRole"]=="uniform_timeline_control"),
+                        key=lambda x:x["startMs"])
+        balanced=[]
+        while peaks or controls:
+            if peaks:
+                balanced.append(peaks.pop(0))
+            if controls:
+                balanced.append(controls.pop(0))
+        groups[aid]=balanced
     ids=sorted(groups)
     chosen=[]
     counts=Counter()
