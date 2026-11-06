@@ -276,8 +276,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Rebuild a NEW source-safe curation packet from trusted local preview receipts, with frozen original manifest bytes")
     recover.add_argument("--pilot-dir",type=Path,required=True,
         help="Original frozen pilot; NEVER modified by recovery")
-    recover.add_argument("--feedback",type=Path,required=True,
-        help="Human feedback plan that must match original pilot manifest SHA")
+    recover.add_argument("--feedback",type=Path,
+        help="Optional human feedback plan; if supplied, must match original pilot manifest SHA")
     recover.add_argument("--output-dir",type=Path,required=True,
         help="NEW workspace reports/ or exports/ recovered packet")
     reel_studio=sub.add_parser("highlight-reel-studio",
