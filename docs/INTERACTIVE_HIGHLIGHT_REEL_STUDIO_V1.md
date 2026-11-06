@@ -119,3 +119,44 @@ disagreement stays visible.
 - Human-approved versus scouting-only clips remain separate.
 - Timecoded human annotations never become verified source events.
 - Browser JavaScript syntax checked when Node.js is available.
+
+
+## Optional MP4 preview reel export
+
+The interactive player is intended for iterative curation. When you
+want a single shareable MP4 preview of one or more already-verified
+collections, render only from the Studio's local copies:
+
+    klip --workspace "$WS" highlight-reel-render \
+      --studio-dir "$WS/reports/interactive-reels-v1" \
+      --reel all --workers 2 \
+      --output-dir "$WS/reports/reel-mp4-previews-v1"
+
+The command exports a separate normalized MP4 for each nonempty
+human-approved collection. FFmpeg tasks operate exclusively on
+checksum-verified local derivatives; workers are capped at TWO
+CPU transcoding jobs, each using two FFmpeg threads. Clips are
+normalized to consistent 960x540 H.264 30fps/no-audio before
+stream-copy concatenation. Missing or altered input clips cause
+that specific reel to fail closed, not quietly omit an athlete
+or encounter and pretend the result is complete. Empty
+collections produce explicit empty status.
+
+To render just one collection:
+
+    klip --workspace "$WS" highlight-reel-render \
+      --studio-dir "$WS/reports/interactive-reels-v1" \
+      --reel nature --workers 1 \
+      --output-dir "$WS/reports/nature-mp4-preview-v1"
+
+An unreviewed Sport Scout MP4 is NOT included by default.
+If specifically needed for manual review, request a separate
+--reel sport-scout --allow-scout render. A scout montage is not
+an approved athletic achievements reel.
+
+The new MP4 outputs are private, preview quality, muted video
+derivatives. Original 4K/60fps footage, original soundtrack,
+camera-specific color grading, scene selection and licensed
+music/sound are deliberately not included. Do not publish these
+as full-resolution exports or infer that their action narratives
+have been validated.
