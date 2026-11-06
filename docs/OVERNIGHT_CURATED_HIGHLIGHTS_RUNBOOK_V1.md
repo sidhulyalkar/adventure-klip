@@ -121,3 +121,34 @@ resumable source ingest, must precede a full archive rerun.
 
 Running caffeinate -i prevents idle sleep while the terminal remains
 active, but closing the MacBook lid can still suspend processing.
+
+
+## If the human feedback plan was never created
+
+Older examples used a guessed path, e.g.
+reports/highlight-feedback-for-reels-v1/review-discovery-plan.json.
+This is NOT a guaranteed artifact. A nonexistent plan must not prevent
+independent cache-only overnight temporal processing.
+
+The overnight launcher now works in this order:
+
+1. Read the actual frozen pilot manifest (must exist).
+2. Diagnose and rebuild an independent pilot packet **without requiring
+   a preexisting feedback plan**.
+3. Search workspace reports/ and exports/ for a valid human
+   review-discovery-plan.json with exactly the same manifest SHA.
+4. If none matches, search Downloaded JSON exports and workspace
+   reports/exports for a raw review document matching the immutable
+   manifest SHA, then generate the plan with highlight-feedback-plan.
+5. If no matching reviewer evidence is available, **skip only** the
+   interactive human-labeled reel and adaptive-review stages. Continue
+   the safe local temporal study. No fabricated reviewer choices.
+
+For a known review export, provide it explicitly:
+
+    export REVIEWS="$HOME/Downloads/klip-curation-reviews-YOUR-FILE.json"
+    caffeinate -i bash scripts/klip_overnight_cache_only.sh
+
+The script reports the matching file and the number of human windows it
+found. It does not read random video files, follow SD-card paths or
+invent an existing review artifact. The exact filename must exist locally.
