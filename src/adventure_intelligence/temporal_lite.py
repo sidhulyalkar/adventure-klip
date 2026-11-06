@@ -63,6 +63,10 @@ def build_temporal_lite(
     _positive_int(duration_ms, "duration_ms")
     _positive_int(max_gap_ms, "max_gap_ms")
     _positive_int(support_radius_ms, "support_radius_ms")
+    if not 1000 <= max_gap_ms <= 30000:
+        raise ValueError("max_gap_ms must be in 1000..30000")
+    if not 100 <= support_radius_ms <= min(max_gap_ms, 12000):
+        raise ValueError("support_radius_ms must be in 100..min(max_gap_ms,12000)")
     if (not isinstance(change_threshold, (int, float))
             or isinstance(change_threshold, bool)
             or not math.isfinite(change_threshold)
