@@ -16,6 +16,8 @@ BATCH="${SCAN_ASSETS_PER_PASS:-8}"
 PASSES="${SCAN_PASSES:-40}"
 FPS="${SCAN_FPS:-1}"
 PACKET_LIMIT="${PACKET_LIMIT:-120}"
+# Optional immutable new packet snapshot when a prior packet is stale/incomplete.
+PACKET_DIR="${PACKET_DIR:-$CAMPAIGN_DIR/review-packet}"
 PREPARE_MISSING_PREVIEWS="${PREPARE_MISSING_PREVIEWS:-NO}"
 # Fail before creating a new frozen campaign if the selected source is a
 # non-existent example path, or unacknowledged mounted media.
@@ -176,6 +178,11 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
     echo "BLOCKED: run PHASE=scan on healthy local originals before making a new review packet." >&2
     exit 3
   fi
+  echo "Verifying frozen campaign completion before packet generation."
+  python scripts/klip_packet_readiness.py \
+    --workspace "$WS" \
+    --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+    --scan-dir "$CAMPAIGN_DIR/coarse-scan"
   if ! [[ "$PACKET_LIMIT" =~ ^[0-9]+$ ]] ||
       [[ "$PACKET_LIMIT" -lt 1 || "$PACKET_LIMIT" -gt 500 ]]; then
     echo "PACKET_LIMIT must be 1..500" >&2
@@ -184,7 +191,7 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
   packetargs=(--workspace "$WS" highlight-campaign-review-packet
               --audit "$CAMPAIGN_DIR/audit/campaign-audit.json"
               --scan-dir "$CAMPAIGN_DIR/coarse-scan"
-              --output-dir "$CAMPAIGN_DIR/review-packet"
+              --output-dir "$PACKET_DIR"
               --limit "$PACKET_LIMIT" --per-source 4 --workers 2)
   if [[ -n "$SOURCE_ROOT" ]]; then
     packetargs+=(--trusted-local-root "$SOURCE_ROOT")
@@ -200,21 +207,21 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
     packetargs+=(--prepare-missing)
   fi
   check_ssd_identity
-  if [[ -e "$CAMPAIGN_DIR/review-packet" ]]; then
-    echo "Existing review packet preserved: $CAMPAIGN_DIR/review-packet" >&2
-    echo "Use a new campaign folder for another immutable review packet." >&2
+  if [[ -e "$PACKET_DIR" ]]; then
+    echo "Existing review packet preserved: $PACKET_DIR" >&2
+    echo "Use PACKET_DIR='$CAMPAIGN_DIR/review-packet-final-v2' after the scan has finished, without deleting the old packet." >&2
   else
     klip "${packetargs[@]}" >"$CAMPAIGN_DIR/packet-result.json" \
       2>"$CAMPAIGN_DIR/packet-errors.log"
   fi
-  if [[ -f "$CAMPAIGN_DIR/review-packet/selection-report.json" ]]; then
+  if [[ -f "$PACKET_DIR/selection-report.json" ]]; then
     klip --workspace "$WS" highlight-campaign-status \
       --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
       --scan-dir "$CAMPAIGN_DIR/coarse-scan" \
-      --packet-dir "$CAMPAIGN_DIR/review-packet" \
+      --packet-dir "$PACKET_DIR" \
       >"$CAMPAIGN_DIR/progress.json"
   fi
   echo "Truth-in-progress status: $CAMPAIGN_DIR/progress.json"
-  echo "Open blind review: $CAMPAIGN_DIR/review-packet/index.html"
+  echo "Open blind review: $PACKET_DIR/index.html"
   echo "Export human annotations, then use highlight-feedback-plan and Reel Studio."
 fi
