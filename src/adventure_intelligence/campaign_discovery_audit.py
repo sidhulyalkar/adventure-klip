@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from pathlib import Path
 import json
+import os
 
 from .full_archive_campaign import AUDIT_VERSION, SCAN_VERSION, _load_json
 
@@ -18,7 +19,8 @@ ROLES = ("uniform_timeline_control", "motion_change_hypothesis")
 
 
 def _workspace_report(root: Path, candidate: Path) -> Path:
-    target = Path(candidate).expanduser().absolute()
+    # Normalize dot segments lexically, without following any external path.
+    target = Path(os.path.abspath(os.path.expanduser(str(candidate))))
     if not target.is_relative_to(root):
         raise ValueError("Inputs must be inside the specified workspace")
     relative = target.relative_to(root)
@@ -123,7 +125,7 @@ def inspect_discovery(workspace: Path, audit_file: Path, scan_dir: Path) -> tupl
             if not valid:
                 raise ValueError("Missing or inconsistent SHA-backed source receipt")
             windows = receipt["candidateHypotheses"]
-            if any(not _valid_role_window(w, ms) for w in windows):
+            if len(windows) > 16 or any(not _valid_role_window(w, ms) for w in windows):
                 raise ValueError("Malformed/unbounded candidate proposal")
         except (OSError, ValueError, KeyError, TypeError):
             counts["invalidReceipts"] += 1
