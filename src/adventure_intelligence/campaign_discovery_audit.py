@@ -7,10 +7,8 @@ only frozen workspace reports and never opens/stat()s camera source paths.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from hashlib import sha256
 from pathlib import Path
 import json
-import math
 
 from .full_archive_campaign import AUDIT_VERSION, SCAN_VERSION, _load_json
 
@@ -26,8 +24,11 @@ def _workspace_report(root: Path, candidate: Path) -> Path:
     relative = target.relative_to(root)
     if not relative.parts or relative.parts[0] not in ("reports", "exports"):
         raise ValueError("Inputs must be from workspace reports/ or exports/")
-    if target.is_symlink():
-        raise ValueError("Symlinked report input refused")
+    cursor = target
+    while cursor != root:
+        if cursor.is_symlink():
+            raise ValueError("Symlinked report input or parent refused")
+        cursor = cursor.parent
     return target
 
 
@@ -107,9 +108,10 @@ def inspect_discovery(workspace: Path, audit_file: Path, scan_dir: Path) -> tupl
             raise ValueError("Unexpected scan checkpoint source status")
         receipt_path = scan_path.parent / "per-source" / (aid + ".json")
         try:
+            receipt_path = _workspace_report(root, receipt_path)
             receipt, digest = _load_json(receipt_path)
             valid = (
-                sha256(receipt_path.read_bytes()).hexdigest() == entry.get("reportSha256")
+                digest == entry.get("reportSha256")
                 and receipt.get("version") == SCAN_VERSION
                 and receipt.get("sourceAssetSha256") == aid
                 and receipt.get("verifiedOriginalSha256") == aid
