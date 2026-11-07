@@ -13,6 +13,7 @@ import pytest
 
 from adventure_intelligence.campaign_discovery_audit import (
     inspect_discovery, choose_balanced_review, discovery_selection_report,
+    _workspace_report,
 )
 from adventure_intelligence.full_archive_campaign import AUDIT_VERSION, SCAN_VERSION
 
@@ -208,3 +209,20 @@ def test_no_originals_are_ever_accessed(tmp_path, monkeypatch):
     summary, proposals = _inspect(ws, root)
     choose_balanced_review(proposals, limit=4)
     assert summary["sourceMediaRead"] is False
+
+
+def test_report_path_dotdot_cannot_escape_workspace(tmp_path):
+    root = tmp_path/"ws"
+    (root/"reports").mkdir(parents=True)
+    with pytest.raises(ValueError, match="inside the specified workspace"):
+        _workspace_report(root, root/"reports"/".."/".."/"other"/"report.json")
+
+
+def test_report_symlinked_parent_is_refused(tmp_path):
+    root = tmp_path/"ws"
+    (root/"reports").mkdir(parents=True)
+    external = tmp_path/"outside"
+    external.mkdir()
+    (root/"reports"/"link").symlink_to(external, target_is_directory=True)
+    with pytest.raises(ValueError, match="Symlinked report"):
+        _workspace_report(root, root/"reports"/"link"/"scan-state.json")
