@@ -307,3 +307,49 @@ source remains permanently failed, obtain an explicit separate exception
 or create a partial research packet in a separately qualified workflow,
 never assert full-archive success.
 
+
+## Read-only live source-scan ETA (Nov 7, 2026)
+
+The full-archive source runner now prints an `[klip-eta]` line on a
+resume before scanning new assets, and after **each pass**, including the
+first pass after enough timings exist. It estimates remaining original
+SHA verification and low-resolution video decoding using measured
+per-source rates from already completed, receipt-verified runs, plus
+catalogued sizes/durations for sources not yet attempted. If fewer
+than 3 timed sources exist, it displays `ETA unavailable`, not an
+invented completion time.
+
+A separate terminal can poll without opening or statting SSD originals:
+
+```bash
+python scripts/klip_campaign_eta.py --campaign-dir "$CAMPAIGN_DIR"
+python scripts/klip_campaign_eta.py --campaign-dir "$CAMPAIGN_DIR" --json
+```
+
+Example **format only**, not measured real throughput:
+
+```text
+[klip-eta] completed 3/5 (60.0%) | attempted 3/5 (60.0%) | pending 2 | failed 0, blocked 0, bad receipts 0 | remaining ~0h 01m (heuristic 0h 01m to 0h 01m) | projected local finish 2026-11-07T12:01+00:00
+```
+
+The center ETA uses median measured SHA bytes-per-wall-second and
+decoder video-seconds-per-wall-second. A heuristic fast/slow range uses
+25th/75th percentiles of measured per-video speeds, **not** a calibrated
+confidence interval. It will shift with thermal throttling, source
+bitrate/resolution, or SSD throughput and does **not** account for an
+ongoing uncheckpointed source or future repair of failed recordings.
+
+This is **time to exhaust the remaining automatic scan attempts**, not
+time to achieve 100% verified source coverage. Failed/blocked source
+counts and invalid receipts remain visible, separately. The tool
+never performs source video I/O, model inference, new hashing or catalog
+mutations. An ETA-formatting failure prints a warning but will not
+interrupt the scanner.
+
+While your Mac has a scan process active, do not `git pull` or change
+the live checkout: the already running shell cannot inherit these new
+logging lines safely. Apply the update after the active scan process
+exits. Wi-Fi switching does not affect the local scanner as long as
+the SSD remains mounted, the laptop stays awake, and all analysis tools
+are local. `caffeinate -i` only suppresses idle sleep, not lid-close
+sleep, and a matching drive UUID does not establish hardware health.
