@@ -144,6 +144,12 @@ echo "Starting source scan. Sources must be on HEALTHY LOCAL storage."
 # Per-source scan checkpoints are resume-safe, but pass logs once restarted at
 # 001 and overwrote the first run's diagnostic evidence.
 PASS_START="$(python scripts/klip_scan_pass_index.py --campaign-dir "$CAMPAIGN_DIR")"
+# On a resumed campaign, show a measured estimate before the next source reads.
+# A malformed ETA never blocks the SHA-backed scan itself.
+if [[ -f "$CAMPAIGN_DIR/coarse-scan/scan-state.json" ]]; then
+  python scripts/klip_campaign_eta.py --campaign-dir "$CAMPAIGN_DIR" || \
+    echo "[klip-eta] Estimate unavailable; source scan will continue." >&2
+fi
 for ((i=1; i<=PASSES; i++)); do
   check_ssd_identity
   pass_number=$((PASS_START + i - 1))
@@ -163,6 +169,10 @@ print(d["notYetAttemptedEligible"])
 PY
 )"
   echo "Pass $pass_number: $pending trusted-local sources remaining"
+  # Read-only ETA, based on all accumulated SHA/decoder timings and the
+  # sizes/durations of the source recordings still unattempted.
+  python scripts/klip_campaign_eta.py --campaign-dir "$CAMPAIGN_DIR" || \
+    echo "[klip-eta] Estimate unavailable; source scan will continue." >&2
   if [[ "$pending" -eq 0 ]]; then break; fi
 done
 echo "Source scan reports: $CAMPAIGN_DIR/coarse-scan/per-source/"
