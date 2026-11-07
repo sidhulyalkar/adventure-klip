@@ -252,3 +252,58 @@ python -m pytest -q tests/test_source_root_preflight.py \
   tests/test_ssd_mount_guard.py tests/test_full_archive_campaign.py
 bash -n scripts/klip_full_archive_highlights.sh
 ```
+
+## Accidental interruption and early review packet recovery
+
+If a scan terminal is killed, **do not create a new campaign or reindex**.
+Restart `PHASE=scan` with the same immutable `CAMPAIGN_DIR`,
+`HEALTHY_SOURCE_ROOT`, `SSD_IDENTITY_FILE`, and `SCAN_FPS`.
+The scanner preserves its SHA-backed completed per-source receipts, and
+the launcher now continues scan-pass diagnostic file numbering across
+separate shell invocations.
+
+If a `PHASE=packet PREPARE_MISSING_PREVIEWS=YES` command was invoked
+before the source campaign finished, its exit may be visible only in
+`$CAMPAIGN_DIR/packet-errors.log`. Check locally without opening raw
+videos:
+
+```bash
+tail -n 30 "$CAMPAIGN_DIR/packet-errors.log"
+test -f "$CAMPAIGN_DIR/review-packet/selection-report.json" && \
+  echo "A frozen packet exists (possibly partial/stale)"
+```
+
+**Do not delete an early packet**: it may be an immutable receipt of a
+valid smaller set of videos. It is *not* a final-archive review packet
+when the source-scan fingerprint later changes.
+
+The standard `PHASE=packet` launcher now performs a **metadata-only
+full-coverage readiness gate**. It refuses to build a default packet
+unless all sources in the frozen campaign have passed SHA-backed scans,
+with no failures, blocks or report-integrity discrepancies:
+
+```bash
+python scripts/klip_packet_readiness.py --workspace "$WS" \
+  --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+  --scan-dir "$CAMPAIGN_DIR/coarse-scan"
+```
+
+When the full scan is complete, and an early packet directory already
+exists, supply a new, immutable destination without mutating the old:
+
+```bash
+PHASE=packet CAMPAIGN_DIR="$CAMPAIGN_DIR" \
+  PACKET_DIR="$CAMPAIGN_DIR/review-packet-final-v2" \
+  HEALTHY_SOURCE_ROOT="$HEALTHY_SOURCE_ROOT" \
+  SSD_IDENTITY_FILE="$SSD_IDENTITY_FILE" \
+  ALLOW_MOUNTED_SSD=YES ENABLE_ORIGINAL_READS=YES \
+  PREPARE_MISSING_PREVIEWS=YES PACKET_LIMIT=120 \
+  caffeinate -i bash scripts/klip_full_archive_highlights.sh
+```
+
+This may SHA and decode selected camera intervals to create missing
+previews. It must **not** run concurrently with a source scan. If a
+source remains permanently failed, obtain an explicit separate exception
+or create a partial research packet in a separately qualified workflow,
+never assert full-archive success.
+
