@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from .catalog import connect
-from .ingest import iter_videos, quick_signature
+from .ingest import VIDEO_EXT, iter_videos, quick_signature
 from .media import probe
 from .sources import verified_digest
 from .workspace import init
@@ -12,10 +12,18 @@ from .workspace import init
 def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
                  dry_run: bool = False, allow_removable: bool = False,
                  progress=None) -> dict:
-    source = source.expanduser().resolve()
+    # A caller may select a single SSD video for zero-copy registration.
+    # Reject symlinks before resolving, as folder traversal already does.
+    supplied=source.expanduser()
+    if supplied.is_symlink():
+        raise ValueError(f'Symlinked source file/folder not allowed: {supplied}')
+    source = supplied.resolve()
     workspace = workspace.expanduser().resolve()
-    if not source.is_dir():
-        raise ValueError(f'Source folder missing: {source}')
+    file_mode=source.is_file()
+    if file_mode and source.suffix.lower() not in VIDEO_EXT:
+        raise ValueError(f'Unsupported video extension: {source}')
+    if not file_mode and not source.is_dir():
+        raise ValueError(f'Source file/folder missing: {source}')
     if workspace == source or workspace.is_relative_to(source) or source.is_relative_to(workspace):
         raise ValueError('Index workspace cannot overlap source')
     if activity not in {'unknown','ski','bike','snorkeling'}:
@@ -24,7 +32,7 @@ def index_folder(source: Path, workspace: Path, *, activity: str = 'unknown',
     if not allow_removable and str(source).startswith('/Volumes/'):
         raise ValueError('Read-only indexing of /Volumes is unsafe by default: use "klip ingest" '
                          'for verified copying, or explicitly --allow-removable')
-    files = list(iter_videos(source))
+    files = [source] if file_mode else list(iter_videos(source))
     if dry_run:
         return {'mode':'index-dry-run','discovered':len(files), 'paths':[str(p) for p in files]}
     init(workspace)
