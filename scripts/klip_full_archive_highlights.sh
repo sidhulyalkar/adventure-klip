@@ -138,12 +138,17 @@ if [[ -n "$SOURCE_ROOT" ]]; then cmd+=(--trusted-local-root "$SOURCE_ROOT"); fi
 if [[ "$RETRY_FAILED_SOURCES" = YES ]]; then cmd+=(--retry-failed); fi
 if [[ "$MOUNTED_ACK" = YES ]]; then cmd+=(--allow-mounted-ssd); fi
 echo "Starting source scan. Sources must be on HEALTHY LOCAL storage."
+# Preserve prior scan-pass stdout/stderr logs when resuming the same campaign.
+# Per-source scan checkpoints are resume-safe, but pass logs once restarted at
+# 001 and overwrote the first run's diagnostic evidence.
+PASS_START="$(python scripts/klip_scan_pass_index.py --campaign-dir "$CAMPAIGN_DIR")"
 for ((i=1; i<=PASSES; i++)); do
   check_ssd_identity
+  pass_number=$((PASS_START + i - 1))
   args=("${cmd[@]}")
   if [[ -f "$CAMPAIGN_DIR/coarse-scan/scan-state.json" ]]; then args+=(--resume); fi
-  result="$CAMPAIGN_DIR/scan-pass-$(printf '%03d' "$i").json"
-  logfile="$CAMPAIGN_DIR/scan-pass-$(printf '%03d' "$i").stderr.log"
+  result="$CAMPAIGN_DIR/scan-pass-$(printf '%03d' "$pass_number").json"
+  logfile="$CAMPAIGN_DIR/scan-pass-$(printf '%03d' "$pass_number").stderr.log"
   if ! klip "${args[@]}" >"$result" 2>"$logfile"; then
     tail -n 25 "$logfile" >&2 || true
     echo "See failed scan log: $logfile" >&2
@@ -155,7 +160,7 @@ d=json.load(open(sys.argv[1]))
 print(d["notYetAttemptedEligible"])
 PY
 )"
-  echo "Pass $i: $pending trusted-local sources remaining"
+  echo "Pass $pass_number: $pending trusted-local sources remaining"
   if [[ "$pending" -eq 0 ]]; then break; fi
 done
 echo "Source scan reports: $CAMPAIGN_DIR/coarse-scan/per-source/"
