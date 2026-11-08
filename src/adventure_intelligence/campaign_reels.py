@@ -302,8 +302,9 @@ def _review_gallery_html(reels: dict, packet: Path, dest: Path, mode: str) -> st
         plan = reels[sport]
         clips = []
         for i, item in enumerate(plan["selected"], 1):
-            relative = os.path.relpath(item["mediaPath"], start=dest)
-            url = quote(relative, safe="/.-_")
+            # Stage checksum-verified local hardlinks under the gallery
+            # to avoid file:// cross-directory browser restrictions.
+            url = "media/" + quote(item["recordId"], safe="") + ".mp4"
             explanation = "".join(
                 f"<p><strong>{escape(x['basis'].replace('_',' ').title())}:</strong> "
                 f"{escape(x['text'])}</p>" for x in item["why"]
@@ -437,8 +438,26 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
     }
     # Avoid leaving a silently completed packet if a validation failed.
     dest.mkdir(parents=True, mode=0o700, exist_ok=False)
+    media_dir = dest / "media"
+    media_dir.mkdir(mode=0o700)
+    unique_selected = {
+        r["recordId"]: r for plan in plans.values() for r in plan["selected"]
+    }
+    for rid, item in unique_selected.items():
+        source = Path(item["mediaPath"])
+        target = media_dir / (rid + ".mp4")
+        if source.is_symlink() or _file_sha(source) != item["proxySha256"]:
+            raise ValueError("Local preview changed before staging the reel gallery")
+        # Hardlink validated packet clips: no raw SSD video access or extra
+        # video storage. Both paths are inside the same private workspace.
+        os.link(source, target, follow_symlinks=False)
+        if _file_sha(target) != item["proxySha256"]:
+            target.unlink(missing_ok=True)
+            raise ValueError("Local gallery preview does not match its receipt")
     (dest / "reel-plan.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
-    (dest / "reel-review.html").write_text(\n        _review_gallery_html(plans, packet, dest, mode), encoding="utf-8")\n    if render:
+    (dest / "reel-review.html").write_text(
+        _review_gallery_html(plans, packet, dest, mode), encoding="utf-8")
+    if render:
         for sport, recipe in plans.items():
             if not recipe["selected"]:
                 continue
@@ -450,7 +469,8 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
                        indent=2, sort_keys=True) + "\n")
     return {
         "status": doc["status"], "directory": str(dest),
-        "reviewGallery": str(dest / "reel-review.html"),\n        "mode": mode, "packetValidation": checks,
+        "reviewGallery": str(dest / "reel-review.html"),
+        "mode": mode, "packetValidation": checks,
         "selected": {s: plans[s]["selectionCount"] for s in SPORTS},
         "rendered": {s: plans[s].get("render", {}).get("path") for s in SPORTS},
         "sourceOriginalReads": 0, "published": False,
