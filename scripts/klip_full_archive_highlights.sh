@@ -218,11 +218,27 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
   fi
   check_ssd_identity
   if [[ -e "$PACKET_DIR" ]]; then
-    echo "Existing review packet preserved: $PACKET_DIR" >&2
-    echo "Use PACKET_DIR='$CAMPAIGN_DIR/review-packet-final-v2' after the scan has finished, without deleting the old packet." >&2
+    echo "Existing packet directory preserved: $PACKET_DIR" >&2
+    if [[ ! -s "$PACKET_DIR/selection-report.json" ]]; then
+      echo "BLOCKED: Existing packet directory is incomplete. Do not overwrite it." >&2
+      echo "Inspect any prior packet-attempt-*.stderr.log, then use a NEW PACKET_DIR." >&2
+      exit 3
+    fi
   else
-    klip "${packetargs[@]}" >"$CAMPAIGN_DIR/packet-result.json" \
-      2>"$CAMPAIGN_DIR/packet-errors.log"
+    # Preserve every attempt's stdout and stderr, including errors that occur
+    # before the immutable packet directory is created.
+    attempt="$CAMPAIGN_DIR/packet-attempt-$(date +%Y%m%d-%H%M%S)-$"
+    if ! klip "${packetargs[@]}" >"$attempt.json" 2>"$attempt.stderr.log"; then
+      echo "BLOCKED: Packet generation failed. Original scan receipts are unchanged." >&2
+      echo "Full packet error log: $attempt.stderr.log" >&2
+      tail -n 60 "$attempt.stderr.log" >&2 || true
+      exit 1
+    fi
+    cp "$attempt.json" "$CAMPAIGN_DIR/packet-result.json"
+  fi
+  if [[ ! -s "$PACKET_DIR/selection-report.json" ]]; then
+    echo "BLOCKED: No completed frozen selection report at $PACKET_DIR" >&2
+    exit 3
   fi
   if [[ -f "$PACKET_DIR/selection-report.json" ]]; then
     klip --workspace "$WS" highlight-campaign-status \
