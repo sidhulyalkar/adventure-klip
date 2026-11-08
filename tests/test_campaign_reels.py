@@ -206,9 +206,10 @@ def test_symlinked_video_from_packet_does_not_resolve_to_original(tmp_path):
     video=packet/"media"/(rid+".mp4")
     video.unlink()
     video.symlink_to("/Volumes/DO_NOT_READ/recording.mp4")
-    rows,counts=cr._packet_candidates(ws,packet,status,None)
-    assert len(rows)==2
-    assert counts["invalidProxyReceipts"]==1
+    # A symlink inside a frozen packet is a security violation rather
+    # than a missing but otherwise acceptable preview. Abort completely.
+    with pytest.raises(ValueError, match="Symlinked report or output path refused"):
+        cr._packet_candidates(ws,packet,status,None)
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
