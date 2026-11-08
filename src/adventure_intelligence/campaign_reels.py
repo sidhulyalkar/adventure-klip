@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from hashlib import sha256
+from html import escape
 from pathlib import Path
 import json
 import math
@@ -18,6 +19,7 @@ import os
 import re
 import subprocess
 import tempfile
+from urllib.parse import quote
 
 from .full_archive_campaign_status import campaign_progress
 from .highlight_curation_pilot import (
@@ -293,6 +295,78 @@ def _choose(rows: list[dict], sport: str, mode: str,
     ))
 
 
+def _review_gallery_html(reels: dict, packet: Path, dest: Path, mode: str) -> str:
+    """Generate a browser-only local gallery; no JS, CDN, upload or remote media."""
+    cards = []
+    for sport in SPORTS:
+        plan = reels[sport]
+        clips = []
+        for i, item in enumerate(plan["selected"], 1):
+            relative = os.path.relpath(item["mediaPath"], start=dest)
+            url = quote(relative, safe="/.-_")
+            explanation = "".join(
+                f"<p><strong>{escape(x['basis'].replace('_',' ').title())}:</strong> "
+                f"{escape(x['text'])}</p>" for x in item["why"]
+            )
+            notes = item.get("humanRatings")
+            ratings = (
+                "<p class='meta'>Human ratings: " +
+                escape(str(notes)) + "</p>"
+                if notes is not None else
+                "<p class='meta'>Not human-rated; this is an exploration candidate.</p>"
+            )
+            clips.append(
+                "<article class='clip'>"
+                f"<video controls playsinline preload='metadata' src='{escape(url, quote=True)}'></video>"
+                f"<h3>{i}. Source {escape(item['sourceAssetSha256'][:12])}</h3>"
+                f"<p class='meta'>Source {item['sourceStartMs']/1000:.2f}–"
+                f"{item['sourceEndMs']/1000:.2f}s · "
+                f"{escape(item['selectionRole'].replace('_',' '))}</p>"
+                f"{ratings}<details><summary>Evidence and selection reasoning</summary>"
+                f"{explanation}</details></article>"
+            )
+        if not clips:
+            clips.append("<p class='empty'>No eligible clips with this review policy.</p>")
+        cards.append(
+            f"<section id='{sport}'><header><h2>{escape(sport.title())}</h2>"
+            f"<span>{len(plan['selected'])} selected · "
+            f"{escape(plan['transitionPolicy'].replace('_',' '))}</span></header>"
+            f"<div class='grid'>{''.join(clips)}</div></section>"
+        )
+    return ("""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: file:; media-src 'self' file:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; object-src 'none'">
+<title>Adventure-Klip · Sport Reel Research Review</title>
+<style>
+:root{color-scheme:dark;font:15px/1.55 system-ui,sans-serif;background:#0a121a;color:#e9f1f6}
+*{box-sizing:border-box}body{margin:0}main{max-width:1280px;margin:auto;padding:26px}
+h1{font-size:clamp(24px,4vw,42px);margin:0 0 8px;letter-spacing:-.03em}
+h2{font-size:24px;margin:0}h3{font-size:14px;margin:9px 0 3px}
+.hero{padding:34px 0 22px;border-bottom:1px solid #294252;margin-bottom:30px}
+.subtitle,.meta,.small{color:#a5b5c1}.meta{font-size:12px;margin:5px 0}
+nav{display:flex;gap:16px;flex-wrap:wrap;margin-top:18px}
+a{color:#89ccce}section{margin:0 0 42px}
+section header{display:flex;justify-content:space-between;align-items:baseline;gap:20px;margin:0 0 16px}
+section header span{font-size:12px;color:#b2c4cc}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px}
+.clip{padding:12px;background:#162330;border:1px solid #2c4051;border-radius:12px}
+video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#070a10;border-radius:7px}
+details{margin:12px 0 0;border-top:1px solid #2c4051;padding-top:9px}
+details p{font-size:13px;color:#c6d2d9}summary{cursor:pointer;color:#86d0ca;font-size:13px}
+.empty{color:#99acbb}.alert{background:#222e38;border-left:3px solid #ce9a80;padding:12px 14px}
+</style></head><body><main><div class="hero">
+<h1>Adventure-Klip · Reel Laboratory</h1>
+<p class="subtitle">Local, evidence-grounded preview selection. Nothing here has been published.</p>
+<p class="alert">These are silent, reduced-resolution, approximate-seek preview derivatives.
+Motion hypotheses are not proven sporting actions. Human Keep decisions are goal-specific
+editorial feedback, not permission to publish or factual event verification.</p>
+<nav><a href="#ski">Skiing</a><a href="#bike">Mountain biking</a>
+<a href="#snorkeling">Snorkeling</a></nav>
+<p class="small">Mode: """ + escape(mode) + """ · Only checksum-verified local proxy clips are shown.</p>
+</div>""" + "".join(cards) + "</main></body></html>\n")
+
+
 def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
                      packet_dir: Path, output_dir: Path, *,
                      mode: str = "exploratory", reviews_file: Path | None = None,
@@ -364,7 +438,7 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
     # Avoid leaving a silently completed packet if a validation failed.
     dest.mkdir(parents=True, mode=0o700, exist_ok=False)
     (dest / "reel-plan.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
-    if render:
+    (dest / "reel-review.html").write_text(\n        _review_gallery_html(plans, packet, dest, mode), encoding="utf-8")\n    if render:
         for sport, recipe in plans.items():
             if not recipe["selected"]:
                 continue
@@ -376,7 +450,7 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
                        indent=2, sort_keys=True) + "\n")
     return {
         "status": doc["status"], "directory": str(dest),
-        "mode": mode, "packetValidation": checks,
+        "reviewGallery": str(dest / "reel-review.html"),\n        "mode": mode, "packetValidation": checks,
         "selected": {s: plans[s]["selectionCount"] for s in SPORTS},
         "rendered": {s: plans[s].get("render", {}).get("path") for s in SPORTS},
         "sourceOriginalReads": 0, "published": False,
