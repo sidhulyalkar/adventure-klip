@@ -198,6 +198,12 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
     echo "PACKET_LIMIT must be 1..500" >&2
     exit 2
   fi
+  echo "Preflighting every SHA-backed packet candidate (metadata only; no SSD reads)."
+  python scripts/klip_packet_candidate_preflight.py \
+    --workspace "$WS" \
+    --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+    --scan-dir "$CAMPAIGN_DIR/coarse-scan" \
+    --limit "$PACKET_LIMIT" --per-source 4
   packetargs=(--workspace "$WS" highlight-campaign-review-packet
               --audit "$CAMPAIGN_DIR/audit/campaign-audit.json"
               --scan-dir "$CAMPAIGN_DIR/coarse-scan"
