@@ -227,7 +227,7 @@ if [[ "$PHASE" = packet || "$PHASE" = all ]]; then
   else
     # Preserve every attempt's stdout and stderr, including errors that occur
     # before the immutable packet directory is created.
-    attempt="$CAMPAIGN_DIR/packet-attempt-$(date +%Y%m%d-%H%M%S)-$"
+    attempt="$CAMPAIGN_DIR/packet-attempt-$(date +%Y%m%d-%H%M%S)-${PPID}"
     if ! klip "${packetargs[@]}" >"$attempt.json" 2>"$attempt.stderr.log"; then
       echo "BLOCKED: Packet generation failed. Original scan receipts are unchanged." >&2
       echo "Full packet error log: $attempt.stderr.log" >&2
