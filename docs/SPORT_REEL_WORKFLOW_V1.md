@@ -91,6 +91,48 @@ was inspected from GitHub or that the unseen source intervals truly
 match the expected shape. The user should run the report-only diagnostic
 and review `windowValidation` after creating the packet.
 
+## Mandatory packet preflight before another SSD read
+
+The launcher now calls a **metadata-only candidate preflight** before
+any packet-stage SHA rehash, source decode or preview generation:
+
+```bash
+python scripts/klip_packet_candidate_preflight.py \
+  --workspace "$WS" \
+  --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+  --scan-dir "$CAMPAIGN_DIR/coarse-scan" \
+  --limit 120 --per-source 4
+```
+
+A successful result reports `metadata_preflight_passed_no_video_opened`,
+selected windows, distinct sources, catalog sport distribution, sampling
+roles and any exactly recognized legacy subsecond exclusions. The
+preflight reuses source-receipt SHA verification but does **not** open the
+original SSD MP4s. Other invalid window shapes print source ID, proposal
+index, duration and bounds and fail *before* costly preview work.
+
+If the previous command failed, never parse a redirected JSON file without
+checking its producer exit code. Also always set `PACKET_DIR` to the
+**new actual destination**, not the old default:
+```bash
+export PACKET_DIR="$CAMPAIGN_DIR/review-packet-recovered-$(date +%Y%m%d-%H%M%S)"
+echo "Frozen packet destination: $PACKET_DIR"
+
+# After PHASE=packet exits successfully:
+if klip --workspace "$WS" highlight-campaign-status \
+  --audit "$CAMPAIGN_DIR/audit/campaign-audit.json" \
+  --scan-dir "$CAMPAIGN_DIR/coarse-scan" \
+  --packet-dir "$PACKET_DIR" > "$CAMPAIGN_DIR/recovered-packet-status.json"; then
+  python -m json.tool "$CAMPAIGN_DIR/recovered-packet-status.json"
+else
+  echo "Packet has NOT qualified; inspect packet-attempt stderr" >&2
+fi
+```
+
+These commands are for a packet-only retry. Do not repeat a fully
+successful 232-source scan, mutate scan-state receipts, overwrite a
+partially created packet, or infer sporting achievements from motion.
+
 ## 1. Validate actual source successes (workspace reports only)
 
 ```bash
