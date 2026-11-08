@@ -21,6 +21,43 @@ enumeration contained 234 MP4s, with two as-yet-unregistered paths.
 These two are outside the frozen 232-source audit and must be reconciled
 under a separate new campaign, *after* the current audit is closed.
 
+## Incident recovery: completed scan, packet command exits without result
+
+If validation shows 232 verified source receipts and zero failures but the
+`PHASE=packet` process returns to a shell prompt without printing
+`Open blind review:`, **do not repeat the source scan**. The prior
+launcher redirected its actual exception into
+`$CAMPAIGN_DIR/packet-errors.log`, so a later
+`highlight-campaign-status --packet-dir ...` simply fails because the
+packet's `selection-report.json` never materialized. Its redirected
+`packet-validated-status.json` will then be an empty file, and parsing
+that produces a second, misleading `JSONDecodeError`.
+
+For the already executed attempt, inspect the packet error log **first**:
+
+```bash
+echo "PACKET_DIR=$PACKET_DIR"
+if [[ -f "$CAMPAIGN_DIR/packet-errors.log" ]]; then
+  tail -n 100 "$CAMPAIGN_DIR/packet-errors.log"
+fi
+find "$CAMPAIGN_DIR" -maxdepth 2 -type f \
+  \\( -name 'selection-report.json' -o -name 'presentation.json' \\) -print
+```
+
+The updated launcher records each future packet attempt in
+`packet-attempt-<timestamp>-<pid>.json` and
+`packet-attempt-<timestamp>-<pid>.stderr.log`, shows the last 60
+error lines immediately on failure, and refuses to claim success if the
+frozen selection receipt is missing. It preserves a preexisting
+incomplete packet folder; use a new unique `PACKET_DIR`, never delete
+or overwrite historical receipts to bypass a failure.
+
+A missing preview, a source SHA error, an `ffmpeg` timeout, a
+workspace-safety block, or an exception during packet assembly may each
+require a different recovery. The user's actual `packet-errors.log`
+is needed to choose a safe retry. The 232-source scan checkpoint is
+not invalidated by a packet-stage failure.
+
 ## 1. Validate actual source successes (workspace reports only)
 
 ```bash
