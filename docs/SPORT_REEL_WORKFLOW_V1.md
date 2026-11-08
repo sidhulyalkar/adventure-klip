@@ -58,6 +58,39 @@ require a different recovery. The user's actual `packet-errors.log`
 is needed to choose a safe retry. The 232-source scan checkpoint is
 not invalidated by a packet-stage failure.
 
+## Fix: legacy subsecond candidate windows
+
+The 232 SHA-verified scan can succeed even if some subsecond source
+recordings were assigned an impossible 1000ms review window. The coarse
+scanner previously used `max(duration_ms, 1000)`; its packet reader
+correctly refused windows beyond catalog source duration and reported
+`Unbounded or unsupported coarse source interval`. This is a
+**candidate generation/packet validation contract bug**, not a source
+SHA failure.
+
+For future scans, `_proposals` now returns no candidate window for a
+recording shorter than 1000ms. For completed frozen scans, the packet
+reader recognizes **only** legacy `(startMs=0, endMs=1000)` proposals
+from catalogued subsecond recordings. It excludes those impossible
+intervals *without changing source receipts*, and records source IDs and
+count in `selection-report.json → windowValidation`. All other
+out-of-bounds intervals still fail closed, but now include the source ID,
+window, catalog duration and index in the exception.
+
+Before retrying the packet, check the immutable scan reports with the
+read-only diagnostic snippet in the related chat. If all offending
+windows match this narrow category, the updated code can safely
+regenerate the packet without rescanning or reindexing the videos.
+If some offender differs, stop and inspect the printed source/time
+rather than using broad clamping or disabling validation. An
+unspecified source may be too short for a 1s clip while still being
+properly SHA-scanned.
+
+**Important:** This change does not assert that any real user video
+was inspected from GitHub or that the unseen source intervals truly
+match the expected shape. The user should run the report-only diagnostic
+and review `windowValidation` after creating the packet.
+
 ## 1. Validate actual source successes (workspace reports only)
 
 ```bash
