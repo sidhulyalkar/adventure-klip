@@ -330,7 +330,11 @@ def _hash_verified(path:Path,expected:str):
 def _proposals(series:list[dict],duration_ms:int):
     # Motion measures POV change, not sporting achievement. Always include
     # uniform controls to retain low-motion wildlife / personal moments.
-    duration_ms=max(duration_ms,1000)
+    # Never manufacture an interval outside the actual source duration.
+    # Video shorter than 1s cannot support this protocol's minimum
+    # 1000ms review window; preserve it as scanned with zero proposals.
+    if type(duration_ms) is not int or duration_ms<1000:
+        return []
     windows=[]
     seen=set()
     def add(center,role,indicator=None):
