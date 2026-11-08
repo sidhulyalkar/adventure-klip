@@ -41,12 +41,12 @@ if [[ -f "$CAMPAIGN_DIR/packet-errors.log" ]]; then
   tail -n 100 "$CAMPAIGN_DIR/packet-errors.log"
 fi
 find "$CAMPAIGN_DIR" -maxdepth 2 -type f \
-  \\( -name 'selection-report.json' -o -name 'presentation.json' \\) -print
+  \( -name 'selection-report.json' -o -name 'presentation.json' \) -print
 ```
 
 The updated launcher records each future packet attempt in
-`packet-attempt-<timestamp>-<pid>.json` and
-`packet-attempt-<timestamp>-<pid>.stderr.log`, shows the last 60
+`packet-attempt-<timestamp>-<parent-pid>.json` and
+`packet-attempt-<timestamp>-<parent-pid>.stderr.log`, shows the last 60
 error lines immediately on failure, and refuses to claim success if the
 frozen selection receipt is missing. It preserves a preexisting
 incomplete packet folder; use a new unique `PACKET_DIR`, never delete
