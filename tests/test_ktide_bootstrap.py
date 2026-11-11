@@ -178,6 +178,17 @@ def test_cli_rejects_run_without_source_read_ack(tmp_path):
     ], capture_output=True, text=True, timeout=20)
     assert readonly.returncode == 0, readonly.stderr
     assert json.loads(readonly.stdout)["catalogSources"] == 3
+    template = subprocess.run([
+        sys.executable, str(script), "--workspace", str(root), "--template",
+    ], capture_output=True, text=True, timeout=20)
+    assert template.returncode == 0, template.stderr
+    draft = json.loads(template.stdout)
+    assert draft["version"] == ASSIGNMENTS_VERSION
+    assert len(draft["sources"]) == 3
+    assert all(not r["groupId"] and not r["goal"] and not r["subsport"]
+               for r in draft["sources"])
+    with pytest.raises(ValueError, match="three independently|stable trip/session"):
+        preflight_bootstrap(root, draft)
 
 
 def test_dcim_workspace_and_wrong_catalog_refused(tmp_path):
