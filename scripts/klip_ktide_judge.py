@@ -80,6 +80,7 @@ def main() -> int:
                 "successes":report["successes"],
                 "failures":report["sourceCount"]-report["successes"],
                 "provisionalCaptureGroups":plan["provisionalCaptureGroups"],
+                "modelHypothesisSummary":report["hypothesisSummary"],
                 "groupingStatus":report["groupingStatus"],
                 "scientificHeldoutEligible":False,
                 "originalSourceVideoModified":False,
@@ -90,6 +91,9 @@ def main() -> int:
     except (OSError,ValueError,UnicodeError) as exc:
         parser.error(str(exc))
     print(json.dumps(result,indent=2,sort_keys=True))
+    # A local model outage must not look like a successfully judged archive.
+    if args.run and result.get("successes",0)==0:
+        return 2
     return 0
 
 
