@@ -71,7 +71,7 @@ def test_incompatible_teacher_revision_fails_without_new_files(tmp_path, monkeyp
 
     def cached(db, workspace, aid, provider):
         return [{"tMs": i * 1000, "embedding": [float(i + 1)] * 16}
-                for i in range(10)], aid[:20]
+                for i in range(10)], aid[-20:]
 
     monkeypatch.setattr(atlas, "frames_for_asset", cached)
     with pytest.raises(ValueError, match="Incompatible frozen"):
