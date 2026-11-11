@@ -123,7 +123,7 @@ def test_reviewed_sport_selection_excludes_other_destinations():
     for i, note in enumerate((
         "This fall is worth keeping to analyze my technique",
         "Amazing ski jump with complete approach and landing",
-        "Family day memory, not for a highlight reel",
+        "This first trip with my family is a personal memory",
     )):
         rows.append({
             **base, "recordId": str(i), "sourceAssetSha256": str(i) * 64,
