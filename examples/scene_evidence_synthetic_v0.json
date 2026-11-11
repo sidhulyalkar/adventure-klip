@@ -1,0 +1,71 @@
+{
+  "version": "klip-scene-evidence-input-v0",
+  "episodes": [
+    {
+      "episodeId": "synthetic-marine-encounter-A",
+      "goal": "nature_encounter",
+      "evidence": {
+        "event_importance": {
+          "value": 0.95,
+          "strength": 0.7,
+          "source": "human_report",
+          "evidenceIds": [
+            "synthetic-review-a"
+          ]
+        },
+        "subject_readability": {
+          "value": 0.85,
+          "strength": 0.75,
+          "source": "adjudicated_observation",
+          "evidenceIds": [
+            "synthetic-frame-001"
+          ]
+        },
+        "arc_completion": {
+          "value": 0.6,
+          "strength": 0.65,
+          "source": "adjudicated_observation",
+          "evidenceIds": [
+            "synthetic-phase-review"
+          ]
+        },
+        "within_archive_distinctiveness": {
+          "value": null,
+          "strength": 0,
+          "source": "model_hypothesis",
+          "evidenceIds": []
+        }
+      }
+    },
+    {
+      "episodeId": "synthetic-ski-coaching-B",
+      "goal": "technique_analysis",
+      "evidence": {
+        "learning_potential": {
+          "value": 0.9,
+          "strength": 0.7,
+          "source": "human_report",
+          "evidenceIds": [
+            "synthetic-review-b"
+          ]
+        },
+        "arc_completion": {
+          "value": 0.8,
+          "strength": 0.8,
+          "source": "adjudicated_observation",
+          "evidenceIds": [
+            "synthetic-phase-review-b"
+          ]
+        },
+        "technical_clarity": {
+          "value": 0.35,
+          "strength": 0.8,
+          "source": "adjudicated_observation",
+          "evidenceIds": [
+            "synthetic-frame-b"
+          ]
+        }
+      }
+    }
+  ]
+}
