@@ -111,7 +111,7 @@ def test_bounded_plan_refuses_missing_and_mutated_sources(tmp_path):
     with pytest.raises(ValueError, match="Source roster exceeds"):
         preflight_bootstrap(root,doc,max_sources=2)
     with pytest.raises(ValueError,match="source-byte budget"):
-        preflight_bootstrap(root,doc,max_total_gb=.0001)
+        preflight_bootstrap(root,doc,max_total_gb=.000001)
     original=(original_dir / "synthetic-camera-0.mp4")
     original.write_bytes(original.read_bytes() + b"mutated")
     with pytest.raises(ValueError, match="Source size differs"):
