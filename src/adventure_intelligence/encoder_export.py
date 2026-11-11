@@ -64,8 +64,11 @@ def _safe_destination(workspace: Path, dirname: str) -> Path:
         raise ValueError("Invalid output dataset name")
     root = workspace.resolve(strict=True)
     report = root / "reports"
-    if not report.is_dir() or report.is_symlink():
-        raise ValueError("Workspace reports/ must exist and not be symlinked")
+    if report.is_symlink():
+        raise ValueError("Symlinked workspace reports/ refused")
+    report.mkdir(mode=0o700, exist_ok=True)
+    if not report.is_dir():
+        raise ValueError("Workspace reports/ must be a directory")
     target = report / dirname
     if target.exists() or target.is_symlink():
         raise ValueError("Refusing to replace an existing dataset folder")
