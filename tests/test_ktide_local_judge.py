@@ -169,6 +169,9 @@ def test_local_judge_run_has_safe_model_hypotheses_only(tmp_path):
                            source_loader=source,frame_loader=frames)
     assert len(called)==5
     assert result["successes"]==5
+    assert result["hypothesisSummary"]["suggestedFeatureDimensions"] == {"water_visibility":5}
+    assert result["hypothesisSummary"]["sceneContexts"] == {"underwater_reef":5}
+    assert result["hypothesisSummary"]["allStatisticsAreModelProposals"]
     assert result["scientificHeldoutEligible"] is False
     assert result["sourceVideoModified"] is False
     assert all(x["judgeStatus"]=="model_hypothesis" for x in result["proposals"])
