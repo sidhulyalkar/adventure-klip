@@ -131,8 +131,13 @@ def evaluate_retrieval(deck: dict, manifest: dict, manifest_sha: str,
     vectors = validate_embeddings(projection, manifest, training)
     samples = {r["sampleId"]:r for r in manifest["samples"]}
     outcomes = []
+    eligible_query_ids = set()
     for query in deck["queries"]:
+        grades = [c["relevance"] for c in query["candidates"]]
+        if not (any(g >= 2 for g in grades) and any(g <= 1 for g in grades)):
+            continue
         qid = query["querySampleId"]
+        eligible_query_ids.add(qid)
         group = samples[qid]["groupId"]
         results = {}
         for method in METHODS:
@@ -148,6 +153,8 @@ def evaluate_retrieval(deck: dict, manifest: dict, manifest_sha: str,
             "subsport":samples[qid]["subsport"],
             "task":query["task"], "metrics":results,
         })
+    if not outcomes:
+        raise ValueError("No mixed-relevance queries; preserve no-match cases but collect a discriminative candidate set for ranking")
     totals={}
     for method in METHODS:
         totals[method]={}
@@ -165,6 +172,8 @@ def evaluate_retrieval(deck: dict, manifest: dict, manifest_sha: str,
     for control in CONTROLS:
         matched = []
         for query in deck["queries"]:
+            if query["querySampleId"] not in eligible_query_ids:
+                continue
             ids = [query["querySampleId"]] + [c["sampleId"] for c in query["candidates"]]
             if any(vectors[sid].get(control) is None for sid in ids):
                 continue
@@ -216,6 +225,9 @@ def evaluate_retrieval(deck: dict, manifest: dict, manifest_sha: str,
         "onlyHeldoutTripGroupsEvaluated":True,
         "datasetGroupsUsedForTrainingOrTuning":False,
         "judgmentCoverage":info,
+        "rankingQueries":len(outcomes),
+        "fullyJudgedQueriesNotUsedForRanking":len(deck["queries"])-len(outcomes),
+        "noMatchQueriesRetainedForFutureAbstention":info["queryAnswerability"].get("no_match",0),
         "macroByTrip":totals,
         "deltaKTIDEMinusFrozenMean":delta,
         "pairedGroupBootstrap":_bootstrap_deltas(outcomes,seed=bootstrap_seed),
