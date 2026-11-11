@@ -280,3 +280,46 @@ def validate_embeddings(report: dict, manifest: dict, training: dict) -> dict:
                 raise ValueError("Mixed optional control dimensions")
         found[sid] = item
     return found
+
+
+
+def review_worksheet(deck: dict, manifest: dict, manifest_sha: str,
+                     training: dict) -> dict:
+    """Render timestamp locator information for a private blind review session.
+
+    This is not a video player. The human must use an independently verified
+    local preview/source reader before assigning evidence-backed grades.
+    """
+    summary = validate_deck(deck, manifest, manifest_sha, training,
+                            require_complete=False)
+    by_id = {r["sampleId"]: r for r in manifest["samples"]}
+    def locator(sample_id):
+        row = by_id[sample_id]
+        return {
+            "sampleId": sample_id,
+            "sourceSha256": row["sourceSha256"],
+            "startMs": row["startMs"],
+            "endMs": row["endMs"],
+            "subsportDeclaredByOwner": row["subsport"],
+        }
+    return {
+        "version": "klip-ktide-private-review-worksheet-v1",
+        "studyVersion": VERSION,
+        "judgmentCoverage": summary,
+        "queryCards": [
+            {
+                "query": locator(q["querySampleId"]),
+                "task": q["task"],
+                "candidates": [
+                    {**locator(c["sampleId"]),
+                     "humanRelevance": c["relevance"],
+                     "adjudication": c["adjudication"]}
+                    for c in q["candidates"]
+                ],
+            }
+            for q in deck["queries"]
+        ],
+        "modelScoresHidden": True,
+        "previewPlaybackAndReceiptVerificationPerformed": False,
+        "originalVideoRead": False,
+    }
