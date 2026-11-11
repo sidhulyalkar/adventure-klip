@@ -46,7 +46,9 @@ def validate_selection(doc: dict) -> list[dict]:
             raise ValueError("Source appears across multiple groups")
         sources[aid] = group
         groups.add(group)
-        if row["goal"] not in GOAL_WEIGHTS or row["subsport"] not in SUBSPORT_PRIORS:
+        if (not isinstance(row["goal"], str) or not isinstance(row["subsport"], str)
+                or row["goal"] not in GOAL_WEIGHTS
+                or row["subsport"] not in SUBSPORT_PRIORS):
             raise ValueError("Unsupported goal/sub-sport")
         start, end = row["startMs"], row["endMs"]
         if (type(start) is not int or type(end) is not int
