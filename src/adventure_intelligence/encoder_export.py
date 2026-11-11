@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 from typing import Mapping
 
-from .encoder_dataset import VERSION, KEY, SHA, validate_manifest
+from .encoder_dataset import VERSION, KEY, SHA, validate_manifest, safe_training_workspace
 from .scene_profiles import SUBSPORT_PRIORS
 from .scene_relevance import GOAL_WEIGHTS
 
@@ -62,7 +62,7 @@ def validate_selection(doc: dict) -> list[dict]:
 def _safe_destination(workspace: Path, dirname: str) -> Path:
     if not isinstance(dirname, str) or not re.fullmatch(r"ktide-[a-zA-Z0-9_-]{4,60}", dirname):
         raise ValueError("Invalid output dataset name")
-    root = workspace.resolve(strict=True)
+    root = safe_training_workspace(workspace)
     report = root / "reports"
     if report.is_symlink():
         raise ValueError("Symlinked workspace reports/ refused")
