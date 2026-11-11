@@ -364,7 +364,7 @@ def merge_smoke_assignments(plan: dict, proposals: list[dict],
     for selected in plan["selected"]:
         aid=selected["sourceSha256"]
         candidate=judged.get(aid,{})
-        suggestion=candidate.get("judgeProposal",{})
+        suggestion=candidate.get("judgeProposal") or {}
         subsport=suggestion.get("subsport","general_adventure")
         goal=GOAL_FOR.get(subsport,"sport_action")
         old=by_id.get(aid,{})
