@@ -223,3 +223,46 @@ def test_uncertain_and_missing_judgment_evidence_not_assumed_negative():
     assert not validate_deck(deck,manifest,digest,training,require_complete=False)["fullyAdjudicated"]
     with pytest.raises(ValueError,match="Incomplete query"):
         validate_deck(deck,manifest,digest,training,require_complete=True)
+
+
+
+def test_fully_reviewed_no_match_query_preserved_but_not_fake_positive():
+    manifest,digest,training=study_data()
+    deck=judge(build_blind_deck(manifest,digest,training,
+                                max_queries=12,candidates_per_query=5))
+    for option in deck["queries"][0]["candidates"]:
+        option["relevance"]=0
+    status=validate_deck(deck,manifest,digest,training,require_complete=True)
+    assert status["fullyAdjudicated"]
+    assert status["queryAnswerability"]["no_match"]==1
+    report=evaluate_retrieval(deck,manifest,digest,training,
+                              fake_embeddings(manifest,training))
+    assert report["noMatchQueriesRetainedForFutureAbstention"]==1
+    assert report["rankingQueries"]==11
+    assert report["fullyJudgedQueriesNotUsedForRanking"]==1
+
+
+def test_every_query_no_match_cannot_claim_retrieval_benchmark():
+    manifest,digest,training=study_data()
+    deck=judge(build_blind_deck(manifest,digest,training,
+                                max_queries=8,candidates_per_query=5))
+    for query in deck["queries"]:
+        for option in query["candidates"]:
+            option["relevance"]=0
+    assert not validate_deck(deck,manifest,digest,training,
+                             require_complete=True)["metricsEligible"]
+    with pytest.raises(ValueError,match="No mixed-relevance queries"):
+        evaluate_retrieval(deck,manifest,digest,training,
+                           fake_embeddings(manifest,training))
+
+
+def test_fully_reviewed_all_positive_query_is_reported_not_a_free_win():
+    manifest,digest,training=study_data()
+    deck=judge(build_blind_deck(manifest,digest,training,
+                                max_queries=8,candidates_per_query=5))
+    for option in deck["queries"][0]["candidates"]:
+        option["relevance"]=3
+    report=evaluate_retrieval(deck,manifest,digest,training,
+                              fake_embeddings(manifest,training))
+    assert report["judgmentCoverage"]["queryAnswerability"]["all_positive"]==1
+    assert report["rankingQueries"]==7
