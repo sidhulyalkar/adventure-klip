@@ -218,7 +218,7 @@ def preflight_bootstrap(workspace: Path, assignments: dict, *,
             or not 1 <= max_duration_minutes <= 20
             or not isinstance(max_total_gb, (int,float))
             or isinstance(max_total_gb, bool)
-            or not math.isfinite(max_total_gb) or not 1 <= max_total_gb <= 200):
+            or not math.isfinite(max_total_gb) or not .000001 <= max_total_gb <= 200):
         raise ValueError("Invalid bounded extraction parameters")
     planned = []
     bytes_total = 0
