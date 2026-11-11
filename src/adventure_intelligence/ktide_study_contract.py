@@ -50,6 +50,10 @@ def validate_training_lineage(training: dict, manifest: dict,
     if type(seed) is not int:
         raise ValueError("Missing split seed")
     computed = group_splits(manifest, seed=seed)
+    if any(group.startswith("provisional_") for group in computed):
+        raise ValueError("Provisional capture groups are forbidden in held-out studies")
+    if training.get("scientificHeldoutEligible") is False:
+        raise ValueError("Training run explicitly not qualified for held-out study")
     if training.get("splitAssignments") != computed:
         raise ValueError("Frozen training group split mismatch")
     checkpoint = training.get("checkpointSha256")

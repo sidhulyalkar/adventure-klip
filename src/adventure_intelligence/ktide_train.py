@@ -146,6 +146,7 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
     doc, digest = load_manifest(manifest_path)
     validate_manifest(doc, root=dataset_root, verify_shards=True)
     splits = group_splits(doc, seed=seed)
+    provisional_groups = sorted(g for g in splits if g.startswith("provisional_"))
     assigned = {k: [r for r in doc["samples"] if splits[r["groupId"]] == k]
                 for k in ("train", "val", "test")}
     if any(not rows for rows in assigned.values()):
@@ -232,6 +233,10 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
         "testGroups": sum(1 for v in splits.values() if v == "test"),
         "sampleCounts": {k: len(v) for k, v in assigned.items()},
         "splitAssignments": dict(sorted(splits.items())),
+        "provisionalGroupIds": provisional_groups,
+        "scientificHeldoutEligible": not provisional_groups,
+        "groupingWarning": ("Capture-based provisional groups are NOT verified independent trips"
+                            if provisional_groups else None),
         "history": history, "selectedEpoch": best_epoch,
         "heldOutTest": test, "checkpointSha256": checkpoint_sha,
         "weightsTrainedOnUserReviews": False,

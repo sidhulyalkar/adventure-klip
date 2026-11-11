@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--stride-seconds", type=int, default=30)
     parser.add_argument("--min-cached-frames", type=int, default=4)
     parser.add_argument("--max-per-source", type=int, default=20)
+    parser.add_argument("--allow-provisional-smoke", action="store_true",
+                        help="Opt into capture-period groups for pipeline smoke only, NOT held-out study")
     args = parser.parse_args()
     path = Path(args.assignments).expanduser()
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 2_000_000:
@@ -32,7 +34,8 @@ def main():
             window_seconds=args.window_seconds,
             stride_seconds=args.stride_seconds,
             min_cached_frames=args.min_cached_frames,
-            max_per_source=args.max_per_source)
+            max_per_source=args.max_per_source,
+            allow_provisional_smoke=args.allow_provisional_smoke)
     except (ValueError, OSError, UnicodeError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2, sort_keys=True))
