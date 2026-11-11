@@ -108,6 +108,13 @@ def test_end_to_end_one_epoch_train_and_held_out_evaluate(tmp_path):
     assert checkpoint.is_file()
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
     assert saved["manifestSha256"] == sha256(manifest.read_bytes()).hexdigest()
+    from adventure_intelligence.ktide_embed import encode_dataset
+    encoded = encode_dataset(manifest, checkpoint, batch_size=2, device="cpu")
+    assert encoded["numSamples"] == 6
+    assert encoded["mediaRead"] is False
+    assert len(encoded["results"][0]["ktideEmbedding"]) == 32
+    assert len(encoded["results"][0]["meanTeacherEmbedding"]) == 16
+    assert encoded["humanPreferenceRankingQualified"] is False
     with pytest.raises(ValueError, match="overwrite"):
         train_local(
             manifest, workspace=tmp_path, run_name="ktide-run-synthetic",
