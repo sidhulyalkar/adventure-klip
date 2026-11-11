@@ -145,6 +145,7 @@ flowchart TB
 | Cache-only visual transition graph | **Unmerged draft PR #82** | [Temporal Action Intelligence](https://github.com/sidhulyalkar/adventure-klip/blob/feat/temporal-lite-action-graph-v1/docs/TEMPORAL_ACTION_INTELLIGENCE.md) |
 | Editable goal × sub-sport scene relevance profiles (35 normalized dimensions, 18 sub-sports, 5 goals) | **On `main` after V1 merge: offline scoring only, weights not learned** | [Sub-sport profile guide](docs/KLIP_SUBSPORT_PROFILES_V1.md) |
 | Frozen review-export intent analysis | **Offline and provisional; requires packet manifest for SHA/record checks** | [Private review intent guide](docs/REVIEW_INTENT_OFFLINE.md) |
+| Trainable K-TIDE temporal encoder over completed frozen feature caches | **Research V1; opt-in local training, group-held-out evaluation** | [Training runbook](docs/KTIDE_TRAINING_V1.md) |
 | Validated action-phase recognition, learned temporal utility, calibrated event ranking | **Research goals, not validated** | [Problem formulation](docs/PROBLEM_FORMULATION.md) |
 
 ## Run it locally
