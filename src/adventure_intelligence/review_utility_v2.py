@@ -72,7 +72,9 @@ def editorial_route(review: dict) -> dict:
         text, r"\bnot worth keeping\b", r"\bnot highlighting\b",
         r"\bshould (?:be )?skip(?:ped)?\b")
     failure = outcome == "failed" or _has(
-        text, r"\bcrash(?:ed|ing)?\b", r"\bi fall\b", r"\bfailure reels?\b")
+        text, r"\bcrash(?:ed|ing)?\b", r"\bfall(?:s|en|ing)?\b",
+        r"\bfell\b", r"\bfailed (?:landing|jump|turn)\b",
+        r"\bfailure reels?\b")
     technique = _has(text, r"\btechnique\b", r"\bform\b",
                      r"\banaly[sz]e\b", r"\bfeedback\b",
                      r"\bimprov(?:e|ement)\b", r"\bfailure reels?\b")
