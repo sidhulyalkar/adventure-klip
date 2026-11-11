@@ -47,8 +47,10 @@ packet, matching review manifest, SHA-backed previews and input paths:
       --mode reviewed --reviews "$REVIEW_JSON" \
       --seconds-per-sport 150 --max-clips-per-sport 8
 
-Inspect reel-plan.json for humanRouting and additionalReviewedCollections,
-and reel-review.html for routes and follow-up summaries. This is NOT a
+Inspect reel-plan.json for humanRouting, additionalReviewedCollections,
+humanEditorialFollowups (including requests attached to skipped cuts), and
+manualOnlyDiscardHolds. The separate reel-review.html shows routes and
+follow-up summaries for the clips selected into the sport preview. This is NOT a
 new original-video scan or a final mastered reel. Use a new output directory
 for every attempt.
 
