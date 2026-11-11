@@ -66,7 +66,9 @@ def validate_manifest(manifest: Mapping, *, root: Path | None = None,
         if source in source_to_group and source_to_group[source] != group:
             raise ValueError("One source must never appear in multiple split groups")
         source_to_group[source] = group
-        if row["goal"] not in GOAL_WEIGHTS or row["subsport"] not in SUBSPORT_PRIORS:
+        if (not isinstance(row["goal"], str) or not isinstance(row["subsport"], str)
+                or row["goal"] not in GOAL_WEIGHTS
+                or row["subsport"] not in SUBSPORT_PRIORS):
             raise ValueError("Unrecognized goal or sub-sport")
         start, end, n = row["startMs"], row["endMs"], row["sampleCount"]
         if (type(start) is not int or type(end) is not int
@@ -74,6 +76,9 @@ def validate_manifest(manifest: Mapping, *, root: Path | None = None,
                 or type(n) is not int or not 4 <= n <= MAX_FRAMES):
             raise ValueError("Invalid source time or frame count")
         shard = row["shard"]
+        if (not isinstance(shard, str)
+                or not re.fullmatch(r"shards/[a-f0-9]{24}\.npz", shard)):
+            raise ValueError("Invalid feature shard relative path")
         if shard in paths:
             raise ValueError("Duplicate shard path")
         paths.add(shard)
