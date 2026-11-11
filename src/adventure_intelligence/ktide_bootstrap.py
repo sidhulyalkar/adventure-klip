@@ -8,6 +8,7 @@ Klip's existing semantic pipeline reads + SHA-verifies selected originals.
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import closing
 import json
 import math
 from pathlib import Path
@@ -74,7 +75,7 @@ def inspect_workspace(workspace: Path, *, candidates: int = 16) -> dict:
     if type(candidates) is not int or not 0 <= candidates <= 100:
         raise ValueError("candidates must be 0..100")
     root = safe_training_workspace(workspace)
-    with _ro_db(root) as db:
+    with closing(_ro_db(root)) as db:
         assets = db.execute(
             "SELECT id,activity,duration,size_bytes,capture_time "
             "FROM assets ORDER BY id"
@@ -222,7 +223,7 @@ def preflight_bootstrap(workspace: Path, assignments: dict, *,
         raise ValueError("Invalid bounded extraction parameters")
     planned = []
     bytes_total = 0
-    with _ro_db(root) as db:
+    with closing(_ro_db(root)) as db:
         for entry in rows:
             aid = entry["sourceSha256"]
             asset = db.execute(
