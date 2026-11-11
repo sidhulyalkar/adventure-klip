@@ -231,3 +231,28 @@ def test_feature_candidates_are_only_model_hypotheses_without_numeric_utility():
     broken["featureCandidates"][0]["dimension"]="wildlife_speed_meters_per_second"
     with pytest.raises(ValueError,match="Unsupported scene dimension"):
         validate_judge_proposal(broken,4)
+
+
+
+def test_local_ollama_output_is_normalized_only_once(tmp_path,monkeypatch):
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def read(self,n):
+            return json.dumps({"message":{"content":json.dumps(judgment())}}).encode()
+    monkeypatch.setattr(request,"urlopen",lambda req,timeout:Response())
+    from adventure_intelligence.ktide_local_judge import local_ollama_json
+    root=tmp_path/"workspace"
+    root.mkdir()
+    plan=select_judge_pilot(inventory(),limit=3)
+    def fake_frames(path,duration,n):
+        return [{"frameIndex":i,"requestedMs":(i+1)*1000,
+                 "decodedPtsMs":None,"timestampBasis":"unavailable",
+                 "imageSha256":"a"*64,"imageBytes":b"PNG"} for i in range(n)]
+    result=run_judge_pilot(root,plan,
+        judge=lambda frames:local_ollama_json(frames),
+        source_loader=lambda root,aid:Path("/unopened.mp4"),
+        frame_loader=fake_frames)
+    assert result["successes"]==3
+    assert result["proposals"][0]["judgeProposal"]["featureCandidates"][0][
+        "evidenceSource"]=="model_hypothesis"
