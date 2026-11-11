@@ -16,6 +16,7 @@ from pathlib import Path
 from adventure_intelligence.ktide_bootstrap import (
     inspect_workspace, preflight_bootstrap, run_bootstrap,
 )
+from adventure_intelligence.ktide_planner import ASSIGNMENTS_VERSION
 
 
 def main() -> int:
@@ -24,6 +25,8 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--inspect", action="store_true",
                       help="Read-only inventory of cached jobs and pilot candidates")
+    mode.add_argument("--template", action="store_true",
+                      help="Print an unrunnable pilot source-assignment draft with empty trip/profile fields")
     mode.add_argument("--preflight", action="store_true",
                       help="Read-only plan for explicitly selected source identities")
     mode.add_argument("--run", action="store_true",
@@ -42,15 +45,29 @@ def main() -> int:
                         help="Required for remote model weights; otherwise offline-only")
     args = parser.parse_args()
     workspace = Path(args.workspace).expanduser()
-    if not args.inspect and not args.assignments:
+    if not (args.inspect or args.template) and not args.assignments:
         parser.error("--assignments is required for preflight/run")
     if args.run and not args.ack_original_reads:
         parser.error("Refusing --run without --ack-original-reads")
-    if args.inspect and args.assignments:
-        parser.error("--inspect never accepts source assignments")
+    if (args.inspect or args.template) and args.assignments:
+        parser.error("--inspect/--template never accept source assignments")
     try:
         if args.inspect:
             result = inspect_workspace(workspace, candidates=args.candidate_limit)
+        elif args.template:
+            report = inspect_workspace(workspace, candidates=min(args.candidate_limit, 6))
+            result = {
+                "version": ASSIGNMENTS_VERSION,
+                "sources": [
+                    {
+                        "sourceSha256": row["sourceSha256"],
+                        "groupId": "",
+                        "goal": "",
+                        "subsport": "",
+                    }
+                    for row in report["suggestedPilotSourcesForHumanSelection"]
+                ],
+            }
         else:
             path = Path(args.assignments).expanduser()
             if path.is_symlink() or not path.is_file() or path.stat().st_size > 2_000_000:
