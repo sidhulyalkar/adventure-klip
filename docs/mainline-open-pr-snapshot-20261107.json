@@ -1,0 +1,640 @@
+{
+  "version": "klip-mainline-pr-snapshot-v1",
+  "capturedAt": "2026-11-07",
+  "mainHeadAtAudit": "602d00ca8c5c55884272300e77ba2d2bae65b867",
+  "approvalStatus": "NOT_AUDITED_FOR_EACH_PR",
+  "source": "GitHub connected pull request listing",
+  "notMergeAuthorization": true,
+  "records": [
+    {
+      "number": 2,
+      "title": "Fix managed import safety for previously indexed footage",
+      "base": "main",
+      "head": "fix/verified-managed-import",
+      "headSha": "426c9b32236279be5e288bc9fff1d64494744efd",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 3,
+      "title": "Add resumable folder processing with verified sources and feature caches",
+      "base": "fix/verified-managed-import",
+      "head": "feat/resumable-folder-processing",
+      "headSha": "dad4fdc5d6bdc14cabc79b37013d1580b632083f",
+      "draft": false,
+      "mergeable": false,
+      "merged": false
+    },
+    {
+      "number": 4,
+      "title": "Preserve review history and resume semantic analysis per frame",
+      "base": "feat/resumable-folder-processing",
+      "head": "feat/review-history-semantic-resume",
+      "headSha": "2862352104ad4b33a97055931278846f39b635b8",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 5,
+      "title": "Record decoded frame PTS and conservatively track temporal object hypotheses",
+      "base": "feat/review-history-semantic-resume",
+      "head": "feat/decoded-pts-object-track-hypotheses",
+      "headSha": "7dc05e16fbcd2002052bb6d52bf30a316ab9ec08",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 6,
+      "title": "Protect indexed DJI source folders from generated output writes",
+      "base": "feat/decoded-pts-object-track-hypotheses",
+      "head": "fix/protect-original-footage-output-paths",
+      "headSha": "cfb2ad622957cc8e3c17f4d69a4c57ad09ac7563",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 7,
+      "title": "Show per-video processing progress, decoded-frame counters, and stage ETAs",
+      "base": "fix/protect-original-footage-output-paths",
+      "head": "feat/progress-stage-eta",
+      "headSha": "faed6d927dbbb220cc9fe9790be90db683f0eb2b",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 8,
+      "title": "Context-aware ski and snorkeling highlights with visual submersion continuity and acoustic evidence",
+      "base": "feat/progress-stage-eta",
+      "head": "feat/context-aware-adventure-highlights",
+      "headSha": "37507c13bba20f3e67602341a023124135831119",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 9,
+      "title": "Diagnose low-value scenes and suspected incidents with evidence-linked private review overlays",
+      "base": "feat/context-aware-adventure-highlights",
+      "head": "feat/activity-quality-incident-review",
+      "headSha": "72b2d060790bd72dec30fcd9d898fddc8759ab4c",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 10,
+      "title": "Add revisioned training examples, acoustic triage and visually diverse scene atlas",
+      "base": "feat/activity-quality-incident-review",
+      "head": "feat/verified-exemplar-scene-atlas",
+      "headSha": "c5057c417af660359b425767250785e1464bdf26",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 11,
+      "title": "Build private Klip Field Studio for interactive clip reviews and A/B comparisons",
+      "base": "feat/verified-exemplar-scene-atlas",
+      "head": "feat/local-review-studio",
+      "headSha": "bb97a16613d3bb1671f4cef47b412e63b2f929e2",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 12,
+      "title": "Klip v0.5: Paged editorial inbox and draggable approved-only reel editor",
+      "base": "feat/local-review-studio",
+      "head": "feat/visual-sequence-editor",
+      "headSha": "4744465f3f9288360b11bec369669e515ad2d118",
+      "draft": false,
+      "mergeable": false,
+      "merged": false
+    },
+    {
+      "number": 13,
+      "title": "Klip v0.6: One-clip screening and hierarchical virtual media Library",
+      "base": "feat/visual-sequence-editor",
+      "head": "feat/focus-review-hierarchical-library",
+      "headSha": "a51f4d2dd152428b20c49865b5c85adf889b3606",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 14,
+      "title": "Klip 0.6: Distraction-free clip review and hierarchical library browser",
+      "base": "feat/visual-sequence-editor",
+      "head": "feat/focused-review-library",
+      "headSha": "4af25be8668f23a671dd85ad32de9d7e0df03c39",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 15,
+      "title": "Klip: quiet review UI, bounded browsing and safe catalog refresh",
+      "base": "feat/focused-review-library",
+      "head": "feat/quiet-review-polish",
+      "headSha": "df90ab397a9eb45032e6ce411f6864afbeab258c",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 16,
+      "title": "Klip 0.6.1: Cinematic, minimal Focus Studio",
+      "base": "feat/focus-review-hierarchical-library",
+      "head": "feat/cinematic-minimal-focus",
+      "headSha": "f160f3e848f1d06ca478efeda5ae1ab4d2e5120a",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 17,
+      "title": "Klip 0.7: explainable, human-safe trim proposals and one-click preview",
+      "base": "feat/quiet-review-polish",
+      "head": "feat/evidence-aware-clip-trimming",
+      "headSha": "1199fce2b6a33408209dd2b6e0bfb71d75fc1cbd",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 18,
+      "title": "Klip 0.8: opt-in cached boundary evidence and local filmstrip",
+      "base": "feat/evidence-aware-clip-trimming",
+      "head": "feat/cached-boundary-inspector",
+      "headSha": "41d89da6c183c8aad58ed2a09a88c8a1e3ba0b78",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 19,
+      "title": "Klip 0.9: record original clip proposals alongside human edits",
+      "base": "feat/cached-boundary-inspector",
+      "head": "feat/review-boundary-provenance",
+      "headSha": "4f0cdb0986ca05434c1e965a20aa6f206358a812",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 20,
+      "title": "Klip: audit real DJI pipeline throughput and restarts from existing logs",
+      "base": "feat/review-boundary-provenance",
+      "head": "feat/run-log-audit",
+      "headSha": "c492a588ade167fe7e1d66eb183aa2213f051cbf",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 21,
+      "title": "Klip: opt-in NVIDIA NIM vision judge fleet and human-calibrated benchmark",
+      "base": "feat/run-log-audit",
+      "head": "feat/nim-judge-benchmark",
+      "headSha": "56e0fa4864a77e41ebdf1da3c54d2dec926519b1",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 22,
+      "title": "Klip v0.7: provenance-aware object edge metadata and smart selective scene transitions",
+      "base": "feat/cinematic-minimal-focus",
+      "head": "feat/semantic-edge-transition-evidence",
+      "headSha": "fd9b0a6fb06463b318368e5fc3f11602ea7a9321",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 23,
+      "title": "Prevent stalled whole-SSD scans from invalid AppleDouble and zero-duration videos",
+      "base": "feat/semantic-edge-transition-evidence",
+      "head": "fix/whole-library-invalid-video-fast-skip",
+      "headSha": "4026254be28c5896d3eff209fa0a2370969da5b8",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 28,
+      "title": "Adaptive POV sampling v1: budgeted source-safe semantic inspection for skiing, biking and snorkeling",
+      "base": "main",
+      "head": "feat/adaptive-pov-sampling-v1",
+      "headSha": "a3c24e479c3e7d4abce8aa55710644b50c74eb14",
+      "draft": false,
+      "mergeable": false,
+      "merged": false
+    },
+    {
+      "number": 29,
+      "title": "Adaptive POV v1.1: bounded FFmpeg batch decoding with PTS-safe fallback",
+      "base": "feat/adaptive-pov-sampling-v1",
+      "head": "feat/adaptive-batched-decoder-v1",
+      "headSha": "cb03e107e71cac03449f58502710ecd1b96a2231",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 31,
+      "title": "Ecology context v1: offline marine occurrence priors and cached species retrieval",
+      "base": "feat/adaptive-batched-decoder-v1",
+      "head": "feat/ecology-context-v1",
+      "headSha": "660c9a44330610c631399df955fc1f370a98ff4d",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 33,
+      "title": "Ecology v2: reviewed taxonomy crosswalk and cached marine encounter proposals",
+      "base": "feat/ecology-context-v1",
+      "head": "feat/ecology-encounters-taxonomy-v2",
+      "headSha": "2c0bd14153d69484feb03a17072722e8faf159ae",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 34,
+      "title": "Ecology v3: source-verified organism crop packets from cached encounter boxes",
+      "base": "feat/ecology-encounters-taxonomy-v2",
+      "head": "feat/ecology-crop-evidence-v3",
+      "headSha": "94ca75cc013368832b7bf544b46cf105402cd397",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 35,
+      "title": "Activity intelligence v1: safe mixed-sport classification and resumable overnight pilot",
+      "base": "feat/ecology-crop-evidence-v3",
+      "head": "feat/activity-intelligence-pilot-v1",
+      "headSha": "80339cac065eb1381b2eff06cc428ed15fcd67f6",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 36,
+      "title": "Activity v2: sandy seabed refinement, explicit source review, and targeted marine processing",
+      "base": "feat/activity-intelligence-pilot-v1",
+      "head": "feat/activity-sandbar-refinement-v2",
+      "headSha": "6e33c23edaffe2c75ea965676ec50481df23a603",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 37,
+      "title": "Segment Intelligence v1: sport-aware temporal states, selective boundary investigation, and wildlife overlays",
+      "base": "feat/activity-sandbar-refinement-v2",
+      "head": "feat/temporal-segment-intelligence-v1",
+      "headSha": "8aab9dc328fdc4bc4a6853f83b841ab61dbf9f61",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 38,
+      "title": "Event evidence v1: recover 19/20 semantic frames and embed before/during/after context",
+      "base": "feat/temporal-segment-intelligence-v1",
+      "head": "feat/event-evidence-recovery-v1",
+      "headSha": "28a76d2f7c06cfd0d8d9a3a76eb308683790a84b",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 39,
+      "title": "Moment ranking v1: exceptional wildlife, evidence-gated rarity and balanced multi-sport review",
+      "base": "feat/event-evidence-recovery-v1",
+      "head": "feat/moment-ranking-policy-v1",
+      "headSha": "edbd6a1065a75727024dd6e8aebbfc82abae3dff",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 40,
+      "title": "Archive pilot v1: one-command inventory, frozen batches and resumable cheap processing",
+      "base": "feat/moment-ranking-policy-v1",
+      "head": "feat/archive-pilot-orchestrator-v1",
+      "headSha": "7496a67f30ff9156f89a0ab79cd77b7d14a3fbaf",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 42,
+      "title": "Archive status v1: explain 2 failed DJI jobs, recover histogram checkpoints, preserve frozen plans",
+      "base": "feat/archive-pilot-orchestrator-v1",
+      "head": "feat/archive-status-failure-triage-v1",
+      "headSha": "53f0198847873ba10bfdea2acc757c1b2e71b249",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 43,
+      "title": "Clip Value Lab v1: human-grounded value criteria and playable balanced pilot reviews",
+      "base": "feat/archive-status-failure-triage-v1",
+      "head": "feat/clip-value-lab-v1",
+      "headSha": "6bafea77bdb4ee0c91279bfbc544d8a46c4ba945",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 44,
+      "title": "Archive review v1: sport-balanced candidate and control benchmark from frozen plans",
+      "base": "feat/archive-status-failure-triage-v1",
+      "head": "feat/archive-review-benchmark-v1",
+      "headSha": "dae9644bbefaadc0d050ec20853220b97c9c76af",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 45,
+      "title": "Archive feedback v1: playable benchmark Studio, append-only human reviews and control-vs-candidate evaluation",
+      "base": "feat/archive-review-benchmark-v1",
+      "head": "feat/archive-review-feedback-v1",
+      "headSha": "f4e05623d1b543b42a5231a7c444444aa626e6d0",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 46,
+      "title": "Fast Studio review: fix stalled DJI playback with cached H264 previews and opt-in private local AI triage",
+      "base": "feat/archive-review-feedback-v1",
+      "head": "feat/studio-review-fast-local-judge-v1",
+      "headSha": "e8d29be1576236520c107396d418d832d59cf27e",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 47,
+      "title": "Adaptive visual judge v2: sport-context prompts, evidence rubric, conservative abstentions and paired human audit",
+      "base": "feat/studio-review-fast-local-judge-v1",
+      "head": "feat/adaptive-local-judge-v2",
+      "headSha": "066f0ce688a42f8fef266883b4935aa8ff19edba",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 48,
+      "title": "Local triage follow-up: rank Unsure clips, isolate failed review and reuse verified previews",
+      "base": "feat/adaptive-local-judge-v2",
+      "head": "feat/triage-ranking-diagnostics-v1",
+      "headSha": "bc9f8410aeb4ee545aa6f943a8ab6df890ebc3a1",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 49,
+      "title": "Temporal second look: inspect 7 cached frames for uncertain adventure moments, with evidence and human review gates",
+      "base": "feat/triage-ranking-diagnostics-v1",
+      "head": "feat/adaptive-temporal-second-look-v1",
+      "headSha": "c357f3bded1654d9a2597c822ca7ec2f53ebfdca",
+      "draft": false,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 50,
+      "title": "Recover partial local triage: per-run exclusions, bounded frame seek fallback and clear timeouts",
+      "base": "feat/adaptive-temporal-second-look-v1",
+      "head": "feat/triage-failure-recovery-v1",
+      "headSha": "a5abb4b878f38d24615858ef6ffcd5df319416b2",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 51,
+      "title": "Editorial quality + action evidence: manual framing defects, longer ski windows and deletion-review queue",
+      "base": "feat/triage-failure-recovery-v1",
+      "head": "feat/archive-editorial-quality-and-action-v1",
+      "headSha": "ba70449587d95d354ba9cd6cb701af498cf08c9b",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 56,
+      "title": "Archive-wide Clip Value Study: longer action candidates, diverse shortlists and blind human controls",
+      "base": "feat/archive-editorial-quality-and-action-v1",
+      "head": "feat/archive-value-study-v1",
+      "headSha": "33a681b782b5e28b9943ab5924469cccf73cdaa6",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 57,
+      "title": "Social Action Lens v1: rights-gated social engagement preference baseline versus Klip",
+      "base": "feat/archive-value-study-v1",
+      "head": "feat/social-action-lens-v1",
+      "headSha": "9efe4fc3d2a4ff4cd5be9f6227fc757d69e4331d",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 61,
+      "title": "Social Lens: repair missing-corpus UX, add rights preflight and balanced review bootstrap",
+      "base": "feat/social-action-lens-v1",
+      "head": "feat/social-lens-corpus-onboarding-v1",
+      "headSha": "8bb2064b76727300e882596890f5d08c432892e9",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 62,
+      "title": "Social Lens temporal evidence v1: verified 4 fps proxy metrics, cache fusion and opt-in source-safe analysis",
+      "base": "feat/social-lens-corpus-onboarding-v1",
+      "head": "feat/social-lens-temporal-evidence-v1",
+      "headSha": "ea4b9b4fb78c8dd56f0f54ade8a9b8cb38985b6b",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 64,
+      "title": "Blind A/B clip preferences: verify where Klip's ranking actually disagrees with human choices",
+      "base": "feat/social-lens-temporal-evidence-v1",
+      "head": "feat/social-blind-pair-preference-v1",
+      "headSha": "3b24286eb79db44112453667453552363322f31b",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 65,
+      "title": "Social Lens: grounded local scene narratives plus strict post-vote A/B counter-audit",
+      "base": "feat/social-blind-pair-preference-v1",
+      "head": "feat/social-scene-evidence-narratives-v1",
+      "headSha": "8b8cb62f019f218755bb962a92285fae6a5f509b",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 67,
+      "title": "P0: resumable temporal evidence and observable removable-media verification",
+      "base": "feat/social-scene-evidence-narratives-v1",
+      "head": "fix/social-temporal-interrupt-resume-v1",
+      "headSha": "b7e7b94f6393e54255e299efd61ecf6c0a98e84e",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 68,
+      "title": "Research: rights-gated YouTube reaction references and multi-perspective highlight learning plan",
+      "base": "fix/social-temporal-interrupt-resume-v1",
+      "head": "research/reaction-highlight-evidence-v1",
+      "headSha": "5e58b03d58de7cc4477834ba50421c889696f414",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 69,
+      "title": "Discovery: source-safe archive coverage audit before ranking or external reaction training",
+      "base": "fix/social-temporal-interrupt-resume-v1",
+      "head": "feat/archive-coverage-discovery-audit-v1",
+      "headSha": "77e5a2f948f749a2eacdc6d2e9c99bf303984dd0",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 70,
+      "title": "Pretraining specification: action, cinematography and observer-grounded highlight dataset",
+      "base": "research/reaction-highlight-evidence-v1",
+      "head": "spec/highlight-dataset-curation-v1",
+      "headSha": "4e96983bbf922b509b47737250a56147b3b3adab",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 71,
+      "title": "Implement source-safe highlight dataset pilot with blind human annotation and multi-rater import",
+      "base": "spec/highlight-dataset-curation-v1",
+      "head": "feat/highlight-curation-pilot-v1",
+      "headSha": "1f81f6ec95464447c377c1d5555f05a562ff313e",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 72,
+      "title": "Turn human clip reviews into safer highlight and source-context discovery plans",
+      "base": "feat/highlight-curation-pilot-v1",
+      "head": "feat/highlight-review-to-discovery-v1",
+      "headSha": "e3d55c3920602c71e6bc4dda694a519645e1a756",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 73,
+      "title": "Interactive Reel Studio: parallel local-cache assembly, cross-sport playlists and timestamped human feedback",
+      "base": "feat/highlight-review-to-discovery-v1",
+      "head": "feat/interactive-highlight-reel-studio-v1",
+      "headSha": "162a16e744b9f26f108c471bfad2312230e1b17f",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 74,
+      "title": "Close the Reel Studio feedback loop with source-safe adaptive inspection queues",
+      "base": "feat/interactive-highlight-reel-studio-v1",
+      "head": "feat/reel-feedback-adaptive-queue-v1",
+      "headSha": "4083baaaa92a1d017b94e95cd059c9fcaaaec199",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 75,
+      "title": "Repair partial curation pilots safely and orchestrate resumable cache-only overnight highlight jobs",
+      "base": "feat/reel-feedback-adaptive-queue-v1",
+      "head": "fix/overnight-curation-pilot-recovery-v1",
+      "headSha": "e092d4c899266bddb4e90bcdba59ae60b92edf18",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 76,
+      "title": "Reorient Klip toward full-archive highlight discovery: source-safe audit, resumable coarse scan and blind review packets",
+      "base": "fix/overnight-curation-pilot-recovery-v1",
+      "head": "feat/full-archive-highlight-campaign-v1",
+      "headSha": "6f030ace68f09a736dbc397e58ec9c5f1e0fc217",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 82,
+      "title": "Temporal Action Intelligence T0: cache-only visual change graph, source-safe CLI and qualification plan",
+      "base": "feat/full-archive-highlight-campaign-v1",
+      "head": "feat/temporal-lite-action-graph-v1",
+      "headSha": "c2b01dacfd07c930068a180189c853603b0678f5",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 84,
+      "title": "G1 SSD-native: zero-copy catalog recovery, volume UUID guard and resumable source scans",
+      "base": "feat/full-archive-highlight-campaign-v1",
+      "head": "fix/full-archive-source-root-preflight-v1",
+      "headSha": "883d2eeef6ae0f9f25d3ffb44d165112dbabd182",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 87,
+      "title": "Research plan: parallel archive work, temporal understanding and personal episodic learning",
+      "base": "fix/full-archive-source-root-preflight-v1",
+      "head": "spec/personal-episodic-action-learning-v1",
+      "headSha": "9d4fe2b8b88452252155a16a9629ac727c44b0ff",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    },
+    {
+      "number": 88,
+      "title": "G1.5: SHA-backed candidate coverage audit and source-balanced human review plan",
+      "base": "fix/full-archive-source-root-preflight-v1",
+      "head": "feat/clip-discovery-evidence-audit-v1",
+      "headSha": "9689fe510147d959272b19e195a89177da9cd0ee",
+      "draft": true,
+      "mergeable": true,
+      "merged": false
+    }
+  ]
+}
