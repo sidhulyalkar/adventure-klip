@@ -31,16 +31,12 @@ FIELDS = {"recordId", "annotatorId", "role", "goal", "choice",
 REQUIRED = FIELDS - {"eventPeakMs", "resolutionMs"}
 
 
-def _record_window(manifest: dict, rid: str) -> tuple[int, int] | None:
-    if manifest is None:
+def _record_window(manifest_index: dict | None, rid: str) -> tuple[int, int] | None:
+    if manifest_index is None:
         return None
-    records = manifest.get("records")
-    if not isinstance(records, list) or len(records) > 100000:
-        raise ValueError("Unsupported manifest record roster")
-    by_id = {row.get("recordId"): row for row in records if isinstance(row, dict)}
-    if len(by_id) != len(records) or rid not in by_id:
+    if rid not in manifest_index:
         raise ValueError("Human recordId not present in frozen manifest")
-    event = by_id[rid].get("event")
+    event = manifest_index[rid].get("event")
     if not isinstance(event, dict):
         raise ValueError("Frozen event missing")
     start, end = event.get("startMs"), event.get("endMs")
@@ -61,7 +57,7 @@ def _check(row: dict, window: tuple[int, int] | None) -> dict:
     for key, domain in (("goal", GOALS), ("choice", CHOICES),
                         ("role", ROLES), ("outcome", OUTCOMES),
                         ("outcomeVisible", VISIBLE)):
-        if row[key] not in domain:
+        if not isinstance(row[key], str) or row[key] not in domain:
             raise ValueError("Unsupported " + key)
     if row["outcome"] in ("completed", "failed") and row["outcomeVisible"] != "yes":
         raise ValueError("Outcome requires visible evidence")
@@ -117,6 +113,20 @@ def analyze_export(export: dict, manifest_bytes: bytes | None = None) -> dict:
             raise ValueError("Invalid frozen manifest JSON") from exc
         if not isinstance(manifest, dict):
             raise ValueError("Invalid manifest")
+    manifest_index = None
+    if manifest is not None:
+        records = manifest.get("records")
+        if not isinstance(records, list) or len(records) > 100000:
+            raise ValueError("Unsupported manifest record roster")
+        manifest_index = {}
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError("Invalid manifest record")
+            rid = record.get("recordId")
+            if (not isinstance(rid, str) or not IDENT.fullmatch(rid)
+                    or rid in manifest_index):
+                raise ValueError("Duplicate/invalid manifest recordId")
+            manifest_index[rid] = record
     rows = export["reviews"]
     if not isinstance(rows, list) or len(rows) > 3000:
         raise ValueError("Invalid/excessive reviews")
@@ -133,7 +143,7 @@ def analyze_export(export: dict, manifest_bytes: bytes | None = None) -> dict:
             if not isinstance(rid, str) or not IDENT.fullmatch(rid) or rid in seen:
                 raise ValueError("Duplicate or malformed review ID")
             seen.add(rid)
-            window = _record_window(manifest, rid)
+            window = _record_window(manifest_index, rid)
         normalized = _check(review, window)
         route = editorial_route(normalized)
         choices[normalized["preference"]] += 1
