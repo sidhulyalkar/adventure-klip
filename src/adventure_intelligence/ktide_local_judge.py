@@ -228,10 +228,11 @@ def local_ollama_json(frames: list[dict], *, model: str = MODEL,
         "options": {"temperature": 0},
         "messages": [{
             "role": "user",
-            "content": PROMPT.format(
-                allowed=", ".join(sorted(SUBSPORT_PRIORS)),
-                times=[round(x["requestedMs"]/1000,2) for x in frames],
-                dimensions=", ".join(DIMENSIONS)),
+            "content": (PROMPT
+                        .replace("{allowed}", ", ".join(sorted(SUBSPORT_PRIORS)))
+                        .replace("{times}", str([round(x["requestedMs"]/1000,2)
+                                                  for x in frames]))
+                        .replace("{dimensions}", ", ".join(DIMENSIONS))),
             "images": [base64.b64encode(frame["imageBytes"]).decode("ascii")
                        for frame in frames],
         }],
