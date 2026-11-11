@@ -374,8 +374,9 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
                 k:frame[k] for k in ("frameIndex","requestedMs",
                                     "decodedPtsMs","timestampBasis","imageSha256")}
                 for frame in frames]
-            entry["judgeProposal"]=judge(frames)
-            entry["judgeProposal"]=validate_judge_proposal(entry["judgeProposal"],len(frames))
+            # Never retain unvalidated model output in an assignment report.
+            proposal=judge(frames)
+            entry["judgeProposal"]=validate_judge_proposal(proposal,len(frames))
             entry["judgeStatus"]="model_hypothesis"
         except (OSError,ValueError,RuntimeError,TimeoutError,ConnectionError) as exc:
             # Fail independently; do not leak full source paths in reports.
