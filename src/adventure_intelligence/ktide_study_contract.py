@@ -158,6 +158,7 @@ def validate_deck(deck: dict, manifest: dict, manifest_sha: str,
         raise ValueError("Invalid query roster")
     seen_queries, seen_groups = set(), set()
     totals = Counter()
+    answerability = Counter()
     for q in queries:
         if not isinstance(q, dict) or set(q) != {"querySampleId", "task", "candidates"}:
             raise ValueError("Invalid study query")
@@ -205,14 +206,24 @@ def validate_deck(deck: dict, manifest: dict, manifest_sha: str,
                 raise ValueError("Unreviewed/uncertain relevance MUST be null")
             else:
                 totals[status] += 1
-        if require_complete and (positive < 1 or negative < 1
-                                 or any(o["adjudication"] != "confirmed" for o in options)):
-            raise ValueError("Incomplete query: adjudicate all candidates and at least one relevant/irrelevant")
+        if all(o["adjudication"] == "confirmed" for o in options):
+            if positive == 0:
+                answerability["no_match"] += 1
+            elif negative == 0:
+                answerability["all_positive"] += 1
+            else:
+                answerability["mixed_relevance"] += 1
+        else:
+            answerability["incomplete"] += 1
+            if require_complete:
+                raise ValueError("Incomplete query: every candidate needs a human-adjudicated grade")
     return {
         "queryCount": len(queries), "heldOutQueryGroups": len(seen_groups),
         "candidateJudgments": dict(sorted(totals.items())),
+        "queryAnswerability": dict(sorted(answerability.items())),
         "fullyAdjudicated": totals["unreviewed"] == totals["uncertain"] == 0,
-        "metricsEligible": require_complete and totals["unreviewed"] == totals["uncertain"] == 0,
+        "metricsEligible": (totals["unreviewed"] == totals["uncertain"] == 0
+                            and answerability["mixed_relevance"] > 0),
     }
 
 
