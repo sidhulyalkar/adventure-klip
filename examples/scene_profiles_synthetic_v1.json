@@ -1,0 +1,123 @@
+{
+  "version": "klip-scene-profile-input-v1",
+  "profiles": {
+    "skiing_terrain_park": {
+      "sport_action": {
+        "weightMultipliers": {
+          "takeoff_landing_visibility": 2,
+          "arc_completion": 1.5
+        },
+        "parameterOverrides": {
+          "contextBeforeSeconds": 8,
+          "targetMaxShotSeconds": 50
+        }
+      }
+    },
+    "snorkeling_ray_shark": {
+      "nature_encounter": {
+        "weightOverrides": {
+          "subject_proximity_readability": 0.4,
+          "water_visibility": 0.18
+        },
+        "parameterOverrides": {
+          "contextAfterSeconds": 7
+        }
+      }
+    }
+  },
+  "episodes": [
+    {
+      "episodeId": "synthetic-ski-jump-001",
+      "goal": "sport_action",
+      "subsport": "skiing_terrain_park",
+      "evidence": {
+        "event_importance": {
+          "value": 0.85,
+          "strength": 0.9,
+          "source": "adjudicated_observation",
+          "evidenceIds": [
+            "synthetic:jump:review-1"
+          ]
+        },
+        "arc_completion": {
+          "value": 0.9,
+          "strength": 0.8,
+          "source": "human_report",
+          "evidenceIds": [
+            "synthetic:jump:timing"
+          ]
+        },
+        "takeoff_landing_visibility": {
+          "value": 0.95,
+          "strength": 1,
+          "source": "adjudicated_observation",
+          "evidenceIds": [
+            "synthetic:jump:frames"
+          ]
+        },
+        "control_precision": {
+          "value": 0.8,
+          "strength": 0.7,
+          "source": "human_report",
+          "evidenceIds": [
+            "synthetic:jump:expert"
+          ]
+        }
+      },
+      "sourceDurationMs": 20000,
+      "temporalSpans": [
+        {
+          "startMs": 2500,
+          "endMs": 10500,
+          "value": 0.7,
+          "evidenceId": "synthetic:temporal:1"
+        },
+        {
+          "startMs": 11000,
+          "endMs": 15000,
+          "value": 0.9,
+          "evidenceId": "synthetic:temporal:2"
+        }
+      ]
+    },
+    {
+      "episodeId": "synthetic-ray-encounter-002",
+      "goal": "nature_encounter",
+      "subsport": "snorkeling_ray_shark",
+      "evidence": {
+        "subject_readability": {
+          "value": 0.95,
+          "strength": 1,
+          "source": "adjudicated_observation",
+          "evidenceIds": [
+            "synthetic:ray:frames"
+          ]
+        },
+        "relational_interaction": {
+          "value": 0.8,
+          "strength": 0.4,
+          "source": "human_report",
+          "evidenceIds": [
+            "synthetic:ray:review"
+          ]
+        },
+        "wildlife_behavior_distinctiveness": {
+          "value": 0.95,
+          "strength": 1,
+          "source": "model_hypothesis",
+          "evidenceIds": [
+            "synthetic:ray:unverified_model"
+          ]
+        },
+        "water_visibility": {
+          "value": 0.8,
+          "strength": 0.8,
+          "source": "human_report",
+          "evidenceIds": [
+            "synthetic:ray:review"
+          ]
+        }
+      }
+    }
+  ]
+}
