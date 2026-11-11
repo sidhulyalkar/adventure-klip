@@ -148,6 +148,7 @@ flowchart TB
 | Trainable K-TIDE temporal encoder over completed frozen feature caches | **Research V1; opt-in local training, group-held-out evaluation** | [Training runbook](docs/KTIDE_TRAINING_V1.md) |
 | K-TIDE human-grounded, held-out retrieval research | **Offline, blind cross-trip study; user judgments required, no private benchmarks yet** | [Study protocol](docs/KTIDE_HELDOUT_STUDY_V1.md) |
 | K-TIDE zero-SigLIP2 cache recovery | **Read-only receipt diagnosis; histogram smoke only** | [Cache preflight](docs/KTIDE_ZERO_CACHE_PREFLIGHT.md) |
+| K-TIDE local vision judge and source assignment proposals | **Opt-in local Ollama, source SHA-verified sparse frames; smoke-only provisional groups** | [Visual judge runbook](docs/KTIDE_LOCAL_VISION_JUDGE_V1.md) |
 | K-TIDE empty-feature-cache diagnosis and approved pilot extraction | **Read-only preflight; source reads only after explicit opt-in** | [Zero-cache recovery guide](docs/KTIDE_ZERO_CACHE_RECOVERY.md) |
 | Validated action-phase recognition, learned temporal utility, calibrated event ranking | **Research goals, not validated** | [Problem formulation](docs/PROBLEM_FORMULATION.md) |
 
