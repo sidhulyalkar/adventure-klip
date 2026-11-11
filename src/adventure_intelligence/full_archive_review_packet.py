@@ -48,6 +48,8 @@ def _cached_receipt_verified(root:Path,aid:str,start:int,end:int)->bool:
 def _candidates(audit:dict,scan:dict,scan_dir:Path,limit:int,per_source:int):
     asset_by_id={x["sourceAssetSha256"]:x for x in audit["assets"]}
     groups=defaultdict(list)
+    diagnostics={"legacySubsecondProposalsExcluded":0,
+                 "legacySubsecondSourceIds":[]}
     for aid,entry in scan["assets"].items():
         if entry.get("status")!="coarse_completed":
             continue
@@ -63,14 +65,34 @@ def _candidates(audit:dict,scan:dict,scan_dir:Path,limit:int,per_source:int):
                 values.get("shaVerifiedDuringThisScan") is not True or
                 not isinstance(values.get("candidateHypotheses"),list)):
             raise ValueError("Coarse source scan identity/provenance mismatch")
-        for proposal in values["candidateHypotheses"]:
-            start,end=proposal["startMs"],proposal["endMs"]
-            role=proposal["role"]
-            if (type(start) is not int or type(end) is not int
-                    or not 0<=start<end<=meta["durationMsFromCatalog"]
-                    or not 1000<=end-start<=60000
-                    or role not in ("motion_change_hypothesis","uniform_timeline_control")):
-                raise ValueError("Unbounded or unsupported coarse source interval")
+        duration=meta["durationMsFromCatalog"]
+        for index,proposal in enumerate(values["candidateHypotheses"]):
+            if not isinstance(proposal,dict):
+                raise ValueError(f"Malformed candidate source={aid[:12]} index={index}")
+            start,end=proposal.get("startMs"),proposal.get("endMs")
+            role=proposal.get("role")
+            allowed_role=role in ("motion_change_hypothesis","uniform_timeline_control")
+            # Legacy scanner synthesized a 1000ms interval on a source shorter
+            # than 1000ms. Never edit original per-source SHA-backed reports.
+            # Skip ONLY this exactly recognizable impossible proposal and
+            # record the exclusion in the frozen packet's selection receipt.
+            legacy_short=(type(duration) is int and 0<=duration<1000
+                          and type(start) is int and type(end) is int
+                          and start==0 and end==1000 and allowed_role)
+            if legacy_short:
+                diagnostics["legacySubsecondProposalsExcluded"]+=1
+                if aid not in diagnostics["legacySubsecondSourceIds"]:
+                    diagnostics["legacySubsecondSourceIds"].append(aid)
+                continue
+            if (type(duration) is not int or duration<1000
+                    or type(start) is not int or type(end) is not int
+                    or not 0<=start<end<=duration
+                    or not 1000<=end-start<=60000 or not allowed_role):
+                raise ValueError(
+                    f"Unbounded or unsupported coarse source interval: "
+                    f"source={aid[:12]} index={index} durationMs={duration!r} "
+                    f"window=({start!r},{end!r}) role={role!r}"
+                )
             groups[aid].append({
                 "asset":meta,"startMs":start,"endMs":end,
                 "selectionRole":role,
@@ -118,7 +140,8 @@ def _candidates(audit:dict,scan:dict,scan_dir:Path,limit:int,per_source:int):
                 break
         if not changed:
             break
-    return chosen
+    diagnostics["legacySubsecondSourceIds"].sort()
+    return chosen,diagnostics
 
 
 def _generate_cached(root:Path,source:Path,aid:str,start:int,end:int):
@@ -188,7 +211,7 @@ def prepare_campaign_packet(workspace:Path,audit_file:Path,scan_dir:Path,
             or scanned.get("campaignAuditSha256")!=audit_sha
             or not isinstance(scanned.get("assets"),dict)):
         raise ValueError("Source scan and campaign audit fingerprints do not match")
-    choices=_candidates(audit,scanned,scans,limit,per_source)
+    choices,window_diagnostics=_candidates(audit,scanned,scans,limit,per_source)
     if not choices:
         raise ValueError("BLOCKED: no qualified source-level coarse windows; scan healthy local originals first")
     records=[_record({
@@ -302,6 +325,7 @@ def prepare_campaign_packet(workspace:Path,audit_file:Path,scan_dir:Path,
         "maxRecordsRequested":limit,"maxPerSource":per_source,
         "selectedRecords":len(records),
         "selectedUniqueSources":len(chosen_by_asset),
+        "windowValidation":window_diagnostics,
         "selectionRoles":dict(sorted(Counter(
             row["selectionRole"] for row in choices).items())),
         "verifiedReviewProxies":ready,
@@ -343,6 +367,7 @@ def prepare_campaign_packet(workspace:Path,audit_file:Path,scan_dir:Path,
         "directory":str(dest),"reviewPage":str(dest/"index.html"),
         "manifest":str(manifest_path),"manifestSha256":manifest_sha,
         "candidateWindows":len(records),"sourceCount":len(chosen_by_asset),
+        "windowValidation":window_diagnostics,
         "verifiedReviewableClips":ready,
         "missingVerifiedPreviews":len(records)-ready,
         "distinctOriginalHashPasses":hashed_originals,
