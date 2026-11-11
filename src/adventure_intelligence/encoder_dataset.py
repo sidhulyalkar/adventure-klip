@@ -29,6 +29,20 @@ SAMPLE_KEYS = {
 DATASET_KEYS = {"version", "featureModelKey", "embeddingDim", "samples"}
 
 
+def safe_training_workspace(path: Path) -> Path:
+    """Never create training artifacts beneath camera DCIM/originals trees.
+
+    External SSD workspaces are fine if they are separate project directories;
+    direct camera or managed-originals directories are not workspaces.
+    """
+    root = path.resolve(strict=True)
+    parts = [part.lower() for part in root.parts]
+    if any(p in {"dcim", "originals"} or re.fullmatch(r"[0-9]{3}media", p)
+           for p in parts):
+        raise ValueError("Training workspace must not be a camera/raw-originals directory")
+    return root
+
+
 def _safe_file(root: Path, relative: str) -> Path:
     if (not isinstance(relative, str)
             or not re.fullmatch(r"shards/[a-f0-9]{24}\.npz", relative)):
