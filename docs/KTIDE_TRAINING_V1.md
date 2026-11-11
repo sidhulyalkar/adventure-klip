@@ -74,7 +74,35 @@ The inventory outputs source identity, duration, cached sample counts, and
 possible timestamp metadata. groupId, goal, and subsport remain unset,
 requiring explicit owner assignment.
 
-Create a PRIVATE selection file at
+To avoid manually selecting every 30-second source window, create a PRIVATE
+source-assignments file with one entry per chosen source SHA. You must
+provide the actual trip grouping and editorial profile for each source:
+
+    {
+      "version": "klip-ktide-source-assignments-v1",
+      "sources": [
+        {
+          "sourceSha256": "REPLACE_WITH_64_CHARACTER_SOURCE_SHA256",
+          "groupId": "verified-trip-a",
+          "goal": "sport_action",
+          "subsport": "skiing_trees"
+        }
+      ]
+    }
+
+Use a real file with at least three independently identified trip groups.
+Then generate uniformly distributed windows, including low-motion controls:
+
+    python scripts/klip_plan_ktide.py \
+      --workspace "$WS" \
+      --assignments "$WS/reports/ktide-assignments-v1.json" \
+      --window-seconds 30 --stride-seconds 30 --max-per-source 20 \
+      > "$WS/reports/ktide-selection-v1.json"
+
+The planner uses only existing semantic caches, never opens the original
+camera videos, and does not infer family relationships or trip IDs.
+
+Alternatively, create a PRIVATE selection file at
 $WS/reports/ktide-selection-v1.json with:
 
     {
