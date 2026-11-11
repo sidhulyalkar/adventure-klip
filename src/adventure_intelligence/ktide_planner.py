@@ -17,7 +17,7 @@ from .scene_relevance import GOAL_WEIGHTS
 ASSIGNMENTS_VERSION = "klip-ktide-source-assignments-v1"
 
 
-def validate_assignments(document: dict) -> list[dict]:
+def validate_assignments(document: dict, *, allow_provisional_smoke: bool=False) -> list[dict]:
     if (not isinstance(document, dict)
             or set(document) != {"version", "sources"}
             or document["version"] != ASSIGNMENTS_VERSION):
@@ -36,6 +36,8 @@ def validate_assignments(document: dict) -> list[dict]:
         seen.add(sha)
         if not isinstance(group, str) or not KEY.fullmatch(group):
             raise ValueError("Provide a nonempty stable trip/session group")
+        if group.startswith("provisional_") and not allow_provisional_smoke:
+            raise ValueError("Provisional capture groups require explicit smoke-only opt-in")
         groups.add(group)
         if (not isinstance(row["goal"], str)
                 or not isinstance(row["subsport"], str)
@@ -52,7 +54,8 @@ def plan_cached_windows(workspace, assignments: dict, *,
                         window_seconds: int = 30,
                         stride_seconds: int = 30,
                         min_cached_frames: int = 4,
-                        max_per_source: int = 20) -> dict:
+                        max_per_source: int = 20,
+                        allow_provisional_smoke: bool=False) -> dict:
     if provider not in {"siglip2", "histogram"}:
         raise ValueError("Only completed frozen feature providers supported")
     if (type(window_seconds) is not int or not 5 <= window_seconds <= 120
@@ -60,7 +63,8 @@ def plan_cached_windows(workspace, assignments: dict, *,
             or type(min_cached_frames) is not int or not 4 <= min_cached_frames <= 256
             or type(max_per_source) is not int or not 1 <= max_per_source <= 500):
         raise ValueError("Invalid temporal coverage parameters")
-    selected = validate_assignments(assignments)
+    selected = validate_assignments(
+        assignments, allow_provisional_smoke=allow_provisional_smoke)
     from .catalog import connect
     from .scene_atlas import frames_for_asset, unit_vector
     root = workspace.resolve(strict=True)
