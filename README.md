@@ -146,6 +146,7 @@ flowchart TB
 | Editable goal × sub-sport scene relevance profiles (35 normalized dimensions, 18 sub-sports, 5 goals) | **On `main` after V1 merge: offline scoring only, weights not learned** | [Sub-sport profile guide](docs/KLIP_SUBSPORT_PROFILES_V1.md) |
 | Frozen review-export intent analysis | **Offline and provisional; requires packet manifest for SHA/record checks** | [Private review intent guide](docs/REVIEW_INTENT_OFFLINE.md) |
 | Trainable K-TIDE temporal encoder over completed frozen feature caches | **Research V1; opt-in local training, group-held-out evaluation** | [Training runbook](docs/KTIDE_TRAINING_V1.md) |
+| K-TIDE human-grounded, held-out retrieval research | **Offline, blind cross-trip study; user judgments required, no private benchmarks yet** | [Study protocol](docs/KTIDE_HELDOUT_STUDY_V1.md) |
 | Validated action-phase recognition, learned temporal utility, calibrated event ranking | **Research goals, not validated** | [Problem formulation](docs/PROBLEM_FORMULATION.md) |
 
 ## Run it locally

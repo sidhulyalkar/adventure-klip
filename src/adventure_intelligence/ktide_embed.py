@@ -44,6 +44,12 @@ def encode_dataset(manifest: Path, checkpoint: Path, *, batch_size: int = 8,
     model = KTIDEEncoder(**config)
     model.load_state_dict(state["state_dict"], strict=True)
     model.to(device).eval()
+    # Stable randomly initialized architecture control. It has NOT seen
+    # training data; create it with an isolated CPU RNG state.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(1337)
+        untrained = KTIDEEncoder(**config)
+    untrained.to(device).eval()
     out = []
     with torch.no_grad():
         for offset in range(0, len(doc["samples"]), batch_size):
@@ -52,16 +58,29 @@ def encode_dataset(manifest: Path, checkpoint: Path, *, batch_size: int = 8,
                                   len(rows), device=device))
             x, t, valid, _ = batch
             representation = model(x, t, valid)["embedding"].cpu().float()
+            random_representation = untrained(x, t, valid)["embedding"].cpu().float()
             counts = valid.sum(dim=1).unsqueeze(-1).float()
             teacher = ((x * valid.unsqueeze(-1)).sum(dim=1) / counts)
             teacher = torch.nn.functional.normalize(teacher, dim=-1)
             teacher = teacher.cpu().float()
+            gap = (t[:, 1:] - t[:, :-1])
+            adjacent = (gap > 0) & (gap <= config["max_gap_ms"])
+            adjacent &= valid[:, 1:] & valid[:, :-1]
+            change = (x[:, 1:] - x[:, :-1]).abs() * adjacent.unsqueeze(-1)
+            change_sum = change.sum(dim=1)
+            change_norm = change_sum.norm(dim=-1)
+            change_mean = torch.nn.functional.normalize(change_sum, dim=-1)
             for i, row in enumerate(rows):
                 out.append({
                     "sampleId": row["sampleId"], "sourceSha256": row["sourceSha256"],
                     "groupId": row["groupId"],
                     "ktideEmbedding": representation[i].tolist(),
                     "meanTeacherEmbedding": teacher[i].tolist(),
+                    "untrainedEmbedding": random_representation[i].tolist(),
+                    "temporalChangeEmbedding": (
+                        change_mean[i].cpu().tolist()
+                        if float(change_norm[i]) > 1e-8 else None
+                    ),
                 })
     return {
         "version": "klip-ktide-embedding-report-v1",
@@ -69,6 +88,8 @@ def encode_dataset(manifest: Path, checkpoint: Path, *, batch_size: int = 8,
         "featureModelKey": doc["featureModelKey"],
         "checkpointSha256": sha256(checkpoint.read_bytes()).hexdigest(),
         "numSamples": len(out),
+        "randomControlSeed": 1337,
+        "temporalChange": "absolute_adjacent_embedding_delta_with_gap_mask",
         "results": out,
         "eventClaimsVerified": False, "mediaRead": False,
         "humanPreferenceRankingQualified": False,

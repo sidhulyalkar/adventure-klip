@@ -114,6 +114,9 @@ def test_end_to_end_one_epoch_train_and_held_out_evaluate(tmp_path):
     assert encoded["mediaRead"] is False
     assert len(encoded["results"][0]["ktideEmbedding"]) == 32
     assert len(encoded["results"][0]["meanTeacherEmbedding"]) == 16
+    assert len(encoded["results"][0]["untrainedEmbedding"]) == 32
+    assert len(encoded["results"][0]["temporalChangeEmbedding"]) == 16
+    assert encoded["randomControlSeed"] == 1337
     assert encoded["humanPreferenceRankingQualified"] is False
     with pytest.raises(ValueError, match="overwrite"):
         train_local(
