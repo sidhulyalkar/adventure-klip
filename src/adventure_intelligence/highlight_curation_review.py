@@ -96,7 +96,7 @@ progress{width:140px;accent-color:var(--salmon)}
 <div class="grid" style="margin-top:15px">
 <div><label for="outcome">Observed action outcome</label><select id="outcome"><option value="unknown">Unknown</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="partial">Partial</option><option value="not_applicable">No action observed</option></select></div>
 <div><label for="outcome-visible">Outcome visible?</label><select id="outcome-visible"><option value="ambiguous">Ambiguous / unknown</option><option value="yes">Yes</option><option value="no">No</option></select></div>
-<div><label for="goal">Reason for this highlight</label><select id="goal"><option value="athletic_skill">Athletic achievement</option><option value="story_payoff">Story or payoff</option><option value="visual_quality">Visual quality</option><option value="humor">Humor</option><option value="personal_memory">Personal significance</option><option value="nature_encounter">Nature encounter</option><option value="technical_documentation">Technical documentation</option><option value="other">Other</option></select></div>
+<div><label for="goal">Reason for this highlight</label><select id="goal"><option value="">Choose purpose (required)</option><option value="athletic_skill">Athletic achievement</option><option value="story_payoff">Story or payoff</option><option value="visual_quality">Visual quality</option><option value="humor">Humor</option><option value="personal_memory">Personal significance</option><option value="nature_encounter">Nature encounter</option><option value="technical_documentation">Technical documentation</option><option value="other">Other</option></select></div>
 </div>
 </section>
 <section class="card">
@@ -167,7 +167,7 @@ function show(){
   choice=d.choice||null;highlightChoice();
   $('outcome').value=d.outcome||'unknown';
   $('outcome-visible').value=d.outcomeVisible||'ambiguous';
-  $('goal').value=d.goal||'athletic_skill';
+  $('goal').value=d.goal||'';
   $('tech').value=d.technicalQuality==null?'':String(d.technicalQuality);
   $('aesth').value=d.aestheticQuality==null?'':String(d.aestheticQuality);
   $('readability').value=d.eventReadability==null?'':String(d.eventReadability);
@@ -205,6 +205,7 @@ function save(){
     $('error').textContent='Use a simple pseudonymous reviewer ID, 4 to 100 characters.';return;
   }
   if(!choice){$('error').textContent='Choose Keep, Skip, Neither, or Cannot tell.';return;}
+  if(!value('goal')){$('error').textContent='Choose the clip purpose explicitly.';return;}
   const outcome=value('outcome'),visible=value('outcome-visible');
   if((outcome==='completed'||outcome==='failed')&&visible!=='yes'){
     $('error').textContent='A completed or failed outcome must be visible; choose Unknown otherwise.';return;
