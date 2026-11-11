@@ -6,7 +6,7 @@ Klip event/highlight scores. Never opens/remaps original video files.
 """
 from __future__ import annotations
 
-from collections import Counter
+from bisect import bisect_left
 import math
 
 from .encoder_dataset import KEY, SHA
@@ -96,7 +96,8 @@ def plan_cached_windows(workspace, assignments: dict, *,
             start = 0
             while start < limit_ms:
                 end = min(start + window_seconds * 1000, limit_ms)
-                if sum(start <= t < end for t in times) >= min_cached_frames:
+                if (bisect_left(times, end) - bisect_left(times, start)
+                        >= min_cached_frames):
                     candidate.append((start, end))
                 start += stride_seconds * 1000
             if len(candidate) > max_per_source:
