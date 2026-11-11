@@ -144,7 +144,7 @@ def test_phase_completeness_separates_absence_and_unknown():
 
 def test_duplicate_penalty_requires_explicit_pairwise_measurements():
     assert pairwise_duplicate_penalty(["a", "b"], {}) == 0
-    assert pairwise_duplicate_pen(["a", "b"], {("a", "b"): .8}) == 12
+    assert pairwise_duplicate_penalty(["a", "b"], {("a", "b"): .8}) == 12
     assert pairwise_duplicate_penalty(["b", "a"], {("a", "b"): .8}) == 12
     with pytest.raises(ValueError):
         pairwise_duplicate_penalty(["a", "a"], {})
