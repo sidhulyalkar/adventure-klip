@@ -246,7 +246,8 @@ def local_ollama_json(frames: list[dict], *, model: str = MODEL,
     if len(raw)>MAX_RESPONSE_BYTES:
         raise ValueError("Local model response too large")
     result = json.loads(raw)
-    raw_answer = result.get("message",{}).get("content")
+    message = result.get("message") if isinstance(result, dict) else None
+    raw_answer = message.get("content") if isinstance(message, dict) else None
     if not isinstance(raw_answer,str) or len(raw_answer)>MAX_RESPONSE_BYTES:
         raise ValueError("Local judge returned no structured text")
     parsed = json.loads(raw_answer)
@@ -270,11 +271,12 @@ def validate_judge_proposal(value: dict, frame_count: int) -> dict:
     if not isinstance(subsport,str) or subsport not in SUBSPORT_PRIORS:
         raise ValueError("Unsupported sub-sport suggestion")
     summary=_short_string(value["sceneSummary"],300)
-    if value["sceneContext"] not in {
+    if not isinstance(value["sceneContext"], str) or value["sceneContext"] not in {
             "snow_mountain","underwater_reef","underwater_open_water",
             "forest_trail","coastal_outdoor","general_outdoor","indoor","unknown"}:
         raise ValueError("Unsupported scene context proposal")
-    if value["cameraQuality"] not in {"clear","mixed","obscured","unknown"}:
+    if (not isinstance(value["cameraQuality"], str)
+            or value["cameraQuality"] not in {"clear","mixed","obscured","unknown"}):
         raise ValueError("Unknown camera quality judgment")
     certainty=value["confidence"]
     if (type(certainty) not in (float,int) or not 0<=certainty<=1):
