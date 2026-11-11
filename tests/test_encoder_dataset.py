@@ -7,6 +7,7 @@ import pytest
 
 from adventure_intelligence.encoder_dataset import (
     VERSION, group_splits, validate_manifest, load_manifest,
+    safe_training_workspace,
 )
 from adventure_intelligence.encoder_export import validate_selection, SELECTION_VERSION
 
@@ -113,3 +114,17 @@ def test_selection_needs_declared_groups_not_inferred_trip():
     selections[2]["groupId"] = selections[0]["groupId"]
     with pytest.raises(ValueError, match="3 user-declared"):
         validate_selection({"version": SELECTION_VERSION, "selections": selections})
+
+
+@pytest.mark.parametrize("subdir", ["DCIM", "DCIM/100MEDIA", "originals"])
+def test_training_must_not_write_in_raw_video_directories(tmp_path, subdir):
+    path = tmp_path / subdir
+    path.mkdir(parents=True)
+    with pytest.raises(ValueError, match="camera/raw-originals"):
+        safe_training_workspace(path)
+
+
+def test_separate_external_volume_workspace_is_allowed(tmp_path):
+    path = tmp_path / "Sid_DJI_SSD" / "AdventureAI"
+    path.mkdir(parents=True)
+    assert safe_training_workspace(path) == path
