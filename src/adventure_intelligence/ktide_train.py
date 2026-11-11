@@ -17,6 +17,7 @@ import re
 
 from .encoder_dataset import (
     MAX_FRAMES, _safe_file, group_splits, load_manifest, validate_manifest,
+    safe_training_workspace,
 )
 
 
@@ -129,7 +130,7 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
         raise ValueError("Unsafe or unsupported training hyperparameters")
     if device not in {"cpu", "cuda", "mps", "auto"}:
         raise ValueError("Unsupported training device")
-    root = workspace.resolve(strict=True)
+    root = safe_training_workspace(workspace)
     reports = root / "reports"
     if reports.is_symlink() or not reports.is_dir():
         raise ValueError("Workspace reports directory missing or symlinked")
