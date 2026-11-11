@@ -153,3 +153,26 @@ def test_duplicate_penalty_requires_explicit_pairwise_measurements():
             ["a", "b"], {("a", "b"): .8, ("b", "a"): .8})
     with pytest.raises(ValueError):
         pairwise_duplicate_penalty(["a", "b"], {("a", "b"): 1.3})
+
+
+
+def test_offline_cli_evaluates_synthetic_packet_without_media_reads():
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    path = root / "examples" / "scene_evidence_synthetic_v0.json"
+    proc = subprocess.run(
+        [sys.executable, str(root / "scripts" / "klip_scene_metric.py"),
+         "--input", str(path)],
+        cwd=root, capture_output=True, text=True, timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["evaluatedEpisodes"] == 2
+    assert result["mediaFilesAccessed"] == 0
+    assert result["publishAuthorized"] is False
+    assert all(0 <= x["lower"] <= x["upper"] <= 100
+               for x in result["results"])
