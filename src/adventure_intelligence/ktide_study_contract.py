@@ -53,7 +53,8 @@ def validate_training_lineage(training: dict, manifest: dict,
     if training.get("splitAssignments") != computed:
         raise ValueError("Frozen training group split mismatch")
     checkpoint = training.get("checkpointSha256")
-    if not isinstance(checkpoint, str) or len(checkpoint) != 64:
+    if (not isinstance(checkpoint, str) or len(checkpoint) != 64
+            or any(c not in "0123456789abcdef" for c in checkpoint)):
         raise ValueError("Missing checkpoint identity")
     if training.get("humanPreferenceRankingQualified") is not False:
         raise ValueError("Do not treat SSL as validated human preference prediction")
@@ -247,12 +248,24 @@ def validate_embeddings(report: dict, manifest: dict, training: dict) -> dict:
             raise ValueError("Embedding sample provenance mismatch")
         for method in ("ktideEmbedding", "meanTeacherEmbedding"):
             vec = item.get(method)
-            if (not isinstance(vec, list) or not 8 <= len(vec) <= 1024
+            if (not isinstance(vec, list) or not 8 <= len(vec) <= 8192
                     or any(isinstance(x, bool) or not isinstance(x, (int, float))
                            or not isfinite(x) for x in vec)):
                 raise ValueError("Malformed or missing evaluation embedding: " + method)
             dim = dims.setdefault(method, len(vec))
             if len(vec) != dim or sum(float(x)**2 for x in vec) < 1e-12:
                 raise ValueError("Degenerate or dimension-inconsistent embedding")
+        for optional in ("untrainedEmbedding", "temporalChangeEmbedding"):
+            if optional not in item or item[optional] is None:
+                continue
+            vec = item[optional]
+            if (not isinstance(vec, list) or not 8 <= len(vec) <= 8192
+                    or any(isinstance(x, bool) or not isinstance(x, (int, float))
+                           or not isfinite(x) for x in vec)
+                    or sum(float(x)**2 for x in vec) < 1e-12):
+                raise ValueError("Invalid optional control embedding: " + optional)
+            dimension = dims.setdefault(optional, len(vec))
+            if len(vec) != dimension:
+                raise ValueError("Mixed optional control dimensions")
         found[sid] = item
     return found
