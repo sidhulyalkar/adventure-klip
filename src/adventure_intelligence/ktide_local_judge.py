@@ -7,7 +7,7 @@ permissions. No archive catalog updates.
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import base64
@@ -424,12 +424,23 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
             entry["failureType"]=type(exc).__name__
         judged.append(entry)
     assignments=merge_smoke_assignments(plan,judged,existing)
+    valid=[r["judgeProposal"] for r in judged
+           if r["judgeStatus"]=="model_hypothesis"]
+    summary={
+        "sceneContexts":dict(sorted(Counter(p["sceneContext"] for p in valid).items())),
+        "suggestedSubsports":dict(sorted(Counter(p["subsport"] for p in valid).items())),
+        "suggestedFeatureDimensions":dict(sorted(Counter(
+            x["dimension"] for p in valid for x in p["featureCandidates"]).items())),
+        "uncertainOrFailedSources":len(judged)-len(valid),
+        "allStatisticsAreModelProposals":True,
+    }
     return {
         "version":VERSION,"model":model,
         "frameCountPerVideo":frame_count,
         "sourceCount":len(judged),
         "successes":sum(x["judgeStatus"]=="model_hypothesis" for x in judged),
         "proposals":judged,
+        "hypothesisSummary":summary,
         "smokeAssignments":assignments,
         "groupingStatus":"provisional_capture_period_not_verified_trip",
         "featuresAreHumanVerified":False,
