@@ -13,13 +13,14 @@ from pathlib import Path
 from adventure_intelligence.encoder_dataset import load_manifest
 from adventure_intelligence.ktide_study_contract import (
     build_blind_deck, load_json, validate_deck, validate_training_lineage,
+    review_worksheet,
 )
 from adventure_intelligence.ktide_study_metrics import evaluate_retrieval
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("plan", "audit", "evaluate"), required=True)
+    parser.add_argument("--mode", choices=("plan", "worksheet", "audit", "evaluate"), required=True)
     parser.add_argument("--manifest", required=True,
                         help="Exact frozen K-TIDE dataset manifest JSON")
     parser.add_argument("--training-report", required=True,
@@ -33,7 +34,7 @@ def main() -> int:
                         choices=("scene_situation", "temporal_event", "editorial_context"))
     args = parser.parse_args()
     if args.mode != "plan" and not args.study:
-        parser.error("--study required for audit/evaluate")
+        parser.error("--study required for worksheet/audit/evaluate")
     if args.mode == "evaluate" and not args.embeddings:
         parser.error("--embeddings required for evaluate")
     try:
@@ -48,22 +49,27 @@ def main() -> int:
                 candidates_per_query=args.candidates_per_query,
                 seed=args.seed, task=args.task)
         else:
-            deck, _ = load_json(Path(args.study).expanduser(),
-                                max_bytes=16_000_000)
-            if args.mode == "audit":
+            deck, study_sha = load_json(Path(args.study).expanduser(),
+                                        max_bytes=16_000_000)
+            if args.mode == "worksheet":
+                result = review_worksheet(deck, manifest, manifest_sha, training)
+            elif args.mode == "audit":
                 result = {
                     "version": "klip-ktide-study-audit-v1",
                     **validate_deck(deck, manifest, manifest_sha, training,
                                     require_complete=False),
+                    "studyFileSha256": study_sha,
                     "rawMediaRead": False,
                     "modelPredictionsNotShownToReviewer": True,
                 }
             else:
-                representations, _ = load_json(
+                representations, projection_sha = load_json(
                     Path(args.embeddings).expanduser(), max_bytes=64_000_000)
                 result = evaluate_retrieval(
                     deck, manifest, manifest_sha, training, representations,
                     bootstrap_seed=args.seed)
+                result["studyFileSha256"] = study_sha
+                result["embeddingReportSha256"] = projection_sha
     except (ValueError, OSError, UnicodeError) as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2, sort_keys=True))
