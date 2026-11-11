@@ -7,14 +7,17 @@ animal species, successful sports actions, or objective causation.
 from __future__ import annotations
 
 from collections import defaultdict
-from math import isfinite, log2, sqrt
+from math import log2, sqrt
 import random
 
 from .ktide_study_contract import validate_deck, validate_embeddings
 
 
 METHODS = ("ktideEmbedding", "meanTeacherEmbedding")
-METRICS = ("ndcg5", "recall5", "precision5", "mrr", "pairwiseAgreement")
+METRICS = tuple(
+    f"{kind}{k}" for kind in ("ndcg", "recall", "precision") for k in (1,3,5,10)
+) + ("mrr", "pairwiseAgreement")
+CONTROLS = ("untrainedEmbedding", "temporalChangeEmbedding")
 
 
 def _cosine(a: list, b: list) -> float:
@@ -61,21 +64,6 @@ def _query_metrics(options: list[tuple[str,int,float]]) -> dict:
     result["judgedCandidates"] = len(options)
     result["relevantCandidates"] = npositive
     return result
-
-
-def _macro_by_group(rows: list[dict], name: str) -> dict:
-    grouped = defaultdict(list)
-    for row in rows:
-        grouped[row["tripGroup"]].append(row["metrics"][name])
-    def avg(nums):
-        return sum(nums)/len(nums) if nums else None
-    return {
-        key: avg([r[metric] for r in records if r[metric] is not None])
-        for key in METRICS for metric in (key,)
-        for records in ([{
-            k: avg([x[k] for x in v if x[k] is not None])
-            for k in METRICS} for v in grouped.values()],)
-    }
 
 
 def _group_metric(rows: list[dict], key: str, method: str):
@@ -155,6 +143,7 @@ def evaluate_retrieval(deck: dict, manifest: dict, manifest_sha: str,
             ]
             results[method] = _query_metrics(comparisons)
         outcomes.append({
+            "queryId": qid,
             "tripGroup":group,
             "subsport":samples[qid]["subsport"],
             "task":query["task"], "metrics":results,
@@ -172,6 +161,41 @@ def evaluate_retrieval(deck: dict, manifest: dict, manifest_sha: str,
               if all(totals[m][key] is not None for m in METHODS) else None)
         for key in METRICS
     }
+    control_summary = {}
+    for control in CONTROLS:
+        matched = []
+        for query in deck["queries"]:
+            ids = [query["querySampleId"]] + [c["sampleId"] for c in query["candidates"]]
+            if any(vectors[sid].get(control) is None for sid in ids):
+                continue
+            group = samples[query["querySampleId"]]["groupId"]
+            options = [
+                (row["sampleId"], row["relevance"],
+                 _cosine(vectors[query["querySampleId"]][control],
+                         vectors[row["sampleId"]][control]))
+                for row in query["candidates"]
+            ]
+            matched.append({
+                "tripGroup": group,
+                "metrics": {
+                    control: _query_metrics(options),
+                    "ktideEmbedding": next(r["metrics"]["ktideEmbedding"]
+                                           for r in outcomes
+                                           if r["tripGroup"] == group
+                                           and r["queryId"] == query["querySampleId"]),
+                },
+            })
+        scored = len(matched)
+        control_summary[control] = {
+            "fullySupportedQueries": scored,
+            "totalQueries": len(outcomes),
+            "coverageFraction": round(scored/len(outcomes), 6),
+            "comparisonIsSameQuerySubset": True,
+            "ndcg5Control": (round(_group_metric(matched,"ndcg5",control),6)
+                             if scored else None),
+            "ndcg5KTIDEOnMatched": (round(_group_metric(matched,"ndcg5","ktideEmbedding"),6)
+                                    if scored else None),
+        }
     stratified={}
     for activity in sorted({r["subsport"] for r in outcomes}):
         subset=[r for r in outcomes if r["subsport"]==activity]
@@ -196,6 +220,7 @@ def evaluate_retrieval(deck: dict, manifest: dict, manifest_sha: str,
         "deltaKTIDEMinusFrozenMean":delta,
         "pairedGroupBootstrap":_bootstrap_deltas(outcomes,seed=bootstrap_seed),
         "perSubsport":stratified,
+        "additionalControls":control_summary,
         "rawVideoRead":False,"modelInferencePerformed":False,
         "humanGroundTruthGeneratedByModel":False,
         "animalSpeciesOrActionVerified":False,
