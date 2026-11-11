@@ -266,3 +266,41 @@ def test_fully_reviewed_all_positive_query_is_reported_not_a_free_win():
                               fake_embeddings(manifest,training))
     assert report["judgmentCoverage"]["queryAnswerability"]["all_positive"]==1
     assert report["rankingQueries"]==7
+
+
+
+def test_offline_cli_plan_audit_evaluate_roundtrip(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    cli = root / "scripts" / "klip_ktide_study.py"
+    manifest,digest,training=study_data()
+    mp = tmp_path / "manifest.json"
+    tp = tmp_path / "training-report.json"
+    sp = tmp_path / "study.json"
+    ep = tmp_path / "embeddings.json"
+    mp.write_text(json.dumps(manifest,sort_keys=True))
+    tp.write_text(json.dumps(training))
+    ep.write_text(json.dumps(fake_embeddings(manifest,training)))
+    base = ["--manifest",str(mp),"--training-report",str(tp)]
+    def invoke(*args):
+        return subprocess.run([sys.executable,str(cli),*base,*args],
+                              text=True,capture_output=True,cwd=root,timeout=25)
+    planned=invoke("--mode","plan","--max-queries","12",
+                   "--candidates-per-query","5")
+    assert planned.returncode==0,planned.stderr
+    deck=json.loads(planned.stdout)
+    sp.write_text(json.dumps(deck))
+    audit=invoke("--mode","audit","--study",str(sp))
+    assert audit.returncode==0,audit.stderr
+    assert not json.loads(audit.stdout)["fullyAdjudicated"]
+    sp.write_text(json.dumps(judge(deck)))
+    evaluated=invoke("--mode","evaluate","--study",str(sp),
+                     "--embeddings",str(ep))
+    assert evaluated.returncode==0,evaluated.stderr
+    result=json.loads(evaluated.stdout)
+    assert result["rankingQueries"]==12
+    assert result["onlyHeldoutTripGroupsEvaluated"] is True
+    assert result["rawVideoRead"] is False
