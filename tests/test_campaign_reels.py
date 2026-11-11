@@ -237,3 +237,55 @@ def test_synthetic_proxy_reel_render_is_silent_and_has_valid_video(tmp_path):
         assert result["originalVideoReads"]==0
         assert result["audio"] is False
         assert result["estimatedDurationSeconds"]>1.5
+
+
+def test_reviewed_reel_routes_failures_memories_and_skip_followups(monkeypatch, tmp_path):
+    ws, packet, records, status, manifest_sha = make_packet(
+        tmp_path, sports=("ski", "snorkeling", "ski"))
+    audit = ws / "reports" / "campaign" / "audit" / "campaign-audit.json"
+    audit.parent.mkdir()
+    audit.write_text("{}")
+    scan = ws / "reports" / "campaign" / "coarse-scan"
+    scan.mkdir()
+    monkeypatch.setattr(cr, "campaign_progress", lambda *a, **k: status)
+    monkeypatch.setattr(cr, "_safe_dest", lambda root, path: Path(path))
+    def entry(i, choice, goal, note, outcome="unknown", visible="ambiguous"):
+        return {
+            "recordId": records[i]["recordId"],
+            "annotatorId": "reviewer-001", "role": "athlete",
+            "goal": goal, "choice": choice,
+            "outcome": outcome, "outcomeVisible": visible,
+            "technicalQuality": None, "aestheticQuality": None,
+            "eventReadability": None, "eventPeakMs": None,
+            "resolutionMs": None, "rationale": note,
+        }
+    review_path = ws / "reviews.json"
+    review_path.write_text(json.dumps({
+        "version": REVIEW_VERSION, "manifestSha256": manifest_sha,
+        "reviews": [
+            entry(0, "keep", "athletic_skill",
+                  "Keep this crash to analyze technique and improve future lines",
+                  outcome="failed", visible="yes"),
+            entry(1, "keep", "nature_encounter",
+                  "Great reef encounter but camera leaves the water; trim"),
+            entry(2, "skip", "athletic_skill",
+                  "Accidental footage, delete this unneeded recording"),
+        ],
+    }))
+    dest = ws / "reports" / "goal-conditioned-v2-test"
+    result = cr.plan_sport_reels(
+        ws, audit, scan, packet, dest,
+        mode="reviewed", reviews_file=review_path)
+    assert result["selected"]["ski"] == 0
+    assert result["selected"]["snorkeling"] == 1
+    assert result["sourceOriginalReads"] == 0
+    plan = json.loads((dest / "reel-plan.json").read_text())
+    assert len(plan["additionalReviewedCollections"]["technique_analysis"]) == 1
+    assert plan["additionalReviewedCollections"]["technique_analysis"][0][
+        "requiresSeparateHumanReview"] is True
+    assert len(plan["manualOnlyDiscardHolds"]) == 1
+    assert len(plan["humanEditorialFollowups"]) >= 2
+    assert plan["humanRouting"]["reviewCount"] == 3
+    assert plan["humanRouting"]["userDataTrained"] is False
+    assert not plan["reels"]["snorkeling"]["selected"][0][
+        "humanCurationV2"]["autoTrimAuthorized"]

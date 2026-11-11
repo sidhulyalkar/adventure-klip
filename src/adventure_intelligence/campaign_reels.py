@@ -26,6 +26,7 @@ from .highlight_curation_pilot import (
     VERSION as PILOT_VERSION, MANIFEST_VERSION, _safe_dest
 )
 from .highlight_curation_review import REVIEW_VERSION, _review
+from .review_utility_v2 import editorial_route, VERSION as ROUTING_VERSION
 from .media import require_tool
 
 VERSION = "klip-reviewed-proxy-sport-reels-v1"
@@ -239,6 +240,7 @@ def _packet_candidates(root: Path, packet_dir: Path, status: dict,
                 "eventReadability": reviewed["eventReadability"],
             } if reviewed else None,
             "humanPreferenceTieBreaker": _rating_score(reviewed) if reviewed else None,
+            "humanCurationV2": editorial_route(reviewed) if reviewed else None,
             "eventUnderstandingStatus": "human_reported_unadjudicated" if reviewed else "unknown",
             "why": _explanation(item["selectionRole"], reviewed),
             "publicationApproved": False,
@@ -259,12 +261,19 @@ def _choose(rows: list[dict], sport: str, mode: str,
             duration_budget_s: float, max_per_sport: int) -> list[dict]:
     options = [
         r for r in rows if r["sport"] == sport
-        and (mode == "exploratory" or r["humanPreference"] == "keep")
+        and (mode == "exploratory" or (
+            r["humanPreference"] == "keep"
+            and (r.get("humanCurationV2") or {}).get(
+                "eligibleForSportHighlightDraft") is True))
     ]
-    # Source diversity first, then quality-based ordering only when supplied
-    # by a human. Neither is a trained model score or verified sporting event.
+    # Advisory human rationale routes analysis/memories out of sport drafts.
+    # An editorial preference must never be treated as verified event truth.
     if mode == "reviewed":
+        tiers = {"explicit_top_pick": 0, "strong_positive": 1,
+                 "ordinary_keep_or_unknown": 2}
         options.sort(key=lambda r: (
+            1 if r["humanCurationV2"]["destination"] == "scenic_transition" else 0,
+            tiers[r["humanCurationV2"]["editorialPriority"]],
             -(r["humanPreferenceTieBreaker"] or 0),
             r["sourceAssetSha256"], r["sourceStartMs"],
         ))
@@ -310,6 +319,14 @@ def _review_gallery_html(reels: dict, packet: Path, dest: Path, mode: str) -> st
                 f"{escape(x['text'])}</p>" for x in item["why"]
             )
             notes = item.get("humanRatings")
+            editorial = item.get("humanCurationV2")
+            editorial_note = (
+                "<p class='meta'>Human-intended collection: " +
+                escape(editorial["destination"].replace("_", " ")) +
+                " · Follow-up: " +
+                escape(", ".join(editorial["editActions"]) or "none") + "</p>"
+                if editorial else ""
+            )
             ratings = (
                 "<p class='meta'>Human ratings: " +
                 escape(str(notes)) + "</p>"
@@ -323,7 +340,7 @@ def _review_gallery_html(reels: dict, packet: Path, dest: Path, mode: str) -> st
                 f"<p class='meta'>Source {item['sourceStartMs']/1000:.2f}–"
                 f"{item['sourceEndMs']/1000:.2f}s · "
                 f"{escape(item['selectionRole'].replace('_',' '))}</p>"
-                f"{ratings}<details><summary>Evidence and selection reasoning</summary>"
+                f"{ratings}{editorial_note}<details><summary>Evidence and selection reasoning</summary>"
                 f"{explanation}</details></article>"
             )
         if not clips:
@@ -415,8 +432,55 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
             "publicationApproved": False,
             "containsVerifiedActionClaims": False,
         }
+    auxiliary = {"technique_analysis": [], "personal_memory": [],
+                 "needs_human_routing": []}
+    for r in rows:
+        tag = r.get("humanCurationV2") or {}
+        group = tag.get("destination")
+        if r["humanPreference"] == "keep" and group in auxiliary:
+            auxiliary[group].append({
+                "recordId": r["recordId"],
+                "sport": r["sport"],
+                "sourceAssetSha256": r["sourceAssetSha256"],
+                "sourceStartMs": r["sourceStartMs"],
+                "sourceEndMs": r["sourceEndMs"],
+                "humanCurationV2": tag,
+                "requiresSeparateHumanReview": True,
+            })
+    destination_counts = Counter(
+        r["humanCurationV2"]["destination"] for r in rows
+        if r.get("humanCurationV2") is not None)
+    # Includes requests attached to skipped cuts. These are private,
+    # source-linked *instructions for future review*, not media mutations.
+    followups = []
+    for r in rows:
+        route = r.get("humanCurationV2") or {}
+        if route.get("editActions"):
+            followups.append({
+                "recordId": r["recordId"],
+                "sourceAssetSha256": r["sourceAssetSha256"],
+                "sourceStartMs": r["sourceStartMs"],
+                "sourceEndMs": r["sourceEndMs"],
+                "humanPreference": r["humanPreference"],
+                "editActions": route["editActions"],
+                "humanTimeAnchorsMs": route["humanTimeAnchorsMs"],
+                "sourceVideoInspectedForFollowup": False,
+            })
     doc = {
         "version": VERSION,
+        "humanRouting": {
+            "version": ROUTING_VERSION,
+            "reviewCount": sum(destination_counts.values()),
+            "destinationCounts": dict(sorted(destination_counts.items())),
+            "sourceVideoInspectedByRouting": False,
+            "userDataTrained": False,
+        },
+        "additionalReviewedCollections": auxiliary,
+        "humanEditorialFollowups": followups,
+        "manualOnlyDiscardHolds": [
+            request for request in followups
+            if "manual_only_discard_request" in request["editActions"]
+        ],
         "mode": mode,
         "status": "draft_only_needs_human_review_and_master_render",
         "campaignAudit": str(audit),
@@ -434,6 +498,8 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
             "A human Keep is goal-specific preference, not publishing authorization.",
             "Sport labels come from catalog and can be unknown or incorrect.",
             "Final narrative and source-time trim require video review and optional master render.",
+            "Free-text routing and edit intent are heuristic; editActions do not trigger cuts.",
+            "Personal memories and analyzed failures remain separate, not silently discarded.",
         ],
     }
     # Avoid leaving a silently completed packet if a validation failed.
