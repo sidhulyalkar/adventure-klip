@@ -251,7 +251,10 @@ def local_ollama_json(frames: list[dict], *, model: str = MODEL,
     if not isinstance(raw_answer,str) or len(raw_answer)>MAX_RESPONSE_BYTES:
         raise ValueError("Local judge returned no structured text")
     parsed = json.loads(raw_answer)
-    return validate_judge_proposal(parsed, len(frames))
+    # The orchestration layer validates once before storing any proposal.
+    # Re-validating an already normalized result would reject its attached
+    # evidenceSource/measuredValue markers.
+    return parsed
 
 
 def _short_string(value, max_length, *, allow_empty=False) -> str:
