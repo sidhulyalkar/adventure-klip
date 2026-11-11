@@ -450,6 +450,22 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
     destination_counts = Counter(
         r["humanCurationV2"]["destination"] for r in rows
         if r.get("humanCurationV2") is not None)
+    # Includes requests attached to skipped cuts. These are private,
+    # source-linked *instructions for future review*, not media mutations.
+    followups = []
+    for r in rows:
+        route = r.get("humanCurationV2") or {}
+        if route.get("editActions"):
+            followups.append({
+                "recordId": r["recordId"],
+                "sourceAssetSha256": r["sourceAssetSha256"],
+                "sourceStartMs": r["sourceStartMs"],
+                "sourceEndMs": r["sourceEndMs"],
+                "humanPreference": r["humanPreference"],
+                "editActions": route["editActions"],
+                "humanTimeAnchorsMs": route["humanTimeAnchorsMs"],
+                "sourceVideoInspectedForFollowup": False,
+            })
     doc = {
         "version": VERSION,
         "humanRouting": {
@@ -460,6 +476,11 @@ def plan_sport_reels(workspace: Path, audit_file: Path, scan_dir: Path,
             "userDataTrained": False,
         },
         "additionalReviewedCollections": auxiliary,
+        "humanEditorialFollowups": followups,
+        "manualOnlyDiscardHolds": [
+            request for request in followups
+            if "manual_only_discard_request" in request["editActions"]
+        ],
         "mode": mode,
         "status": "draft_only_needs_human_review_and_master_render",
         "campaignAudit": str(audit),
