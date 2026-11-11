@@ -19,7 +19,7 @@ from urllib import request
 
 from .encoder_dataset import KEY, SHA
 from .ktide_planner import ASSIGNMENTS_VERSION
-from .scene_profiles import SUBSPORT_PRIORS
+from .scene_profiles import SUBSPORT_PRIORS, DIMENSIONS
 from .scene_relevance import GOAL_WEIGHTS
 
 VERSION = "klip-ktide-local-vision-judge-v1"
@@ -41,8 +41,8 @@ GOAL_FOR = {
 }
 PROMPT = """You are examining sparse ORDERED video stills, NOT watching the whole
 video. Output one strict JSON object only with exactly these keys:
-subsport, sceneSummary, tags, frameObservations, eventHints, uncertainties,
-cameraQuality, confidence.
+subsport, sceneSummary, sceneContext, tags, frameObservations, eventHints,
+featureCandidates, uncertainties, cameraQuality, confidence.
 Choose subsport from the allowed exact names below or general_adventure if
 uncertain. Do NOT guess a location, animal species, personal identity, physical
 speed, event completion, crash cause, or entire trip from sparse stills.
@@ -53,6 +53,13 @@ frameObservations: array of {frameIndex: integer, observation: string}
 eventHints: array of {kind: string, firstFrameIndex: integer,
 lastFrameIndex: integer}. The indices must be 0..N-1 with last>=first.
 tags: <=10 short visible visual elements. uncertainties: <=6 short strings.
+sceneContext: one of snow_mountain, underwater_reef, underwater_open_water,
+forest_trail, coastal_outdoor, general_outdoor, indoor, unknown.
+featureCandidates: <=8 objects with {dimension, frameIndices, observation}.
+Each dimension MUST be one of the exact names listed below and ONLY refer
+to directly visible cues in sampled frames; DO NOT supply scores or weights.
+Leave unsupported dimensions unmentioned. Mention uncertainty whenever needed.
+Supported dimensions: {dimensions}
 cameraQuality: one of clear, mixed, obscured, unknown.
 confidence: 0..1, only subjective uncalibrated model certainty.
 Keep sceneSummary <=300 characters. No marketing or inferred narrative.
@@ -223,7 +230,8 @@ def local_ollama_json(frames: list[dict], *, model: str = MODEL,
             "role": "user",
             "content": PROMPT.format(
                 allowed=", ".join(sorted(SUBSPORT_PRIORS)),
-                times=[round(x["requestedMs"]/1000,2) for x in frames]),
+                times=[round(x["requestedMs"]/1000,2) for x in frames],
+                dimensions=", ".join(DIMENSIONS)),
             "images": [base64.b64encode(frame["imageBytes"]).decode("ascii")
                        for frame in frames],
         }],
@@ -252,20 +260,26 @@ def _short_string(value, max_length, *, allow_empty=False) -> str:
 
 
 def validate_judge_proposal(value: dict, frame_count: int) -> dict:
-    required = {"subsport","sceneSummary","tags","frameObservations",
-                "eventHints","uncertainties","cameraQuality","confidence"}
+    required = {"subsport","sceneSummary","sceneContext","tags","frameObservations",
+                "eventHints","featureCandidates","uncertainties",
+                "cameraQuality","confidence"}
     if not isinstance(value,dict) or set(value)!=required:
         raise ValueError("Incorrect vision judge JSON schema")
     subsport=value["subsport"]
     if not isinstance(subsport,str) or subsport not in SUBSPORT_PRIORS:
         raise ValueError("Unsupported sub-sport suggestion")
     summary=_short_string(value["sceneSummary"],300)
+    if value["sceneContext"] not in {
+            "snow_mountain","underwater_reef","underwater_open_water",
+            "forest_trail","coastal_outdoor","general_outdoor","indoor","unknown"}:
+        raise ValueError("Unsupported scene context proposal")
     if value["cameraQuality"] not in {"clear","mixed","obscured","unknown"}:
         raise ValueError("Unknown camera quality judgment")
     certainty=value["confidence"]
     if (type(certainty) not in (float,int) or not 0<=certainty<=1):
         raise ValueError("Invalid model certainty")
     result={"subsport":subsport,"sceneSummary":summary,
+            "sceneContext":value["sceneContext"],
             "cameraQuality":value["cameraQuality"],"confidence":float(certainty)}
     for key,maxitems,maxlen in (("tags",10,50),("uncertainties",6,150)):
         items=value[key]
@@ -285,6 +299,29 @@ def validate_judge_proposal(value: dict, frame_count: int) -> dict:
         result["frameObservations"].append({
             "frameIndex":row["frameIndex"],
             "observation":_short_string(row["observation"],240)})
+    features=value["featureCandidates"]
+    if not isinstance(features,list) or len(features)>8:
+        raise ValueError("Invalid scene feature candidate count")
+    result["featureCandidates"]=[]
+    for item in features:
+        if (not isinstance(item,dict)
+                or set(item)!={"dimension","frameIndices","observation"}
+                or not isinstance(item["dimension"],str)
+                or item["dimension"] not in DIMENSIONS):
+            raise ValueError("Unsupported scene dimension proposal")
+        indices=item["frameIndices"]
+        if (not isinstance(indices,list) or not 1<=len(indices)<=frame_count
+                or any(type(idx) is not int or not 0<=idx<frame_count
+                       for idx in indices)
+                or len(indices)!=len(set(indices))):
+            raise ValueError("Feature cites invalid sampled frames")
+        result["featureCandidates"].append({
+            "dimension":item["dimension"],
+            "frameIndices":indices,
+            "observation":_short_string(item["observation"],240),
+            "evidenceSource":"model_hypothesis",
+            "measuredValue":None,
+        })
     rows=value["eventHints"]
     if not isinstance(rows,list) or len(rows)>8:
         raise ValueError("Invalid event proposals")
