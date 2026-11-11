@@ -38,7 +38,12 @@ def inventory():
 def judgment():
     return {
         "subsport":"snorkeling_reef","sceneSummary":"Camera shows reef and blue water.",
-        "tags":["reef","water"],"frameObservations":[
+        "sceneContext":"underwater_reef",
+        "tags":["reef","water"],
+        "featureCandidates":[{"dimension":"water_visibility",
+                              "frameIndices":[0,1],
+                              "observation":"Patchy clear water between reef shapes"}],
+        "frameObservations":[
             {"frameIndex":0,"observation":"Blue underwater view"},
             {"frameIndex":1,"observation":"Reef shapes visible"},
         ],
@@ -207,3 +212,19 @@ def test_retrieval_evaluation_refuses_provisional_group_splits():
               "seed":17,"splitAssignments":group_splits(manifest,seed=17)}
     with pytest.raises(ValueError,match="Provisional capture groups"):
         validate_training_lineage(training,manifest,"d"*64)
+
+
+
+def test_feature_candidates_are_only_model_hypotheses_without_numeric_utility():
+    proposal=validate_judge_proposal(judgment(),4)
+    assert proposal["featureCandidates"][0]["dimension"]=="water_visibility"
+    assert proposal["featureCandidates"][0]["measuredValue"] is None
+    assert proposal["featureCandidates"][0]["evidenceSource"]=="model_hypothesis"
+    broken=judgment()
+    broken["featureCandidates"][0]["frameIndices"]=[9]
+    with pytest.raises(ValueError,match="invalid sampled"):
+        validate_judge_proposal(broken,4)
+    broken=judgment()
+    broken["featureCandidates"][0]["dimension"]="wildlife_speed_meters_per_second"
+    with pytest.raises(ValueError,match="Unsupported scene dimension"):
+        validate_judge_proposal(broken,4)
