@@ -10,7 +10,8 @@ np = pytest.importorskip("numpy")
 
 from adventure_intelligence.encoder_dataset import VERSION, group_splits
 from adventure_intelligence.ktide_model import (
-    KTIDEEncoder, group_safe_contrastive, self_supervised_loss,
+    KTIDEEncoder, ORDER_OBJECTIVE_VERSION, group_safe_contrastive,
+    reverse_connected_observations, self_supervised_loss,
 )
 from adventure_intelligence.ktide_train import train_local
 
@@ -104,6 +105,10 @@ def test_end_to_end_one_epoch_train_and_held_out_evaluate(tmp_path):
     assert result["testNotUsedForSelection"]
     assert result["rawMediaRead"] is False
     assert result["humanPreferenceRankingQualified"] is False
+    assert result["trainingObjectiveVersion"] == ORDER_OBJECTIVE_VERSION
+    assert result["temporalObservability"]["threeFrameOrderEligibleWindows"] == 6
+    assert result["temporalObservability"]["connectedPairFraction"] == 1.0
+    assert result["temporalObservability"]["sourceMediaRead"] is False
     checkpoint = tmp_path / "reports" / "ktide-run-synthetic" / "ktide-best.pt"
     assert checkpoint.is_file()
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
@@ -123,3 +128,121 @@ def test_end_to_end_one_epoch_train_and_held_out_evaluate(tmp_path):
             manifest, workspace=tmp_path, run_name="ktide-run-synthetic",
             epochs=1, batch_size=3, learning_rate=.0003, seed=11,
             hidden=32, layers=1, device="cpu")
+
+
+
+def test_reversal_is_strictly_within_connected_time_runs_and_reverses_visibility():
+    # Two runs (3 and 5 frames) separated by a 13-second unsupported gap.
+    x = torch.arange(8 * 16, dtype=torch.float32).reshape(1, 8, 16)
+    t = torch.tensor([[0, 1000, 2000, 15000, 16000, 17000, 18000, 19000]])
+    valid = torch.ones((1, 8), dtype=torch.bool)
+    visible = torch.tensor([[True, False, True, True, True, False, True, False]])
+    flipped, flip_mask, eligible = reverse_connected_observations(
+        x, t, valid, visible, 7000)
+    assert eligible.tolist() == [True]
+    assert torch.equal(flipped[0, :3], x[0, :3].flip(0))
+    assert torch.equal(flipped[0, 3:], x[0, 3:].flip(0))
+    assert torch.equal(flip_mask[0, :3], visible[0, :3].flip(0))
+    assert torch.equal(flip_mask[0, 3:], visible[0, 3:].flip(0))
+    assert int(flip_mask.sum()) == int(visible.sum())
+    assert torch.equal(t, torch.tensor([[0, 1000, 2000, 15000, 16000, 17000, 18000, 19000]]))
+
+
+def test_reversal_respects_padding_and_does_not_invent_order_in_sparse_features():
+    x = torch.arange(7*16, dtype=torch.float32).reshape(1,7,16)
+    t = torch.tensor([[0, 12000, 24000, 36000, 48000, 48000, 48000]])
+    valid = torch.tensor([[True, True, True, True, True, False, False]])
+    visible = torch.tensor([[True, False, True, True, False, False, False]])
+    flipped, flip_mask, eligible = reverse_connected_observations(
+        x, t, valid, visible, 7000)
+    assert eligible.tolist() == [False]
+    assert torch.equal(flipped, x)
+    assert torch.equal(flip_mask, visible)
+
+
+def test_matched_mask_order_objective_cannot_cheat_by_unmasked_negative():
+    torch.manual_seed(123)
+    calls = []
+    class Recorder(KTIDEEncoder):
+        def forward(self, x, t_ms, valid, visible=None):
+            calls.append((x.detach().clone(),
+                          visible.detach().clone() if visible is not None else None))
+            return super().forward(x, t_ms, valid, visible)
+    model = Recorder(16, hidden=32, layers=1, heads=4, dropout=0)
+    x = torch.from_numpy(np.stack([make_features(i) for i in range(2)]))
+    t = torch.arange(8).repeat(2,1)*1000
+    valid = torch.ones(2,8,dtype=torch.bool)
+    loss, metrics = self_supervised_loss(
+        model,x,t,valid,["trip-a","trip-b"],mask_ratio=.4)
+    assert bool(torch.isfinite(loss))
+    assert metrics["orderEligibleSamples"] == 2
+    assert metrics["orderObjectiveVersion"] == ORDER_OBJECTIVE_VERSION
+    assert len(calls) == 3  # masked view 1, masked view 2, matched reversed view
+    a_x, a_mask = calls[0]
+    reverse_x, reverse_mask = calls[2]
+    assert torch.equal(a_x, x)
+    assert torch.equal(reverse_x, x.flip(1))
+    assert torch.equal(reverse_mask, a_mask.flip(1))
+    assert reverse_mask.sum() == a_mask.sum()
+
+
+def test_order_loss_abstains_when_all_observation_gaps_exceed_threshold():
+    torch.manual_seed(77)
+    calls = []
+    class Recorder(KTIDEEncoder):
+        def forward(self, x, t_ms, valid, visible=None):
+            calls.append(visible)
+            return super().forward(x, t_ms, valid, visible)
+    model = Recorder(16,hidden=32,layers=1,heads=4,dropout=0)
+    x = torch.from_numpy(np.stack([make_features(i) for i in range(2)]))
+    t = torch.arange(8).repeat(2,1)*12000
+    valid = torch.ones(2,8,dtype=torch.bool)
+    total, parts = self_supervised_loss(model,x,t,valid,["a","b"])
+    assert torch.isfinite(total)
+    assert parts["orderEligibleSamples"] == 0
+    assert parts["orderControl"] == 0.
+    assert len(calls) == 2  # No fake chronological supervision.
+
+
+def test_read_only_temporal_audit_uses_only_sha_checked_shards(tmp_path):
+    from adventure_intelligence.ktide_observability import temporal_observability
+    manifest = _dataset(tmp_path)
+    mtime = manifest.stat().st_mtime_ns
+    report = temporal_observability(manifest,workspace=tmp_path,max_gap_ms=7000)
+    assert report["sampleWindows"] == 6
+    assert report["totalObservedFrames"] == 6 * 8
+    assert report["adjacentPairs"] == 6 * 7
+    assert report["attentionConnectedPairFraction"] == 1.0
+    assert report["windowsWithThreeFrameLocalOrder"] == 6
+    assert report["decodedPtsCoverage"] == 0.0
+    assert report["medianAdjacentGapMs"] == 1000.0
+    assert "decoded_pts_missing_for_some_observations" in report["riskFlags"]
+    assert report["workspaceModified"] is False
+    assert report["originalVideoRead"] is False
+    assert manifest.stat().st_mtime_ns == mtime
+
+
+def test_temporal_audit_finds_disconnected_samples_and_fails_closed_on_tamper(tmp_path):
+    from adventure_intelligence.ktide_observability import temporal_observability
+    manifest = _dataset(tmp_path)
+    doc = json.loads(manifest.read_text())
+    first = doc["samples"][0]
+    shard = manifest.parent / first["shard"]
+    with np.load(shard,allow_pickle=False) as z:
+        x = z["embeddings"].copy()
+        pts = z["decoded_pts_ms"].copy()
+    t = np.arange(8,dtype=np.int64)*12000
+    np.savez_compressed(shard,embeddings=x,t_ms=t,decoded_pts_ms=pts)
+    first["endMs"] = 100000
+    first["shardSha256"] = sha256(shard.read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(doc))
+    report = temporal_observability(manifest,workspace=tmp_path,max_gap_ms=7000)
+    assert report["windowsWithoutThreeFrameLocalOrder"] == 1
+    assert report["attentionConnectedPairFraction"] < 1
+    assert report["windows"][0]["isolatedFrames"] == 8
+    assert "some_windows_have_no_three_frame_contiguous_order" in report["riskFlags"]
+    # Never silently accept a changed feature shard after signing.
+    with shard.open("ab") as file:
+        file.write(b"tamper")
+    with pytest.raises(ValueError,match="changed|SHA"):
+        temporal_observability(manifest,workspace=tmp_path,max_gap_ms=7000)
