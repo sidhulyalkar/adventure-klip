@@ -139,6 +139,20 @@ def _judge_hypotheses(judge_path: Path | None, reports: Path) -> dict[str, dict]
             if (record.get("sourceShaVerifiedForJudge") is not True
                     or not isinstance(record.get("judgeProposal"), dict)):
                 raise ValueError("Unreceipted model hypothesis")
+            frames = record.get("observedFrames")
+            if not isinstance(frames, list) or not 2 <= len(frames) <= 8:
+                raise ValueError("Unreceipted model frame evidence")
+            last_ms = -1
+            for index, frame in enumerate(frames):
+                if (not isinstance(frame, dict)
+                        or type(frame.get("frameIndex")) is not int
+                        or frame["frameIndex"] != index
+                        or type(frame.get("requestedMs")) is not int
+                        or frame["requestedMs"] <= last_ms
+                        or not isinstance(frame.get("imageSha256"), str)
+                        or not SHA.fullmatch(frame["imageSha256"])):
+                    raise ValueError("Unreceipted model frame evidence")
+                last_ms = frame["requestedMs"]
             successful += 1
         results[key] = {
             "judgeStatus": record.get("judgeStatus"),
