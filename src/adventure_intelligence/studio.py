@@ -27,6 +27,7 @@ from .locking import lock_workspace
 from .sources import resolve_source
 from .sequence_editor import sequence_state, save_sequence, review_combination, export_sequence
 from .curation_queue import review_queue
+from .moment_rank_archive import rank_archive
 from .clip_rules import suggest_trim, exclusion_spans
 from .boundary_inspector import boundary_evidence
 from .transition_evidence import EdgeEvidence, VERSION as EDGE_VERSION
@@ -349,6 +350,22 @@ def make_handler(workspace:Path,token:str):
                         raise ValueError("Invalid queue page")
                     self._json(200,review_queue(workspace,
                         activity=q.get("activity",["all"])[0],page=int(raw_page)))
+                elif path=="/api/ranked-clips":
+                    # Ranking is an opt-in, authenticated read-only review
+                    # view. Never accept filesystem paths or source IDs from
+                    # the URL; derive all candidates from the local catalog.
+                    raw_limit=q.get("limit",["24"])[0]
+                    raw_explore=q.get("exploreFraction",["0.35"])[0]
+                    if (not raw_limit.isdigit() or len(raw_limit)>3
+                            or len(raw_explore)>12):
+                        raise ValueError("Invalid ranked-review request")
+                    try:
+                        explore=float(raw_explore)
+                    except ValueError as exc:
+                        raise ValueError("Invalid exploration fraction") from exc
+                    self._json(200,rank_archive(
+                        workspace,goal=q.get("goal",["auto"])[0],
+                        limit=int(raw_limit),explore_fraction=explore))
                 elif path.startswith("/api/boundary/"):
                     raw_start=q.get("startMs",[""])[0]
                     raw_end=q.get("endMs",[""])[0]
