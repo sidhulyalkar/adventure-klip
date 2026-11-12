@@ -102,7 +102,7 @@ def test_metadata_audit_actual_scale_no_source_video_access(tmp_path):
     assert report["metadataGaps"]["missingOrInvalidResolution"]==1
     assert report["catalogActivityUnverifiedCounts"]=={
         "bike":3,"ski":3,"snorkeling":3,"unknown":3}
-    assert report["existingEvidenceCoverage"]["sourcesWithAnyPriorOwnerReview"]==3
+    assert report["existingEvidenceCoverage"]["sourcesWithReviewRecordsNotIndependentlyVerified"]==3
     assert report["existingEvidenceCoverage"]["latestExampleJudgments"]==1
     assert report["existingEvidenceCoverage"]["latestPairwiseJudgments"]==1
     assert report["existingEvidenceCoverage"][
