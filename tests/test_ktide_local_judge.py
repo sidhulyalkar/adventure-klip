@@ -256,3 +256,104 @@ def test_local_ollama_output_is_normalized_only_once(tmp_path,monkeypatch):
     assert result["successes"]==3
     assert result["proposals"][0]["judgeProposal"]["featureCandidates"][0][
         "evidenceSource"]=="model_hypothesis"
+
+
+
+def test_recover_only_failed_model_judgments_and_preserve_successful_receipts(tmp_path):
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    plan = select_judge_pilot(inventory(), limit=5)
+    called = []
+    def source(root, aid):
+        called.append(aid)
+        return Path("/unopened.mp4")
+    def frames(path, duration, count):
+        return [
+            {"frameIndex": i, "requestedMs": requested_stills(duration,count)[i],
+             "decodedPtsMs": None, "timestampBasis": "unknown",
+             "imageSha256": "a"*64, "imageBytes": b"fake"}
+            for i in range(count)
+        ]
+    initial_ids = [s["sourceSha256"] for s in plan["selected"][:2]]
+    def first_judge(frame_list):
+        # Differentiate the first 2 calls (successes) from 3 failures.
+        if len(called) <= 2:
+            return judgment()
+        raise ValueError("Synthetic schema failure")
+    first = run_judge_pilot(
+        ws, plan, judge=first_judge,
+        source_loader=source, frame_loader=frames,
+    )
+    assert first["successes"] == 2
+    assert first["hypothesisSummary"]["failureStages"] == {"local_model":3}
+    assert len(called) == 5
+    called.clear()
+    retry = run_judge_pilot(
+        ws, plan, previous=first, judge=lambda _: judgment(),
+        source_loader=source, frame_loader=frames,
+    )
+    assert retry["successes"] == 5
+    assert retry["reusedSuccessfulJudgments"] == 2
+    assert retry["freshlyJudgedSources"] == 3
+    assert len(called) == 3
+    assert set(called).isdisjoint(initial_ids)
+    for original, recovered in zip(first["proposals"][:2], retry["proposals"][:2]):
+        assert original == recovered
+    assert retry["hypothesisSummary"]["failureStages"] == {}
+    assert retry["hypothesisSummary"]["suggestedFeatureDimensions"]["water_visibility"] == 5
+
+
+def test_retry_refuses_changed_roster_and_model_or_frame_count(tmp_path):
+    ws=tmp_path/"workspace"
+    ws.mkdir()
+    plan=select_judge_pilot(inventory(),limit=3)
+    def frames(p,d,n):
+        return [{"frameIndex":i,"requestedMs":requested_stills(d,n)[i],
+                 "decodedPtsMs":None,"timestampBasis":"unknown",
+                 "imageSha256":"b"*64,"imageBytes":b"x"} for i in range(n)]
+    first=run_judge_pilot(
+        ws,plan,judge=lambda _:judgment(),
+        source_loader=lambda r,aid:Path("/notopened.mp4"),frame_loader=frames)
+    with pytest.raises(ValueError,match="model/frame parameters"):
+        run_judge_pilot(ws,plan,model="another:4b",previous=first)
+    with pytest.raises(ValueError,match="model/frame parameters"):
+        run_judge_pilot(ws,plan,frame_count=2,previous=first)
+    mutated=deepcopy(plan)
+    mutated["selected"][0]["groupId"]="provisional_capture-tampered"
+    with pytest.raises(ValueError,match="roster/group"):
+        run_judge_pilot(ws,mutated,previous=first)
+    corrupted=deepcopy(first)
+    corrupted["proposals"][0]["observedFrames"][0]["imageSha256"]="x"
+    with pytest.raises(ValueError,match="frame receipt"):
+        run_judge_pilot(ws,plan,previous=corrupted)
+    corrupted=deepcopy(first)
+    corrupted["proposals"][0]["judgeProposal"]["featureCandidates"][0]["measuredValue"]=.9
+    with pytest.raises(ValueError,match="unverified"):
+        run_judge_pilot(ws,plan,previous=corrupted)
+
+
+def test_failure_stage_identifies_source_vs_frame_vs_schema(tmp_path):
+    ws = tmp_path/"workspace"
+    ws.mkdir()
+    plan=select_judge_pilot(inventory(),limit=3)
+    source_ids=[r["sourceSha256"] for r in plan["selected"]]
+    def source(root,aid):
+        if aid==source_ids[0]:
+            raise ValueError("Source missing")
+        return Path("/unopened.mp4")
+    def frames(path, duration, count):
+        # Force one frame decode failure in a separate pass below.
+        return [{"frameIndex":i,"requestedMs":requested_stills(duration,count)[i],
+                 "decodedPtsMs":None,"timestampBasis":"unknown",
+                 "imageSha256":"c"*64,"imageBytes":b"foo"}
+                for i in range(count)]
+    calls=[]
+    def judge(frame_list):
+        calls.append(True)
+        raise ValueError("Bad strict JSON from synthetic judge")
+    output=run_judge_pilot(ws,plan,source_loader=source,
+                           frame_loader=frames,judge=judge)
+    assert output["proposals"][0]["failureStage"]=="source_verification"
+    assert output["proposals"][0]["sourceShaVerifiedForJudge"] is False
+    assert output["hypothesisSummary"]["failureStages"] == {
+        "source_verification":1, "local_model":2}
