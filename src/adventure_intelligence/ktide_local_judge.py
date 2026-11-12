@@ -223,7 +223,7 @@ def local_ollama_json(frames: list[dict], *, model: str = MODEL,
         raise ValueError("Invalid local model or request timeout")
     if not 2 <= len(frames) <= MAX_FRAMES:
         raise ValueError("Need 2..8 sparsely sampled verified stills")
-    from .ktide_judge_contract import ollama_schema
+    from .ktide_judge_contract import VISUAL_DIMENSIONS, ollama_schema
     payload = {
         "model": model, "stream": False,
         "format": ollama_schema(len(frames)),
@@ -234,7 +234,7 @@ def local_ollama_json(frames: list[dict], *, model: str = MODEL,
                         .replace("{allowed}", ", ".join(sorted(SUBSPORT_PRIORS)))
                         .replace("{times}", str([round(x["requestedMs"]/1000,2)
                                                   for x in frames]))
-                        .replace("{dimensions}", ", ".join(DIMENSIONS))),
+                        .replace("{dimensions}", ", ".join(VISUAL_DIMENSIONS))),
             "images": [base64.b64encode(frame["imageBytes"]).decode("ascii")
                        for frame in frames],
         }],
