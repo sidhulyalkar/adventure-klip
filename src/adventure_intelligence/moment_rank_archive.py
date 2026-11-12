@@ -80,23 +80,32 @@ def rank_archive(workspace:Path, *, goal:str="auto", limit:int=24,
     sport_map={aid:row["candidateSport"] for aid,row in assets.items()}
     # Ensure an exploration slot even when heuristic episodes dominate.
     target_explore=max(1,math.ceil(limit*explore_fraction))
-    ranked=rank_candidates(candidates,sport_map,goal=goal,
-                           limit=limit-target_explore,
-                           max_per_source=max_per_source)
+    slots=limit-target_explore
+    if slots:
+        ranked=rank_candidates(candidates,sport_map,goal=goal,
+                               limit=slots,max_per_source=max_per_source)
+    else:
+        ranked={"rankedClips":[],"candidatesEvaluated":len(candidates),
+                "candidatesWithUsableHeuristicEvidence":None,
+                "candidatesWithInsufficientEvidence":None,
+                "rankingScope":"exploration_only",
+                "preferenceModelTrained":False}
     selected_sources={x["sourceSha256"] for x in ranked["rankedClips"]}
     exploration=[]
+    exploration_ids=set()
     def append_probes(avoid_selected: bool):
         for row in inventory["pilotPlan"]["candidateSources"]:
             if len(exploration)>=limit-len(ranked["rankedClips"]):
                 break
             aid=row["sourceSha256"]
-            if aid in {x["sourceSha256"] for x in exploration}:
+            if aid in exploration_ids:
                 continue
             if avoid_selected and aid in selected_sources:
                 continue
             span=_explore_span(row["durationSeconds"])
             if span is None:
                 continue
+            exploration_ids.add(aid)
             exploration.append({
                 "sourceSha256":aid,"startMs":span[0],"endMs":span[1],
                 "sportHint":row["candidateSport"],
