@@ -145,6 +145,10 @@ def test_private_judge_hypotheses_are_never_verified_labels(tmp_path):
     rows=[
         {"sourceSha256":ids[3], "judgeStatus":"model_hypothesis",
          "sourceShaVerifiedForJudge":True,
+         "observedFrames":[
+             {"frameIndex":i,"requestedMs":(i+1)*1000,
+              "imageSha256":f"{i+1:064x}"}
+             for i in range(4)],
          "judgeProposal":{"subsport":"skiing_moguls",
                           "sceneSummary":"NEVER PRINT OR LEAK SECRET"}},
         {"sourceSha256":ids[7], "judgeStatus":"failed",
@@ -189,6 +193,15 @@ def test_invalid_input_and_tampered_judge_do_not_silently_produce_plan(tmp_path)
                                  "judgeProposal":{"subsport":"skiing_speed"}}],
                              "sourceCount":1,"successes":1}))
     with pytest.raises(ValueError,match="Unreceipted"):
+        audit_archive(ws,judge_report=p)
+    doc=json.loads(p.read_text())
+    doc["proposals"][0]["sourceShaVerifiedForJudge"]=True
+    doc["proposals"][0]["observedFrames"]=[
+        {"frameIndex":0,"requestedMs":1000,"imageSha256":"bad"},
+        {"frameIndex":1,"requestedMs":2000,"imageSha256":"a"*64},
+    ]
+    p.write_text(json.dumps(doc))
+    with pytest.raises(ValueError,match="frame evidence"):
         audit_archive(ws,judge_report=p)
 
 
