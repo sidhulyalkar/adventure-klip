@@ -102,10 +102,25 @@ and only unscored exploration probes. This is expected and safer than
 calling the 232 unexamined videos a ranked set. The next task would then
 be a coarse, cached-event discovery pass and an improved scene review UI.
 
-The current packet is JSON for local analysis; it is **not yet wired into
-the Studio inbox**. The existing Studio can still be used to review the
-corresponding sources, but it will not automatically sort by this new
-report until a separate UI integration is implemented.
+The local **Focused Studio** now has an explicit `Review source` selector:
+standard queue (existing behavior) or `Ranked + exploration` (opt-in).
+It loads only the fixed private file
+`$WS/reports/kmoment-clip-ranking-v1.json` through the existing
+token-protected local HTTP server. There is no implicit scoring run or video
+decoding when you switch modes. Ranked hypotheses and unscored exploration
+clips use the existing source-backed playback, Keep/Later/Skip and optional
+manual annotation controls.
+
+If the ranking file does not exist, the Studio leaves its standard queue
+available and displays a helpful error. If the catalog changes, missing
+sources or invalidated intervals are skipped. Clips explicitly kept or
+skipped in the append-only local review records no longer reappear in the
+ranked mode; Later remains eligible.
+
+This integration does **not** add automatic montage creation, calibrated
+cross-sport ordering, A/B preference learning or sport-verification.
+Use the classic Full Studio's existing A/B comparison tool for pairwise
+preferences; it has not been coupled to this ranking feed yet.
 
 ## Run the local review ranking
 
