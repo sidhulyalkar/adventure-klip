@@ -223,8 +223,10 @@ def local_ollama_json(frames: list[dict], *, model: str = MODEL,
         raise ValueError("Invalid local model or request timeout")
     if not 2 <= len(frames) <= MAX_FRAMES:
         raise ValueError("Need 2..8 sparsely sampled verified stills")
+    from .ktide_judge_contract import ollama_schema
     payload = {
-        "model": model, "stream": False, "format": "json",
+        "model": model, "stream": False,
+        "format": ollama_schema(len(frames)),
         "options": {"temperature": 0},
         "messages": [{
             "role": "user",
@@ -500,18 +502,38 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
             stage="local_model"
             proposal=judge(frames)
             stage="schema_validation"
-            entry["judgeProposal"]=validate_judge_proposal(proposal,len(frames))
+            from .ktide_judge_contract import normalize_model_hypothesis
+            normalized, validation_status, recovery_reasons = (
+                normalize_model_hypothesis(proposal,len(frames)))
+            entry["judgeProposal"]=normalized
+            entry["judgeValidationStatus"]=validation_status
+            entry["schemaRecoveryReasons"]=recovery_reasons
             entry["judgeStatus"]="model_hypothesis"
         except (OSError,ValueError,RuntimeError,TimeoutError,ConnectionError) as exc:
             # Fail independently; do not leak full source paths in reports.
             entry["judgeStatus"]="failed"
             entry["failureType"]=type(exc).__name__
             entry["failureStage"]=stage
+            if stage == "schema_validation":
+                from .ktide_judge_contract import reason_code
+                entry["failureReasonCode"]=reason_code(exc)
         judged.append(entry)
     assignments=merge_smoke_assignments(plan,judged,existing)
     valid=[r["judgeProposal"] for r in judged
            if r["judgeStatus"]=="model_hypothesis"]
     summary={
+        "strictlyValidatedJudgments":sum(
+            r.get("judgeValidationStatus","strict")=="strict"
+            for r in judged if r["judgeStatus"]=="model_hypothesis"),
+        "partiallyRecoveredJudgments":sum(
+            r.get("judgeValidationStatus")=="partial"
+            for r in judged if r["judgeStatus"]=="model_hypothesis"),
+        "schemaRecoveryReasons":dict(sorted(Counter(
+            reason for r in judged if r["judgeStatus"]=="model_hypothesis"
+            for reason in r.get("schemaRecoveryReasons",[])).items())),
+        "failureReasonCodes":dict(sorted(Counter(
+            r.get("failureReasonCode","unknown")
+            for r in judged if r.get("failureStage")=="schema_validation").items())),
         "failureStages":dict(sorted(Counter(
             r.get("failureStage","unknown")
             for r in judged if r["judgeStatus"]=="failed").items())),
