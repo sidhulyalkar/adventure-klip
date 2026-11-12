@@ -7,6 +7,35 @@ succeeded for 5/16 selected sources; it did not process the entire archive.
 No source videos have been inspected while authoring this document. It is
 intended for implementation through bounded, independently tested phases.
 
+## Available today: source-level evidence dossier seeds
+
+This initial PR includes a **read-only, deterministic** bridge from
+existing local Ollama judge JSON to a private evidence-linked dossier
+document. It is not dense video recognition and does not produce final
+event narratives or quality ratings. It preserves the 5/16 existing
+successes and explicitly marks the 11 unresolved sources unknown.
+Every model observation remains a hypothesis. Missing body kinematics,
+species, exact location, filmmaker purpose and personal meaning stay null.
+
+Run it after updating the Klip worktree:
+
+    export WS="$HOME/AdventureAI-clean.QJnopt"
+    python scripts/klip_moment_dossiers.py \
+      --workspace "$WS" \
+      --judge-report "$WS/reports/ktide-judge-pilot-001/proposals.json" \
+      --name moment-dossier-seed-001
+
+Or supply the recovered retry report, if present, with a NEW output name.
+The command writes only
+reports/moment-dossier-seed-001/dossiers.json and never reads camera videos,
+invokes a model, updates the catalog, rates users' personal meaning,
+changes source timestamps, edits media or authorizes publication/deletion.
+
+Design note: a seed records four sparse-frame observations as a source
+overview, with source-relative frame receipts and model-hypothesis claims.
+It must not be described as a complete episode, ski-run diagnosis, taxonomic
+identification, geolocation, or trustworthy "momentworthiness" score.
+
 ## North-star question
 
 **What happened, in what context, what can we actually see, what may have
