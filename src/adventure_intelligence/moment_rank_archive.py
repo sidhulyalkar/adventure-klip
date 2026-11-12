@@ -6,7 +6,7 @@ No video, FFmpeg, GPU, HTTP, DB writes, or published clip is involved.
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 import math
 from pathlib import Path
 import sqlite3
@@ -61,6 +61,16 @@ def rank_archive(workspace:Path, *, goal:str="auto", limit:int=24,
         rows=[dict(x) for x in db.execute(
             "SELECT * FROM episodes WHERE kind!='recording_summary'"
             " ORDER BY asset_id,start_ms,id")]
+        # Match the Focus Review queue's revision semantics. Latest,
+        # explicit Keep/Skip records suppress overlapping review prompts;
+        # they never remove originals or affect editorial model training.
+        decided=defaultdict(list)
+        for r in db.execute(
+            "SELECT r.asset_id,r.start_ms,r.end_ms FROM example_revisions r "
+            "WHERE r.highlight IN ('keep','skip') AND NOT EXISTS ("
+            "SELECT 1 FROM example_revisions n "
+            "WHERE n.example_id=r.example_id AND n.rowid>r.rowid)"):
+            decided[r["asset_id"]].append((r["start_ms"],r["end_ms"]))
         valid=[]
         for x in rows:
             asset=assets.get(x["asset_id"])
@@ -77,6 +87,13 @@ def rank_archive(workspace:Path, *, goal:str="auto", limit:int=24,
         candidates,exclusions=editorial_candidates(db,root,valid,policy="suggest")
     if len(candidates)>20000:
         raise ValueError("Expanded candidate windows exceed safe ranking limit")
+    def already_reviewed(aid,start,end):
+        return any(
+            max(0,min(end,b)-max(start,a))/max(1,end-start)>=.70
+            for a,b in decided.get(aid,[]))
+    before_review_filter=len(candidates)
+    candidates=[c for c in candidates
+                if not already_reviewed(c["sourceAssetId"],c["startMs"],c["endMs"])]
     sport_map={aid:row["candidateSport"] for aid,row in assets.items()}
     # Ensure an exploration slot even when heuristic episodes dominate.
     target_explore=max(1,math.ceil(limit*explore_fraction))
@@ -103,7 +120,12 @@ def rank_archive(workspace:Path, *, goal:str="auto", limit:int=24,
             if avoid_selected and aid in selected_sources:
                 continue
             span=_explore_span(row["durationSeconds"])
-            if span is None:
+            if span is None or already_reviewed(aid,*span):
+                continue
+            if any(x["sourceSha256"]==aid and
+                   max(0,min(span[1],x["endMs"])-max(span[0],x["startMs"]))/
+                   max(1,span[1]-span[0])>.45
+                   for x in ranked["rankedClips"]):
                 continue
             exploration_ids.add(aid)
             exploration.append({
@@ -133,7 +155,9 @@ def rank_archive(workspace:Path, *, goal:str="auto", limit:int=24,
         "episodeRowsInCatalog":count,
         "eligibleEpisodeRows":len(valid),
         "episodeRowsWithInvalidOrMissingBounds":len(rows)-len(valid),
-        "expandedCandidateWindows":len(candidates),
+        "expandedCandidateWindows":before_review_filter,
+        "candidateWindowsExcludedBecauseAlreadyReviewed":before_review_filter-len(candidates),
+        "candidateWindowsEligibleForNewReview":len(candidates),
         "upstreamManualExclusions":len(exclusions),
         "rankingPolicy":"suggest_only_no_model_hard_rejections",
         "goalRequested":goal,

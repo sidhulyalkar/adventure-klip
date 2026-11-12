@@ -115,6 +115,18 @@
       <footer class="review-footer">
         <div class="batch-status"><span id="batchProgress">Review queue</span><span id="batchDetail">Loading…</span></div>
         <div class="filter-actions">
+          <label for="reviewOrder">Order</label>
+          <select id="reviewOrder" aria-label="Choose review source"><option value="queue">Current suggestions</option><option value="ranked">Ranked + explore</option></select>
+          <label for="rankGoal" id="rankGoalLabel" hidden>Goal</label>
+          <select id="rankGoal" aria-label="Rank clips for editorial goal" hidden>
+            <option value="auto">Sport-aware</option>
+            <option value="sport_action">Sport action</option>
+            <option value="nature_encounter">Wildlife encounter</option>
+            <option value="scenic_transition">Scenic footage</option>
+            <option value="personal_memory">Personal memories</option>
+            <option value="technique_analysis">Technique analysis</option>
+            <option value="exploration">Explore unknown footage</option>
+          </select>
           <label for="reviewActivity">Show</label>
           <select id="reviewActivity"><option value="all">All activities</option><option value="ski">Skiing</option><option value="bike">Biking</option><option value="snorkeling">Snorkeling</option><option value="unknown">Other</option></select>
           <button type="button" id="helpToggle" class="ghost small">Shortcuts ?</button>

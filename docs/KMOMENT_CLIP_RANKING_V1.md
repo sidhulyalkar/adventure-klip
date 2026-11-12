@@ -102,10 +102,41 @@ and only unscored exploration probes. This is expected and safer than
 calling the 232 unexamined videos a ranked set. The next task would then
 be a coarse, cached-event discovery pass and an improved scene review UI.
 
-The current packet is JSON for local analysis; it is **not yet wired into
-the Studio inbox**. The existing Studio can still be used to review the
-corresponding sources, but it will not automatically sort by this new
-report until a separate UI integration is implemented.
+## Review ranked proposals in Focus Studio
+
+The local Studio's default Review queue is unchanged. In the Review footer,
+change **Order** from *Current suggestions* to *Ranked + explore* to use
+a separately authenticated, read-only ranking endpoint. The *Goal* selector
+provides sport-aware, action, nature, scenic, personal memory, technique and
+exploration routing options.
+
+The Ranked mode maps previously cached proposal windows to the same local
+source-safe video player, start/end preview controls and Keep/Later/Skip
+history as the regular queue. It reserves 35% of review slots for unscored
+source-coverage probes; these are NOT detected events or verified highlights.
+The UI explicitly identifies heuristic rank vs unscored sample and never
+calls an inference or processing endpoint.
+
+Explicit Keep/Skip choices suppress substantially overlapping proposals
+from future Ranked review calls, without removing or rewriting those clips.
+The default source-level ranking view uses catalog activity metadata
+hints. It does NOT automatically load private judge reports: use the CLI
+below with --judge-report when you want to include explicitly chosen,
+previously verified-source model hypotheses in sport routing.
+
+The Studio API is token-protected at
+`GET /api/ranked-clips?limit=24&goal=auto&exploreFraction=0.35`.
+It never accepts arbitrary file paths. It reads existing catalog and
+derived caches and may read original source media only when you choose
+to play a clip through the preexisting read-only media endpoint.
+A newly indexed workspace without `reports/` works; no output directory
+needs to be created for the view.
+
+**Important:** This still is a *review prioritization interface*, not an
+archive-wide validated highlight ranking. If few episode proposals exist,
+the interface will mainly show unscored coverage samples, and the next
+step should be source-safe coarse event discovery rather than fitting a
+personalized ranking model.
 
 ## Run the local review ranking
 
