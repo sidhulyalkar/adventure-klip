@@ -127,7 +127,7 @@ def archive(tmp_path,with_episodes=True):
                 (aid,aid,f"/Volumes/OFFLINE/NO_FILE_{i}.MP4",10_000_000,
                  ".mp4",duration,f"2026-01-{i+1:02d}T10:00:00Z",activity,
                  '{"width":3840,"height":2160,"codec":"hevc",'
-                 '"avg_frame_rate":"50/1","audio":true}"))
+                 '"avg_frame_rate":"50/1","audio":true}'))
         if with_episodes:
             for i in range(4):
                 aid=aids[i]
