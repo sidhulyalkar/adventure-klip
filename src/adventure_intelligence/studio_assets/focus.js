@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name="klip-session"]').content;
-  const state = {view:'review',assets:[],queue:[],page:0,activity:'all',index:0,
+  const state = {view:'review',assets:[],queue:[],page:0,activity:'all',reviewMode:'queue',index:0,
     hasNext:false,totalPages:0,totalAssets:0,current:null,selectedAsset:null,
     details:new Map(),folder:{kind:'all',value:''},seen:new Set(),busy:false,
     expanded:new Set(['day']),allExpanded:new Set(),visibleLimit:60,refreshing:false,
@@ -74,8 +74,10 @@
     $('indexedCount').textContent=state.assets.length+' indexed';
     const count=state.queue.length;
     $('clipCounter').textContent=item&&item.manual?'From library':count?(state.index+1)+' of '+count+' in batch':'0 of 0';
-    $('batchProgress').textContent='Review queue';
-    $('batchDetail').textContent=state.totalAssets+' recordings indexed · batch '+(state.page+1)+' of '+Math.max(1,state.totalPages);
+    $('batchProgress').textContent=state.reviewMode==='ranked'?'Ranked + exploration':'Review queue';
+    $('batchDetail').textContent=state.reviewMode==='ranked'
+      ? state.queue.length+' precomputed review items · unverified'
+      : state.totalAssets+' recordings indexed · batch '+(state.page+1)+' of '+Math.max(1,state.totalPages);
     if(!item){
       window.KlipBoundaryInspector?.select(null,null);
       $('clipTitle').textContent='Nothing to review yet';$('clipDescription').textContent='Browse your source recordings, or process additional video.';
@@ -95,10 +97,17 @@
       (asset&&asset.region?asset.region+' · ':'')+
       (state.previewBounds?'Previewing selected cut, ':'Candidate interval, ')+
       mmss(secs(shown.endMs-shown.startMs))+' long';
-    $('clipActivity').textContent=(item.activity||asset?.activity||'footage').toUpperCase();
+    $('clipActivity').textContent=state.reviewMode==='ranked'
+      ? (item.activity||'unknown').toUpperCase()+' · SPORT HINT'
+      : (item.activity||asset?.activity||'footage').toUpperCase();
     const range=activeRange();
     $('clipIn').textContent=mmss(secs(range.startMs));$('clipOut').textContent=mmss(secs(range.endMs));
-    $('clipEvidence').textContent=item.manual?'Manually selected interval':'Suggestion · '+(item.lane||'unverified').replace(/_/g,' ')+' · not confirmed';
+    $('clipEvidence').textContent=item.manual?'Manually selected interval'
+      : state.reviewMode==='ranked' && item.selectionType==='exploration'
+        ? 'Unscored coverage probe · no detected event'
+      : state.reviewMode==='ranked' && item.priorityRange
+        ? 'Heuristic review priority '+item.priorityRange.lower.toFixed(1)+'–'+item.priorityRange.upper.toFixed(1)+' · not verified'
+      : 'Suggestion · '+(item.lane||'unverified').replace(/_/g,' ')+' · not confirmed';
     const url=videoUrl(item.assetId);
     if(player.getAttribute('src')!==url){
       player.pause();player.src=url;
@@ -111,6 +120,19 @@
     try{player.currentTime=t;}catch{}
   }
   async function loadQueue({resetIndex=true,skipEmpty=true}={}){
+    if(state.reviewMode==='ranked'){
+      const data=await api('/api/ranked-queue');
+      state.page=0;state.hasNext=false;state.totalPages=1;
+      state.totalAssets=data.sourceCatalogCount;
+      state.queue=data.moments.filter(x=>
+        (state.activity==='all'||x.activity===state.activity)
+        &&!state.seen.has(identity(x)));
+      if(resetIndex)state.index=0;
+      else state.index=Math.min(state.index,Math.max(0,state.queue.length-1));
+      state.current=state.queue[state.index]||null;
+      if(state.current)updatePanel(state.current);
+      display();return;
+    }
     // Cap empty-page skips: 315 indexed recordings must not trigger 50+ requests
     // simply because analysis has not produced candidate intervals yet.
     let skipped=0;
@@ -419,6 +441,21 @@
     $('refreshCatalog').onclick=refreshCatalog;
     $('focusFullscreen').onclick=fullscreenPlayer;
     $('reviewActivity').onchange=()=>{state.activity=$('reviewActivity').value;state.page=0;state.seen.clear();loadQueue().catch(e=>report(e.message,true));};
+    $('reviewMode').onchange=async()=>{
+      if(state.busy)return;
+      const selected=$('reviewMode').value;
+      state.reviewMode=selected;state.page=0;state.seen.clear();
+      try{
+        await loadQueue();
+        report(selected==='ranked'
+          ? 'Viewing precomputed heuristic rankings and unscored exploration. Every clip requires your review.'
+          : 'Viewing the standard detection-based review queue.');
+      }catch(error){
+        state.reviewMode='queue';$('reviewMode').value='queue';
+        await loadQueue().catch(()=>{});
+        report('Ranked review unavailable: '+error.message,true);
+      }
+    };
     $('helpToggle').onclick=()=>{$('shortcutHelp').hidden=!$('shortcutHelp').hidden;};
     player.addEventListener('timeupdate',()=>{
       if(!state.current)return;
