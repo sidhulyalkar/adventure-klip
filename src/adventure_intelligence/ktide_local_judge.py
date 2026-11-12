@@ -521,9 +521,16 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
     assignments=merge_smoke_assignments(plan,judged,existing)
     valid=[r["judgeProposal"] for r in judged
            if r["judgeStatus"]=="model_hypothesis"]
+    from .ktide_judge_contract import VISUAL_DIMENSIONS
     summary={
+        "legacyAcceptedJudgments":sum(
+            "judgeValidationStatus" not in r
+            for r in judged if r["judgeStatus"]=="model_hypothesis"),
+        "legacyUnobservableDimensionHints": dict(sorted(Counter(
+            x["dimension"] for p in valid for x in p["featureCandidates"]
+            if x["dimension"] not in VISUAL_DIMENSIONS).items())),
         "strictlyValidatedJudgments":sum(
-            r.get("judgeValidationStatus","strict")=="strict"
+            r.get("judgeValidationStatus")=="strict"
             for r in judged if r["judgeStatus"]=="model_hypothesis"),
         "partiallyRecoveredJudgments":sum(
             r.get("judgeValidationStatus")=="partial"
@@ -543,7 +550,8 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
         "sceneContexts":dict(sorted(Counter(p["sceneContext"] for p in valid).items())),
         "suggestedSubsports":dict(sorted(Counter(p["subsport"] for p in valid).items())),
         "suggestedFeatureDimensions":dict(sorted(Counter(
-            x["dimension"] for p in valid for x in p["featureCandidates"]).items())),
+            x["dimension"] for p in valid for x in p["featureCandidates"]
+            if x["dimension"] in VISUAL_DIMENSIONS).items())),
         "uncertainOrFailedSources":len(judged)-len(valid),
         "allStatisticsAreModelProposals":True,
     }
