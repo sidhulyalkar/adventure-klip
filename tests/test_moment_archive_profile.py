@@ -45,7 +45,7 @@ def fixture(tmp_path):
                 "capture_time,activity,metadata_json)"
                 "VALUES(?,?,?,?,?,?,?,?,?)",
                 (aid,aid,f"/Volumes/UNMOUNTED/{i}.MP4",
-                 (i+1)*1000,".mp4",dur,stamp,activity,
+                 (i+1)*10_000_000,".mp4",dur,stamp,activity,
                  json.dumps(probe)),
             )
     with connect(ws) as db:
