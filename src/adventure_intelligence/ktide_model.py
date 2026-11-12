@@ -163,30 +163,25 @@ def reverse_connected_observations(x: torch.Tensor, t_ms: torch.Tensor,
     eligible = []
     for b, mask in enumerate(present):
         start = None
-        longest = 0
-        def finish(first, last):
-            nonlocal longest
-            if first is None:
-                return
-            length = last - first
-            longest = max(longest, length)
-            if length >= 2:
-                flipped_x[b, first:last] = x[b, first:last].flip(0)
-                flipped_visible[b, first:last] = visible[b, first:last].flip(0)
+        segments = []
         for i, observed in enumerate(mask):
             if not observed:
                 if start is not None:
-                    finish(start, i)
+                    segments.append((start, i))
                     start = None
                 continue
             if start is None:
                 start = i
             elif not 0 < t[b][i] - t[b][i-1] <= max_gap_ms:
-                finish(start, i)
+                segments.append((start, i))
                 start = i
         if start is not None:
-            finish(start, len(mask))
-        eligible.append(longest >= 3)
+            segments.append((start, len(mask)))
+        for first, last in segments:
+            if last - first >= 2:
+                flipped_x[b, first:last] = x[b, first:last].flip(0)
+                flipped_visible[b, first:last] = visible[b, first:last].flip(0)
+        eligible.append(any(last - first >= 3 for first, last in segments))
     return (flipped_x, flipped_visible,
             torch.tensor(eligible, dtype=torch.bool, device=x.device))
 
