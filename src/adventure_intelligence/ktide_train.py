@@ -145,6 +145,11 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
         raise ValueError("Refusing to overwrite an existing training run")
     doc, digest = load_manifest(manifest_path)
     validate_manifest(doc, root=dataset_root, verify_shards=True)
+    # Flag sparse inputs before fitting: an order head without connected
+    # observations has no meaningful chronological supervision.
+    from .ktide_observability import temporal_observability
+    audit = temporal_observability(
+        manifest_path, workspace=workspace, max_gap_ms=max_gap_ms)
     splits = group_splits(doc, seed=seed)
     provisional_groups = sorted(g for g in splits if g.startswith("provisional_"))
     assigned = {k: [r for r in doc["samples"] if splits[r["groupId"]] == k]
@@ -153,7 +158,9 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
         raise ValueError("Train/validation/test split missing samples")
     import numpy as np
     import torch
-    from .ktide_model import KTIDEEncoder, MODEL_VERSION, self_supervised_loss
+    from .ktide_model import (
+        KTIDEEncoder, MODEL_VERSION, ORDER_OBJECTIVE_VERSION, self_supervised_loss,
+    )
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -216,6 +223,7 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
     torch.save({
         "state_dict": best_state, "modelConfig": model.config,
         "modelVersion": MODEL_VERSION,
+        "trainingObjectiveVersion": ORDER_OBJECTIVE_VERSION,
         "teacherModelKey": doc["featureModelKey"],
         "manifestSha256": digest, "splitSeed": seed,
         "bestEpoch": best_epoch,
@@ -224,6 +232,7 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
     report = {
         "version": "klip-ktide-training-run-v1",
         "modelVersion": MODEL_VERSION,
+        "trainingObjectiveVersion": ORDER_OBJECTIVE_VERSION,
         "teacherModelKey": doc["featureModelKey"],
         "datasetManifestSha256": digest,
         "modelConfig": model.config,
@@ -237,6 +246,15 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
         "scientificHeldoutEligible": not provisional_groups,
         "groupingWarning": ("Capture-based provisional groups are NOT verified independent trips"
                             if provisional_groups else None),
+        "temporalObservability": {
+            "maxGapMs": audit["maxGapMs"],
+            "connectedPairFraction": audit["attentionConnectedPairFraction"],
+            "threeFrameOrderEligibleWindows": audit["windowsWithThreeFrameLocalOrder"],
+            "windowsWithoutOrderEvidence": audit["windowsWithoutThreeFrameLocalOrder"],
+            "decodedPtsCoverage": audit["decodedPtsCoverage"],
+            "riskFlags": audit["riskFlags"],
+            "sourceMediaRead": False,
+        },
         "history": history, "selectedEpoch": best_epoch,
         "heldOutTest": test, "checkpointSha256": checkpoint_sha,
         "weightsTrainedOnUserReviews": False,
