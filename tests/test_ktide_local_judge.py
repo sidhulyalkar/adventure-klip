@@ -148,7 +148,13 @@ def test_local_loopback_api_only_and_structured_image_evidence(monkeypatch):
     assert local_ollama_json(frames,model="gemma3:4b")["subsport"]=="snorkeling_reef"
     assert seen["url"]=="http://127.0.0.1:11434/api/chat"
     assert seen["request"]["stream"] is False
-    assert seen["request"]["format"]=="json"
+    schema = seen["request"]["format"]
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert "personal_meaning" not in schema["properties"]["featureCandidates"][
+        "items"]["properties"]["dimension"]["enum"]
+    assert schema["properties"]["frameObservations"]["items"]["properties"][
+        "frameIndex"]["maximum"] == 1
     assert len(seen["request"]["messages"][0]["images"])==2
 
 
@@ -357,3 +363,117 @@ def test_failure_stage_identifies_source_vs_frame_vs_schema(tmp_path):
     assert output["proposals"][0]["sourceShaVerifiedForJudge"] is False
     assert output["hypothesisSummary"]["failureStages"] == {
         "source_verification":1, "local_model":2}
+
+
+
+def test_ollama_json_schema_matches_core_model_validation_and_visual_only():
+    from adventure_intelligence.ktide_judge_contract import (
+        ollama_schema, VISUAL_DIMENSIONS,
+    )
+    schema=ollama_schema(4)
+    assert set(schema["properties"]) == set(judgment())
+    assert set(schema["required"]) == set(judgment())
+    assert schema["properties"]["featureCandidates"]["items"][
+        "properties"]["dimension"]["enum"] == list(VISUAL_DIMENSIONS)
+    assert schema["properties"]["eventHints"]["items"]["properties"][
+        "lastFrameIndex"]["maximum"] == 3
+    assert schema["properties"]["subsport"]["enum"]
+    with pytest.raises(ValueError):
+        ollama_schema(1)
+
+
+def test_partial_recovery_keeps_supported_scene_not_bad_event_or_feature():
+    from adventure_intelligence.ktide_judge_contract import normalize_model_hypothesis
+    raw=judgment()
+    raw["newInventedLocation"]="A ski resort guessed by model"
+    raw["featureCandidates"]=[
+        {"dimension":"personal_meaning","frameIndices":[0],
+         "observation":"This must be the user's favorite memory"},
+        {"dimension":"water_visibility","frameIndices":[0,1],
+         "observation":"Water appears partly clear"},
+        {"dimension":"terrain_complexity","frameIndices":[99],
+         "observation":"This references an unseen frame"},
+    ]
+    raw["eventHints"]=[
+        {"kind":"clear change","firstFrameIndex":0,"lastFrameIndex":1},
+        {"kind":"imaginary outcome","firstFrameIndex":1,"lastFrameIndex":99},
+    ]
+    accepted,status,reasons=normalize_model_hypothesis(raw,4)
+    assert status=="partial"
+    assert accepted["sceneSummary"]=="Camera shows reef and blue water."
+    assert [x["dimension"] for x in accepted["featureCandidates"]]==["water_visibility"]
+    assert len(accepted["eventHints"])==1
+    assert all("99" not in str(x) for x in accepted["eventHints"])
+    assert all(x["measuredValue"] is None for x in accepted["featureCandidates"])
+    assert "top_level_schema" in reasons
+    assert "discarded_invalid_eventHints" in reasons
+    assert "discarded_invalid_featureCandidates" in reasons
+
+
+def test_unsupported_subsport_becomes_explicit_generic_model_proposal():
+    from adventure_intelligence.ktide_judge_contract import normalize_model_hypothesis
+    raw=judgment()
+    raw["subsport"]="hyperspeed_mountain_flying"
+    proposal,status,reasons=normalize_model_hypothesis(raw,4)
+    assert status=="partial"
+    assert proposal["subsport"]=="general_adventure"
+    assert "unrecognized_subsport_not_verified" in reasons
+    assert proposal["confidence"]==.63
+    assert proposal["featureCandidates"][0]["dimension"]=="water_visibility"
+
+
+def test_model_must_supply_real_bounded_description_or_remain_failed():
+    from adventure_intelligence.ktide_judge_contract import normalize_model_hypothesis
+    for invalid in (
+        {"sceneSummary":"", "subsport":"skiing_moguls"},
+        {"sceneSummary":"A"*301, "subsport":"skiing_moguls"},
+        ["not a dict"], {"subsport":"skiing_moguls"},
+    ):
+        with pytest.raises(ValueError, match="Unrecoverable core"):
+            normalize_model_hypothesis(invalid,4)
+
+
+def test_normalization_drops_subjective_features_even_on_valid_legacy_shape():
+    from adventure_intelligence.ktide_judge_contract import normalize_model_hypothesis
+    raw=judgment()
+    raw["featureCandidates"].append({
+        "dimension":"personal_meaning","frameIndices":[2],
+        "observation":"A four frame VLM cannot know this is a personal memory",
+    })
+    proposal,status,reasons=normalize_model_hypothesis(raw,4)
+    assert status=="partial"
+    assert "discarded_unobservable_feature_hypotheses" in reasons
+    assert [x["dimension"] for x in proposal["featureCandidates"]]==["water_visibility"]
+
+
+def test_real_judge_orchestration_accepts_partial_but_marks_uncertainty(tmp_path):
+    ws=tmp_path/"workspace"
+    ws.mkdir()
+    plan=select_judge_pilot(inventory(),limit=3)
+    def raw_model(frame_list):
+        raw=judgment()
+        raw["unexpectedExtraKey"]="do not trust"
+        raw["eventHints"][0]["lastFrameIndex"]=99
+        return raw
+    def frames(path,duration,n):
+        return [{"frameIndex":i,"requestedMs":requested_stills(duration,n)[i],
+                 "decodedPtsMs":None,"timestampBasis":"unknown",
+                 "imageSha256":"a"*64,"imageBytes":b"FAKE"}
+                for i in range(n)]
+    result=run_judge_pilot(ws,plan,judge=raw_model,
+        source_loader=lambda r,aid:Path("/unopened.mp4"),frame_loader=frames)
+    assert result["successes"]==3
+    assert result["hypothesisSummary"]["partiallyRecoveredJudgments"]==3
+    assert result["hypothesisSummary"]["strictlyValidatedJudgments"]==0
+    assert result["hypothesisSummary"]["schemaRecoveryReasons"]["top_level_schema"]==3
+    assert result["hypothesisSummary"]["uncertainOrFailedSources"]==0
+    assert all(p["judgeValidationStatus"]=="partial" for p in result["proposals"])
+    assert all(p["judgeStatus"]=="model_hypothesis" for p in result["proposals"])
+    assert all(p["judgeProposal"]["eventHints"]==[] for p in result["proposals"])
+
+
+def test_strict_failure_reason_code_does_not_leak_model_content():
+    from adventure_intelligence.ktide_judge_contract import reason_code
+    assert reason_code(ValueError("Unsupported sub-sport suggestion")) == "unsupported_subsport"
+    assert reason_code(ValueError("Video stored at /private/secret/foo.mp4")) == (
+        "schema_validation_unknown")
