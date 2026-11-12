@@ -102,11 +102,6 @@ def test_unobserved_event_and_invalid_inputs_fail_closed():
         rank_candidates([proposed(aid)],{aid:"ski"},limit=0)
     with pytest.raises(ValueError):
         score_candidate({**proposed(aid),"sourceAssetId":"bad"},sport="ski")
-    with pytest.raises(ValueError):
-        score_candidate({**proposed(aid),"sceneEvidence":{"observations":4,
-                                                          "likelyPositiveContext":True,
-                                                          "likelyNegativeContext":True}},
-                        sport="ski") if False else None
     # Contradictory visual evidence is not promoted to a known positive.
     ambiguous=proposed(aid)
     ambiguous["sceneEvidence"]={
