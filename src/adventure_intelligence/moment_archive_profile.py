@@ -231,8 +231,9 @@ def audit_archive(workspace: Path, *, limit: int = 5000,
         raise ValueError("Invalid audit limit, pilot size, seed or frame budget")
     root = safe_training_workspace(workspace)
     reports = root / "reports"
-    if reports.is_symlink() or not reports.is_dir():
-        raise ValueError("Private reports directory required")
+    if (reports.is_symlink() or
+            (judge_report is not None and not reports.is_dir())):
+        raise ValueError("Private reports directory required for judge input")
     catalog = root / "catalog.sqlite3"
     if catalog.is_symlink() or not catalog.is_file():
         raise ValueError("Catalog missing or symlinked")
