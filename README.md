@@ -150,6 +150,7 @@ flowchart TB
 | K-TIDE zero-SigLIP2 cache recovery | **Read-only receipt diagnosis; histogram smoke only** | [Cache preflight](docs/KTIDE_ZERO_CACHE_PREFLIGHT.md) |
 | K-TIDE local vision judge and source assignment proposals | **Opt-in local Ollama, source SHA-verified sparse frames; smoke-only provisional groups** | [Visual judge runbook](docs/KTIDE_LOCAL_VISION_JUDGE_V1.md) |
 | K-MOMENT scene dossier and momentworthiness research | **Read-only evidence-linked overview seeds, future full-video reasoning and archive-conditioned editing spec** | [Momentworthiness design](docs/MOMENTWORTHINESS_SCENE_DOSSIERS_V1.md) |
+| K-TIDE temporal observability and objective V2 | **Read-only SHA-checked gap/PTS audit and corrected local-reversal training loss** | [Temporal audit and training contract](docs/KTIDE_TEMPORAL_OBSERVABILITY_V1.md) |
 | K-TIDE empty-feature-cache diagnosis and approved pilot extraction | **Read-only preflight; source reads only after explicit opt-in** | [Zero-cache recovery guide](docs/KTIDE_ZERO_CACHE_RECOVERY.md) |
 | Validated action-phase recognition, learned temporal utility, calibrated event ranking | **Research goals, not validated** | [Problem formulation](docs/PROBLEM_FORMULATION.md) |
 
