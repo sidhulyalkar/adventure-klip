@@ -11,6 +11,9 @@ from torch import nn
 from torch.nn import functional as F
 
 MODEL_VERSION = "ktide-gap-aware-temporal-v1"
+# Model architecture is unchanged; V1 checkpoints remain inference-compatible.
+# Only the self-supervised objective semantics are updated.
+ORDER_OBJECTIVE_VERSION = "ktide-matched-local-temporal-reversal-v2"
 
 
 class KTIDEEncoder(nn.Module):
@@ -141,6 +144,53 @@ def group_safe_contrastive(z1: torch.Tensor, z2: torch.Tensor,
             logits[torch.arange(2 * batch, device=z.device), positive_index]).mean()
 
 
+def reverse_connected_observations(x: torch.Tensor, t_ms: torch.Tensor,
+                                   valid: torch.Tensor, visible: torch.Tensor,
+                                   max_gap_ms: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Reverse only consecutive observed runs, with identical mask exposure.
+
+    Reversing across an unsupported long temporal gap would fabricate a
+    chronological relation. Visibility is reversed *with* the features to
+    prevent an order-classification shortcut from unmatched masking.
+    Only runs with >=3 connected frames qualify for order supervision.
+    """
+    if (x.ndim != 3 or x.shape[:2] != t_ms.shape
+            or t_ms.shape != valid.shape or visible.shape != valid.shape):
+        raise ValueError("Invalid temporal reversal shapes")
+    t = t_ms.detach().cpu().tolist()
+    present = valid.detach().cpu().tolist()
+    flipped_x, flipped_visible = x.clone(), visible.clone()
+    eligible = []
+    for b, mask in enumerate(present):
+        start = None
+        longest = 0
+        def finish(first, last):
+            nonlocal longest
+            if first is None:
+                return
+            length = last - first
+            longest = max(longest, length)
+            if length >= 2:
+                flipped_x[b, first:last] = x[b, first:last].flip(0)
+                flipped_visible[b, first:last] = visible[b, first:last].flip(0)
+        for i, observed in enumerate(mask):
+            if not observed:
+                if start is not None:
+                    finish(start, i)
+                    start = None
+                continue
+            if start is None:
+                start = i
+            elif not 0 < t[b][i] - t[b][i-1] <= max_gap_ms:
+                finish(start, i)
+                start = i
+        if start is not None:
+            finish(start, len(mask))
+        eligible.append(longest >= 3)
+    return (flipped_x, flipped_visible,
+            torch.tensor(eligible, dtype=torch.bool, device=x.device))
+
+
 def self_supervised_loss(model: KTIDEEncoder, x: torch.Tensor,
                          t_ms: torch.Tensor, valid: torch.Tensor,
                          groups: list[str], *, mask_ratio: float = .3) -> tuple[torch.Tensor, dict]:
@@ -152,19 +202,30 @@ def self_supervised_loss(model: KTIDEEncoder, x: torch.Tensor,
     target = F.normalize(x[missing], dim=-1)
     masked_loss = (1.0 - (pred * target).sum(dim=-1)).mean()
     contrastive = group_safe_contrastive(a["embedding"], b["embedding"], groups)
-    # Synthetic reversal is a self-supervised temporal ordering control.
-    reversed_x = x.clone()
-    for i, n in enumerate(valid.sum(dim=1).tolist()):
-        reversed_x[i, :n] = x[i, :n].flip(dims=(0,))
-    reverse = model(reversed_x, t_ms, valid)
-    positive = F.binary_cross_entropy_with_logits(
-        a["orderLogits"], torch.ones_like(a["orderLogits"]))
-    negative = F.binary_cross_entropy_with_logits(
-        reverse["orderLogits"], torch.zeros_like(reverse["orderLogits"]))
-    order_loss = .5 * (positive + negative)
+    # Both chronological and reversed views see EXACTLY the same feature
+    # content and masking exposure. Reverse within actual connected runs
+    # only: no pseudo-order labels across disconnected observation gaps.
+    reversed_x, reversed_visible, order_eligible = reverse_connected_observations(
+        x, t_ms, valid, v1, model.max_gap_ms)
+    if bool(order_eligible.any()):
+        reverse = model(reversed_x, t_ms, valid, reversed_visible)
+        positive = F.binary_cross_entropy_with_logits(
+            a["orderLogits"][order_eligible],
+            torch.ones_like(a["orderLogits"][order_eligible]))
+        negative = F.binary_cross_entropy_with_logits(
+            reverse["orderLogits"][order_eligible],
+            torch.zeros_like(reverse["orderLogits"][order_eligible]))
+        order_loss = .5 * (positive + negative)
+    else:
+        # Some sparse histograms contain no actual sequence of 3 connected
+        # frames. They can train reconstruction, not chronological ordering.
+        order_loss = a["orderLogits"].sum() * 0.0
     total = masked_loss + .15 * contrastive + .1 * order_loss
     return total, {
         "maskedCosine": float(masked_loss.detach()),
         "groupContrastive": float(contrastive.detach()),
         "orderControl": float(order_loss.detach()),
+        "orderEligibleSamples": int(order_eligible.sum().item()),
+        "orderTotalSamples": int(valid.shape[0]),
+        "orderObjectiveVersion": ORDER_OBJECTIVE_VERSION,
     }
