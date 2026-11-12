@@ -227,12 +227,12 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
         "teacherModelKey": doc["featureModelKey"],
         "manifestSha256": digest, "splitSeed": seed,
         "bestEpoch": best_epoch,
-        "trainingObjectiveVersion": ORDER_OBJECTIVE_VERSION,
     }, checkpoint)
     checkpoint_sha = sha256(checkpoint.read_bytes()).hexdigest()
     report = {
         "version": "klip-ktide-training-run-v1",
         "modelVersion": MODEL_VERSION,
+        "trainingObjectiveVersion": ORDER_OBJECTIVE_VERSION,
         "teacherModelKey": doc["featureModelKey"],
         "datasetManifestSha256": digest,
         "modelConfig": model.config,
