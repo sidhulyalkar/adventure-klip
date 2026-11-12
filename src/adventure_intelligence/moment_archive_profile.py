@@ -159,8 +159,9 @@ def _judge_hypotheses(judge_path: Path | None, reports: Path) -> dict[str, dict]
             "candidateSport": (_sport_from_subsport(
                 record["judgeProposal"].get("subsport")) if valid else "unknown"),
             "validationStatus": (
-                record.get("judgeValidationStatus", "legacy_strict_unknown")
-                if valid else "failed_or_unjudged"),
+                record.get("judgeValidationStatus")
+                if valid and record.get("judgeValidationStatus") in ("strict", "partial")
+                else "legacy_strict_unknown" if valid else "failed_or_unjudged"),
         }
     if doc.get("successes") != successful:
         raise ValueError("Judge success total is inconsistent")
@@ -366,7 +367,7 @@ def audit_archive(workspace: Path, *, limit: int = 5000,
             "audioPresentMetadata": audio,
             "cameraDeviceModel": None,
             "captureStyle": "unknown_not_observed",
-            "reviewedByOwnerAtLeastOnce": aid in reviewed_ids,
+            "hasLocalReviewRecordNotIndependentlyVerified": aid in reviewed_ids,
             "hasPriorJudgeHypothesis": prior.get("judgeStatus") == "model_hypothesis",
             "matchedSemanticProvidersNotReceiptVerified": sorted(
                 k for k,v in provider_ids.items() if aid in v
@@ -413,7 +414,7 @@ def audit_archive(workspace: Path, *, limit: int = 5000,
         },
         "metadataGaps": dict(sorted(missing.items())),
         "existingEvidenceCoverage": {
-            "sourcesWithAnyPriorOwnerReview": len(reviewed_ids & source_ids),
+            "sourcesWithReviewRecordsNotIndependentlyVerified": len(reviewed_ids & source_ids),
             "latestExampleJudgments": len(latest_examples),
             "latestPairwiseJudgments": len(latest_pairs),
             "activeSemanticProviderSourceCountsNotReceiptVerified": {
