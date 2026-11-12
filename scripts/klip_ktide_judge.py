@@ -34,6 +34,8 @@ def main() -> int:
                         help="New private directory named ktide-judge-* under reports/")
     parser.add_argument("--existing-assignments",
                         help="Optional existing private JSON. Preserve verified owner labels")
+    parser.add_argument("--retry-from",
+                        help="Prior proposals.json, reuse verified successes and rerun only failures")
     args = parser.parse_args()
     if not re.fullmatch(r"ktide-judge-[A-Za-z0-9_-]{4,50}", args.name):
         parser.error("--name must be a unique ktide-judge-* label")
@@ -47,6 +49,12 @@ def main() -> int:
         if args.existing_assignments:
             existing, _ = load_json(Path(args.existing_assignments).expanduser(),
                                     max_bytes=2_000_000)
+        if args.retry_from and not args.run:
+            parser.error("--retry-from requires --run")
+        previous = None
+        if args.retry_from:
+            previous, _ = load_json(Path(args.retry_from).expanduser(),
+                                    max_bytes=16_000_000)
         if not args.run:
             result = {
                 **plan,
@@ -65,7 +73,8 @@ def main() -> int:
                     or (ws / "reports").is_symlink()):
                 parser.error("Refusing to overwrite an existing output or symlink")
             report = run_judge_pilot(ws, plan, model=args.model,
-                                     frame_count=args.frames, existing=existing)
+                                     frame_count=args.frames, existing=existing,
+                                     previous=previous)
             output.mkdir(parents=True,mode=0o700)
             (output / "proposals.json").write_text(
                 json.dumps({
@@ -79,6 +88,10 @@ def main() -> int:
                 "sourceCount":report["sourceCount"],
                 "successes":report["successes"],
                 "failures":report["sourceCount"]-report["successes"],
+                "reusedSuccessfulJudgments":report["reusedSuccessfulJudgments"],
+                "freshlyJudgedSources":report["freshlyJudgedSources"],
+                "failureStages":report["hypothesisSummary"]["failureStages"],
+                "failureTypes":report["hypothesisSummary"]["failureTypes"],
                 "provisionalCaptureGroups":plan["provisionalCaptureGroups"],
                 "modelHypothesisSummary":report["hypothesisSummary"],
                 "groupingStatus":report["groupingStatus"],

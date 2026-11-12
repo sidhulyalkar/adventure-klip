@@ -153,3 +153,56 @@ real study:
 This code never silently modifies original videos, assigns ground-truth
 species, updates the catalog, sends footage to a cloud provider, or
 automatically approves deletions or publication.
+
+
+## 5. Recover partially judged archives without repeating successes
+
+A private pipeline smoke run processed 16 histogram-ready sources and
+46 feature windows on MPS. Five sources received valid local vision-judge
+interpretations and 11 did not. Training completion is not evidence of
+understanding events, wildlife, or human preferences.
+
+Inspect the existing report without opening any media:
+
+    python - <<'PY'
+    import json, os
+    from pathlib import Path
+    from collections import Counter
+    p = Path(os.environ["WS"]) / "reports/ktide-judge-pilot-001/proposals.json"
+    d = json.loads(p.read_text())
+    failed = [r for r in d["proposals"] if r["judgeStatus"] != "model_hypothesis"]
+    print("Failed:", len(failed))
+    print("Failure types:", dict(Counter(r.get("failureType","unknown") for r in failed)))
+    print("Failures with decoded frames:",
+          sum(bool(r.get("observedFrames")) for r in failed))
+    for r in failed:
+        print(r["sourceSha256"][:12], r.get("failureType"),
+              len(r.get("observedFrames",[])))
+    PY
+
+Run a new, bounded, **failure-only retry**. Previously successful sources
+are not opened, re-hashed, decoded or rejudged. Failed sources are
+source-identity-verified again before sampling.
+
+    python scripts/klip_ktide_judge.py \
+      --workspace "$WS" \
+      --inventory "$WS/reports/ktide-histogram-inventory.json" \
+      --retry-from "$WS/reports/ktide-judge-pilot-001/proposals.json" \
+      --name ktide-judge-pilot-retry-001 \
+      --limit 16 --frames 4 --model gemma3:4b --run
+
+The retry requires the same exact source roster, grouping, model, frame
+count and valid prior successful frame SHA-256 receipts. New reports use
+a distinct directory, protecting the earlier pilot and its training results.
+
+The new output distinguishes reusedSuccessfulJudgments, freshlyJudgedSources,
+failureStages, failureTypes and feature hypothesis coverage. Failure stages
+include source_verification, frame_decode, local_model and schema_validation.
+Only error **types** and **stages** are reported; original paths and raw
+model responses are not exposed.
+
+Missing source recordings, FFmpeg frame decoding failures, local Ollama
+problems and invalid JSON predictions require different repairs. Use
+the stage counts to choose the next step, rather than blindly retrying
+forever. Continue to treat every proposed label or group identity as
+unverified. No previous training checkpoint needs to be overwritten.

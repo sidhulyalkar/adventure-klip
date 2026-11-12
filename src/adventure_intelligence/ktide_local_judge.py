@@ -386,9 +386,80 @@ def merge_smoke_assignments(plan: dict, proposals: list[dict],
     return {"version":ASSIGNMENTS_VERSION,"sources":output}
 
 
+
+def _validated_previous_success(previous: dict, plan: dict, *,
+                                model: str, frame_count: int) -> dict[str, dict]:
+    """Re-use only successful receipts from the exact same immutable source plan."""
+    if (not isinstance(previous, dict)
+            or previous.get("version") != VERSION
+            or previous.get("model") != model
+            or previous.get("frameCountPerVideo") != frame_count
+            or not isinstance(previous.get("proposals"), list)):
+        raise ValueError("Previous judge run/model/frame parameters do not match")
+    expected = {entry["sourceSha256"]: entry for entry in plan["selected"]}
+    if len(expected) != len(plan["selected"]):
+        raise ValueError("Duplicate source in current judge plan")
+    by_id = {}
+    for row in previous["proposals"]:
+        if not isinstance(row, dict):
+            raise ValueError("Malformed previous judge record")
+        aid = row.get("sourceSha256")
+        if (not isinstance(aid, str) or aid not in expected
+                or aid in by_id or row.get("provisionalGroupId")
+                != expected[aid]["groupId"]):
+            raise ValueError("Prior judged source roster/group does not match current plan")
+        by_id[aid] = row
+    if set(by_id) != set(expected):
+        raise ValueError("Prior judging roster incomplete or changed")
+    reusable = {}
+    for aid, entry in by_id.items():
+        if entry.get("judgeStatus") != "model_hypothesis":
+            continue
+        if entry.get("sourceShaVerifiedForJudge") is not True:
+            raise ValueError("Cannot reuse previously unverified source judgment")
+        frames = entry.get("observedFrames")
+        if (not isinstance(frames, list) or len(frames) != frame_count):
+            raise ValueError("Incomplete previous frame receipts")
+        for i, frame in enumerate(frames):
+            if (not isinstance(frame, dict)
+                    or frame.get("frameIndex") != i
+                    or frame.get("requestedMs") != requested_stills(
+                        expected[aid]["durationMs"], frame_count)[i]
+                    or not isinstance(frame.get("imageSha256"), str)
+                    or not SHA.fullmatch(frame["imageSha256"])):
+                raise ValueError("Previous frame receipt provenance mismatch")
+        proposal = entry.get("judgeProposal")
+        if not isinstance(proposal, dict):
+            raise ValueError("Cannot reuse malformed judgment")
+        # Judge proposals are normalized on first write, with explicit unknown
+        # numeric values. Reconstruct and validate the original strict schema.
+        raw = dict(proposal)
+        candidates = raw.get("featureCandidates")
+        if not isinstance(candidates, list):
+            raise ValueError("Invalid previous feature evidence")
+        raw["featureCandidates"] = []
+        for feature in candidates:
+            if (not isinstance(feature, dict)
+                    or feature.get("evidenceSource") != "model_hypothesis"
+                    or "measuredValue" not in feature
+                    or feature["measuredValue"] is not None):
+                raise ValueError("Previous judge evidence must remain unverified")
+            raw["featureCandidates"].append({
+                key: feature[key]
+                for key in ("dimension", "frameIndices", "observation")
+                if key in feature
+            })
+        normalized = validate_judge_proposal(raw, frame_count)
+        if normalized != proposal:
+            raise ValueError("Previous normalized judge proposal mismatch")
+        reusable[aid] = entry
+    return reusable
+
+
 def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
                     frame_count: int = 4, existing: dict | None = None,
-                    judge=None, source_loader=None, frame_loader=None) -> dict:
+                    judge=None, source_loader=None, frame_loader=None,
+                    previous: dict | None = None) -> dict:
     if (not isinstance(plan,dict)
             or plan.get("version")!="klip-ktide-judge-plan-v1"
             or not isinstance(plan.get("selected"),list)
@@ -399,9 +470,15 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
     judge = judge or (lambda frames:model_call(frames,model))
     source_loader = source_loader or verified_video_source
     frame_loader = frame_loader or sample_source_frames
+    reusable = (_validated_previous_success(previous, plan, model=model,
+                                           frame_count=frame_count)
+                if previous is not None else {})
     judged=[]
     for selection in plan["selected"]:
         aid=selection["sourceSha256"]
+        if aid in reusable:
+            judged.append(reusable[aid])
+            continue
         entry={
             "sourceSha256":aid,"provisionalGroupId":selection["groupId"],
             "sourceShaVerifiedForJudge":False,
@@ -409,27 +486,38 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
             "observedFrames":[],
             "mediaDeleted":False,"catalogUpdated":False,
         }
+        stage="source_verification"
         try:
             video=source_loader(root,aid)
-            frames=frame_loader(video,selection["durationMs"],frame_count)
             entry["sourceShaVerifiedForJudge"]=True
+            stage="frame_decode"
+            frames=frame_loader(video,selection["durationMs"],frame_count)
             entry["observedFrames"]=[{
                 k:frame[k] for k in ("frameIndex","requestedMs",
                                     "decodedPtsMs","timestampBasis","imageSha256")}
                 for frame in frames]
             # Never retain unvalidated model output in an assignment report.
+            stage="local_model"
             proposal=judge(frames)
+            stage="schema_validation"
             entry["judgeProposal"]=validate_judge_proposal(proposal,len(frames))
             entry["judgeStatus"]="model_hypothesis"
         except (OSError,ValueError,RuntimeError,TimeoutError,ConnectionError) as exc:
             # Fail independently; do not leak full source paths in reports.
             entry["judgeStatus"]="failed"
             entry["failureType"]=type(exc).__name__
+            entry["failureStage"]=stage
         judged.append(entry)
     assignments=merge_smoke_assignments(plan,judged,existing)
     valid=[r["judgeProposal"] for r in judged
            if r["judgeStatus"]=="model_hypothesis"]
     summary={
+        "failureStages":dict(sorted(Counter(
+            r.get("failureStage","unknown")
+            for r in judged if r["judgeStatus"]=="failed").items())),
+        "failureTypes":dict(sorted(Counter(
+            r.get("failureType","unknown")
+            for r in judged if r["judgeStatus"]=="failed").items())),
         "sceneContexts":dict(sorted(Counter(p["sceneContext"] for p in valid).items())),
         "suggestedSubsports":dict(sorted(Counter(p["subsport"] for p in valid).items())),
         "suggestedFeatureDimensions":dict(sorted(Counter(
@@ -442,6 +530,8 @@ def run_judge_pilot(workspace: Path, plan: dict, *, model: str = MODEL,
         "frameCountPerVideo":frame_count,
         "sourceCount":len(judged),
         "successes":sum(x["judgeStatus"]=="model_hypothesis" for x in judged),
+        "reusedSuccessfulJudgments":len(reusable),
+        "freshlyJudgedSources":len(judged)-len(reusable),
         "proposals":judged,
         "hypothesisSummary":summary,
         "smokeAssignments":assignments,
