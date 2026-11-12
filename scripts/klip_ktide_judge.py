@@ -88,6 +88,14 @@ def main() -> int:
                 "sourceCount":report["sourceCount"],
                 "successes":report["successes"],
                 "failures":report["sourceCount"]-report["successes"],
+                "strictlyValidatedJudgments": report["hypothesisSummary"][
+                    "strictlyValidatedJudgments"],
+                "partiallyRecoveredJudgments": report["hypothesisSummary"][
+                    "partiallyRecoveredJudgments"],
+                "schemaRecoveryReasons": report["hypothesisSummary"][
+                    "schemaRecoveryReasons"],
+                "failureReasonCodes": report["hypothesisSummary"][
+                    "failureReasonCodes"],
                 "reusedSuccessfulJudgments":report["reusedSuccessfulJudgments"],
                 "freshlyJudgedSources":report["freshlyJudgedSources"],
                 "failureStages":report["hypothesisSummary"]["failureStages"],

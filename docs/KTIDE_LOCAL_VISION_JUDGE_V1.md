@@ -206,3 +206,79 @@ problems and invalid JSON predictions require different repairs. Use
 the stage counts to choose the next step, rather than blindly retrying
 forever. Continue to treat every proposed label or group identity as
 unverified. No previous training checkpoint needs to be overwritten.
+
+
+## 6. Structured-output recovery V2: 11 out of 16 previous judges rejected
+
+A later local pilot repeated source frame extraction for the 11 unresolved
+sources. Every source supplied four verified frames and the model call returned
+structured JSON, but **all 11 were rejected at schema_validation with
+ValueError**. Thus retrying the identical prompt is not a good repair:
+the model response contract was too restrictive without being supplied as
+an actual JSON Schema to Ollama.
+
+Ollama supports providing a JSON Schema object in /api/chat's format field,
+not only the looser string "json". V2 requests the strict top-level fields,
+valid sub-sport enums, actual 0..N-1 frame indices, bounded text, and
+visual-only feature dimension enums.
+
+The model is now asked for *visually observable* KSRE candidates only,
+rather than the whole 35-dimensional utility taxonomy. In particular
+the model is not asked to score personal_meaning. Previously accepted
+model-only personal_meaning hints remain in legacy individual proposals
+for provenance, but they are reported separately under
+legacyUnobservableDimensionHints and excluded from visual-feature totals.
+
+### Conservative partial scene recovery
+
+A useful bounded sceneSummary should not automatically be thrown away
+because one nested frame observation, feature candidate, confidence or
+event hint is malformed. V2 performs:
+
+1. Strict validation of the complete model response.
+2. If strict validation fails, retain only a nonempty bounded
+   model-supplied sceneSummary and valid separately checked fields.
+3. Discard any invalid/out-of-range observation, event hint or feature
+   INSTEAD of modifying its frame indices or inventing missing evidence.
+4. Unknown sub-sport becomes a clearly marked general_adventure
+   placeholder, never a verified category. Unknown confidence is
+   represented by a conservative numeric placeholder in the V1-compatible
+   output, accompanied by model_confidence_unavailable.
+5. Mark the record judgeValidationStatus=partial and write static
+   schemaRecoveryReasons. The model text remains a hypothesis.
+6. If even the core sceneSummary is unusable, leave the source failed,
+   reporting a static failureReasonCode without copying any untrusted
+   model response into private reports.
+
+Both STRICT and PARTIALLY recovered judgments can be useful *proposals*,
+but neither is verified event truth, personal significance, location,
+wildlife species or human technique. Numeric KSRE values remain null,
+and unrecognized dimensions are discarded. No auto-approval is permitted.
+
+For this new code, the previous five successes should be reused, and only
+the 11 missing responses need local model inference again:
+
+    git fetch origin
+    git switch --detach origin/main
+    export WS="$HOME/AdventureAI-clean.QJnopt"
+    python scripts/klip_ktide_judge.py \
+      --workspace "$WS" \
+      --inventory "$WS/reports/ktide-histogram-inventory.json" \
+      --retry-from "$WS/reports/ktide-judge-pilot-retry-001/proposals.json" \
+      --name ktide-judge-structured-retry-001 \
+      --limit 16 --frames 4 --model gemma3:4b --run
+
+Do NOT use the previous output name. The old report and the 46-window
+histogram checkpoint remain unchanged.
+
+Afterwards report successes, strictlyValidatedJudgments,
+partiallyRecoveredJudgments, reusedSuccessfulJudgments,
+schemaRecoveryReasons, and failureReasonCodes. Those let us distinguish
+whether the model is giving complete valid evidence or just
+recoverable scene summaries.
+
+Important: an unknown/failed sub-sport currently still needs a V1
+assignment goal for a smoke-only planner. Those goals are placeholders,
+not descriptions of the actual film and not trusted human preferences.
+For scientific use, human-reviewed or otherwise independently verified
+outing and action labels are needed.
