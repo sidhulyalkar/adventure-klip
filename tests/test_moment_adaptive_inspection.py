@@ -37,6 +37,8 @@ def _probe(aid,start=2000,end=17000,sport="unknown"):
 def _prepare(tmp_path):
     root = tmp_path / "klip"
     init(root)
+    (root/"reports").mkdir()
+    (root/"semantics").mkdir()
     aids = [f"{n+1:064x}" for n in range(5)]
     paths = [tmp_path / f"original_{i}.mp4" for i in range(5)]
     # Deliberately do not create original media files.
