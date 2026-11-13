@@ -294,6 +294,7 @@ def plan_inspection(
             sources[row["id"]] = {"durationMs": ms}
         skips = _latest_human_skips(db)
         prepared = {"ranked":[], "exploration":[]}
+        manual_split_requests = []
         skipped = Counter()
         identities = set()
         for mode, key in (("ranked","rankedClips"),
@@ -305,6 +306,7 @@ def plan_inspection(
                     continue
                 if item["status"] == "manual_split_required":
                     skipped["long_clip_requires_manual_split"] += 1
+                    manual_split_requests.append(item)
                     continue
                 identity = (item["sourceSha256"],item["coreStartMs"],
                             item["coreEndMs"])
@@ -359,6 +361,7 @@ def plan_inspection(
             item["sportHint"] for item in chosen).items())),
         "skipped": {**dict(sorted(skipped.items())),
                     "frame_budget_rejections": missed_budget},
+        "manualSplitRequests": manual_split_requests,
         "inspections": chosen,
         "nextStage": (
             "Explicitly approved bounded source verification and batched "
