@@ -155,6 +155,7 @@ flowchart TB
 | K-MOMENT ranked review in Focused Studio | **Opt-in local playback and human feedback on ranked hypotheses and unscored coverage probes** | [Clip ranking runbook](docs/KMOMENT_CLIP_RANKING_V1.md) |
 | K-MOMENT adaptive temporal inspection | **Read-only 2/4 fps multirate sampling plans around full clip cores, with balanced controls and explicit 7s gap diagnostic** | [Adaptive inspection runbook](docs/KMOMENT_ADAPTIVE_INSPECTION_V1.md) |
 | K-MOMENT dense image evidence V1 | **Opt-in source-SHA-verified, bounded local 4fps image extraction with per-frame receipts and resumable completed windows** | [Dense extraction runbook](docs/KMOMENT_DENSE_FRAME_EVIDENCE_V1.md) |
+| K-MOMENT dense visual QA V1 | **Source-safe JPEG contact sheets, optional batched frozen SigLIP2 embeddings and non-action visual change peaks** | [Dense QA runbook](docs/KMOMENT_DENSE_VISUAL_QA_V1.md) |
 | K-TIDE temporal observability and objective V2 | **Read-only SHA-checked gap/PTS audit and corrected local-reversal training loss** | [Temporal audit and training contract](docs/KTIDE_TEMPORAL_OBSERVABILITY_V1.md) |
 | K-TIDE empty-feature-cache diagnosis and approved pilot extraction | **Read-only preflight; source reads only after explicit opt-in** | [Zero-cache recovery guide](docs/KTIDE_ZERO_CACHE_RECOVERY.md) |
 | Validated action-phase recognition, learned temporal utility, calibrated event ranking | **Research goals, not validated** | [Problem formulation](docs/PROBLEM_FORMULATION.md) |
