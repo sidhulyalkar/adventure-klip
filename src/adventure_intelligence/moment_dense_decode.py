@@ -340,6 +340,7 @@ def decode_inspection(
                     summary["failures"].append({"sourceSha256":aid,"reason":"source_duration_mismatch"})
                     continue
                 staged=[]
+                pending_reused=[]
                 try:
                     # Full SHA-256, before any image extraction. This can take
                     # time with large external HEVC videos; source never writes.
@@ -352,7 +353,7 @@ def decode_inspection(
                             raise ValueError("Symlinked clip output")
                         old=_validate_receipt(dest,plan_sha=plan_sha,row=row)
                         if old is not None:
-                            summary["clips"].append({
+                            pending_reused.append({
                                 "sourceSha256":aid, "clipId":cid,
                                 "status":"reused_verified_derived_cache",
                                 "observedFrames":old["observedFrames"],
@@ -386,6 +387,7 @@ def decode_inspection(
                         raise OSError("Original file changed during decoding")
                     if verified_digest(media)!=aid:
                         raise OSError("Source hash changed during extraction")
+                    summary["clips"].extend(pending_reused)
                     for stage,dest,row,cid in staged:
                         doc=json.loads((stage/"receipt.json").read_text())
                         stage.rename(dest)  # atomic, same parent
