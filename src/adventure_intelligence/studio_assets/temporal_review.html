@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>K-MOMENT • Temporal Review</title>
+<style>
+:root {color-scheme:dark;--bg:#0d1420;--surface:#192335;--surface2:#232f43;--text:#eaf2ff;--muted:#a4b3c8;--accent:#70cbbc;--edge:#334156}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);margin:0;font:15px/1.5 system-ui,-apple-system,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:19px max(18px,3vw);border-bottom:1px solid var(--edge)}
+header h1{font-size:1.25rem;letter-spacing:.02em;margin:0}
+small,.muted{color:var(--muted)}
+h2{font-size:1.1rem;margin:0 0 12px}
+main{max-width:1550px;margin:auto;padding:22px 24px;display:grid;grid-template-columns:minmax(195px,260px) minmax(350px,1fr) minmax(250px,340px);gap:20px}
+section,.panel{background:var(--surface);border:1px solid var(--edge);border-radius:14px;padding:16px;min-width:0}
+button,select,input,textarea{font:inherit;color:var(--text)}
+button,select{border:1px solid #506079;border-radius:9px;padding:9px 12px;background:var(--surface2)}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:#17695e;border-color:#3eada0;font-weight:650}
+button:disabled{opacity:.45;cursor:default}
+button.active{border-color:var(--accent);background:#20534e}
+.clip{display:block;width:100%;margin:7px 0;text-align:left;overflow-wrap:anywhere}
+.clip .meta{display:block;font-size:.76rem;color:var(--muted)}
+.clip .reviewed{color:var(--accent)}
+#frame{width:100%;object-fit:contain;aspect-ratio:16/9;background:#0b1019;border-radius:8px}
+#frameLabel{font-variant-numeric:tabular-nums;font-size:1rem}
+.controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:10px 0}
+input[type=range]{width:100%;accent-color:var(--accent)}
+#scrub{margin-top:8px}
+.timeLine{display:flex;align-items:center;justify-content:space-between;gap:12px;font-variant-numeric:tabular-nums}
+#peakBar{display:flex;flex-wrap:wrap;gap:6px}
+#peakBar button{font-size:.82rem;padding:5px 8px}
+#overview{width:100%;max-height:185px;object-fit:contain;border:1px solid var(--edge);border-radius:6px;margin-top:12px}
+label{display:block;font-weight:600;font-size:.85rem;margin:10px 0 4px}
+select,textarea{width:100%}
+textarea{border:1px solid var(--edge);border-radius:8px;padding:8px;background:#101827;resize:vertical;min-height:82px}
+fieldset{border:0;padding:0;margin:0}
+.fieldrow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#clipDetails{overflow-wrap:anywhere}
+.notice{padding:10px 12px;border-left:3px solid var(--accent);background:#12352f;border-radius:5px;color:#ddfff7;margin:14px 0}
+#status{min-height:24px;color:var(--accent)}
+footer{max-width:1550px;margin:0 auto;padding:2px 24px 26px;color:var(--muted);font-size:.82rem}
+@media(max-width:1050px){main{grid-template-columns:200px 1fr}#reviewPanel{grid-column:1/-1}}
+@media(max-width:690px){header{display:block}main{grid-template-columns:1fr;padding:12px;gap:12px}#reviewPanel{grid-column:auto}}
+</style>
+</head>
+<body>
+<header>
+<div>
+<h1>K-MOMENT / Temporal Review</h1>
+<small>Local derived-frame player • human event review</small>
+</div>
+<button id="download" class="primary">Export reviewed labels (.json)</button>
+</header>
+<main>
+<section aria-label="Available intervals">
+<h2>Inspection intervals</h2>
+<div id="coverage" class="muted"></div>
+<nav id="clips" aria-label="Clip selection"></nav>
+</section>
+<section aria-label="Frame player">
+<div class="timeLine"><h2 id="clipTitle">Select an interval</h2><span id="frameLabel"></span></div>
+<div id="clipDetails" class="muted"></div>
+<div class="notice">Images are 2–4 fps resampled observations, not an original video. Visual peaks do not verify actions, events or clip boundaries.</div>
+<img id="frame" alt="Frame from the selected derived inspection sequence">
+<input id="scrub" aria-label="Scrub through derived video observations" type="range" min="0" max="0" value="0">
+<div class="controls">
+<button id="previous" title="Previous frame">◀ Frame</button>
+<button id="play" class="primary">Play frames</button>
+<button id="next" title="Next frame">Frame ▶</button>
+<label for="rate" style="display:inline;margin:0 0 0 auto">Speed</label>
+<select id="rate" aria-label="Playback speed">
+<option value="0.5">0.5×</option><option value="1">1×</option>
+<option value="2" selected>2×</option><option value="4">4×</option>
+</select>
+</div>
+<h2>Appearance-change markers</h2>
+<div id="peakBar"></div>
+<small>Jump to a change marker, then inspect nearby frames before assigning an event. No marker does not mean no interesting event.</small>
+<img id="overview" alt="Uniformly sampled storyboard for this interval">
+</section>
+<section id="reviewPanel" aria-label="Human annotation">
+<h2>What actually happened?</h2>
+<div id="reviewCount" class="muted"></div>
+<fieldset>
+<label for="sport">Sport / context you observed</label>
+<select id="sport">
+<option value="uncertain">Not sure</option>
+<option value="ski">Skiing</option><option value="bike">Mountain biking</option>
+<option value="snorkeling">Snorkeling / marine</option>
+<option value="other">Other</option>
+</select>
+<label for="kind">Observed event</label>
+<select id="kind">
+<option value="unknown">Uncertain / needs more frames</option>
+<option value="sustained_action">Sustained action / flowing movement</option>
+<option value="maneuver">Maneuver or technical feature</option>
+<option value="wildlife_encounter">Wildlife encounter</option>
+<option value="scene_transition">Scenic or contextual transition</option>
+<option value="camera_disturbance">Camera movement / disturbance</option>
+<option value="no_relevant_event">No relevant event observed</option>
+<option value="other">Other event</option>
+</select>
+<label for="completion">Is the full event visible?</label>
+<select id="completion">
+<option value="uncertain">Cannot tell / needs more context</option>
+<option value="complete">Complete, including resolution</option>
+<option value="missing_start">Beginning cut off</option>
+<option value="missing_end">Ending / resolution cut off</option>
+<option value="fragment">Only a fragment is visible</option>
+<option value="none">No relevant event</option>
+</select>
+<label for="value">Would you use this in a highlight reel?</label>
+<select id="value">
+<option value="later">Maybe / inspect further</option>
+<option value="keep">Keep</option>
+<option value="skip">Skip</option>
+</select>
+<div class="fieldrow">
+<div>
+<label>Review start</label>
+<button id="markStart">Mark current frame</button>
+</div>
+<div>
+<label>Review end</label>
+<button id="markEnd">Mark current frame</button>
+</div>
+</div>
+<div class="timeLine"><small id="startLabel"></small><small id="endLabel"></small></div>
+<label for="note">Why? What is actually observable?</label>
+<textarea id="note" maxlength="1500" placeholder="Describe the action, subject, missing context, camera movement, or what made the moment special"></textarea>
+<div class="controls"><button id="save" class="primary">Save review in this page</button><button id="reset">Reset draft</button></div>
+<div id="status" role="status" aria-live="polite"></div>
+</fieldset>
+<div class="notice">Reviews exist in this page only until you export them. Exported JSON is private and is not automatically imported into Klip's database.</div>
+</section>
+</main>
+<footer>
+Source media is never requested by this page. Timestamps refer to 4-fps resampled FFmpeg output, not measured original-frame PTS. Event classifications and cut positions must be reviewed on full video before final editing.
+</footer>
+<!--REVIEW_DATA-->
+<script src="temporal_review.js" defer></script>
+</body>
+</html>
