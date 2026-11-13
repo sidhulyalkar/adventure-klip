@@ -27,6 +27,7 @@ from .locking import lock_workspace
 from .sources import resolve_source
 from .sequence_editor import sequence_state, save_sequence, review_combination, export_sequence
 from .curation_queue import review_queue
+from .studio_ranked_review import studio_ranked_queue
 from .clip_rules import suggest_trim, exclusion_spans
 from .boundary_inspector import boundary_evidence
 from .transition_evidence import EdgeEvidence, VERSION as EDGE_VERSION
@@ -343,6 +344,8 @@ def make_handler(workspace:Path,token:str):
                             or len(raw_start)>10 or len(raw_end)>10):
                         raise ValueError("Expected integer millisecond boundaries")
                     self._json(200,studio_clip_metadata(workspace,aid,int(raw_start),int(raw_end)))
+                elif path=="/api/ranked-queue":
+                    self._json(200,studio_ranked_queue(workspace))
                 elif path=="/api/queue":
                     raw_page=q.get("page",["0"])[0]
                     if not raw_page.isdigit() or len(raw_page)>6:

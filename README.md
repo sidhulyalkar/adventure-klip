@@ -152,6 +152,7 @@ flowchart TB
 | K-MOMENT scene dossier and momentworthiness research | **Read-only evidence-linked overview seeds, future full-video reasoning and archive-conditioned editing spec** | [Momentworthiness design](docs/MOMENTWORTHINESS_SCENE_DOSSIERS_V1.md) |
 | K-MOMENT archive profiling and sport-aware pilot selection | **Read-only catalog duration/camera/review audit and diverse unverified pilot candidates** | [Archive profile guide](docs/KMOMENT_ARCHIVE_PROFILE_V1.md) |
 | K-MOMENT explainable clip review ranking | **Heuristic goal-aware event prioritization plus unscored unknown-footage exploration; never auto-skips** | [Clip ranking runbook](docs/KMOMENT_CLIP_RANKING_V1.md) |
+| K-MOMENT ranked review in Focused Studio | **Opt-in local playback and human feedback on ranked hypotheses and unscored coverage probes** | [Clip ranking runbook](docs/KMOMENT_CLIP_RANKING_V1.md) |
 | K-TIDE temporal observability and objective V2 | **Read-only SHA-checked gap/PTS audit and corrected local-reversal training loss** | [Temporal audit and training contract](docs/KTIDE_TEMPORAL_OBSERVABILITY_V1.md) |
 | K-TIDE empty-feature-cache diagnosis and approved pilot extraction | **Read-only preflight; source reads only after explicit opt-in** | [Zero-cache recovery guide](docs/KTIDE_ZERO_CACHE_RECOVERY.md) |
 | Validated action-phase recognition, learned temporal utility, calibrated event ranking | **Research goals, not validated** | [Problem formulation](docs/PROBLEM_FORMULATION.md) |

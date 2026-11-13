@@ -115,6 +115,8 @@
       <footer class="review-footer">
         <div class="batch-status"><span id="batchProgress">Review queue</span><span id="batchDetail">Loading…</span></div>
         <div class="filter-actions">
+          <label for="reviewMode">Source</label>
+          <select id="reviewMode" aria-label="Review source"><option value="queue">Standard queue</option><option value="ranked">Ranked + exploration</option></select>
           <label for="reviewActivity">Show</label>
           <select id="reviewActivity"><option value="all">All activities</option><option value="ski">Skiing</option><option value="bike">Biking</option><option value="snorkeling">Snorkeling</option><option value="unknown">Other</option></select>
           <button type="button" id="helpToggle" class="ghost small">Shortcuts ?</button>
