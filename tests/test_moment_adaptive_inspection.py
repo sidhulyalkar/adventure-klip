@@ -153,6 +153,9 @@ def test_long_event_is_not_silently_cut_to_fit_budget(tmp_path):
     (ws/"reports"/REPORT_NAME).write_text(json.dumps(report))
     data = plan_inspection(ws,max_clips=4,frame_budget=600)
     assert data["skipped"]["long_clip_requires_manual_split"] == 1
+    assert data["manualSplitRequests"][0]["sourceSha256"] == aids[0]
+    assert data["manualSplitRequests"][0]["coreEndMs"] == 56000
+    assert data["manualSplitRequests"][0]["requestedTimesMs"] == []
     assert not any(item["sourceSha256"]==aids[0] for item in data["inspections"])
 
 
