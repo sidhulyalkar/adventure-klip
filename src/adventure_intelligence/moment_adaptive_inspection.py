@@ -90,8 +90,11 @@ def _prepare_one(row: dict, mode: str, sources: dict) -> dict | None:
             raise ValueError("Unexpected exploration item type")
     elif not (_strict_fraction(row.get("priorityLower"),0,100)
               and _strict_fraction(row.get("priorityUpper"),0,100)
-              and row["priorityLower"] <= row["priorityUpper"]):
-        raise ValueError("Invalid heuristic range for ranked item")
+              and row["priorityLower"] <= row["priorityUpper"]
+              and isinstance(row.get("eventKindProposal"),str)
+              and re.fullmatch(r"[a-z][a-z0-9_.:-]{0,79}",
+                               row["eventKindProposal"])):
+        raise ValueError("Invalid ranked event proposal or heuristic range")
     left, right = PADDING_MS[sport]
     padded_start = max(0, start - left)
     padded_end = min(source["durationMs"], end + right)
@@ -185,18 +188,31 @@ def _round_robin(items, chosen, used, quota, frame_budget, max_per_source):
 
 def _cached_context(root, db, aid, start, end, cache):
     if aid not in cache:
+        active = db.execute(
+            """SELECT j.filename FROM semantic_jobs j JOIN semantic_active a
+            ON a.asset_id=j.asset_id AND a.config_id=j.config_id
+            WHERE a.asset_id=? AND a.provider='siglip2'
+            AND j.status='completed'""", (aid,)).fetchone()
+        if active is not None and active["filename"]:
+            path = root / "semantics" / active["filename"]
+            if path.is_symlink() or path.parent.resolve() != (root/"semantics").resolve():
+                raise ValueError("Unsafe semantic artifact path")
         cache[aid] = frames_for_asset(db, root, aid, "siglip2")
     frames, model_key = cache[aid]
     valid = []
+    decoded_receipts = 0
     for frame in frames:
         if not isinstance(frame, dict):
             continue
-        t = frame.get("decodedPtsMs")
-        if type(t) is not int or t < 0:
-            t = frame.get("tMs")
+        # Requested tMs is source-relative. Decoded PTS may have an
+        # unrelated stream origin; compare deltas later rather than
+        # treating absolute PTS as if it were a source-relative seek.
+        t = frame.get("tMs")
         vector = unit_vector(frame.get("embedding"))
         if type(t) is int and vector is not None and start <= t < end:
             valid.append((t, vector))
+            if type(frame.get("decodedPtsMs")) is int:
+                decoded_receipts += 1
     valid.sort(key=lambda x: x[0])
     # Do not join observations from incompatible or duplicated timestamps.
     valid = list({t:v for t,v in valid}.items())
@@ -211,6 +227,7 @@ def _cached_context(root, db, aid, start, end, cache):
     return {
         "coarseFeatureModelKey": model_key,
         "observationsInExpandedInterval": len(valid),
+        "decodedPtsReceiptCount": decoded_receipts,
         "adjacentObservedPairs": len(gaps),
         "pairsConnectedAt7000Ms": connected,
         "medianAdjacentGapMs": round(median(gaps),1) if gaps else None,
