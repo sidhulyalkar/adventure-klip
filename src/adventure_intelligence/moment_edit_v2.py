@@ -39,6 +39,9 @@ COLLECTIONS = {
     "snorkel_habitats": {"sport": "snorkeling",
                          "tags": ("marine_reef", "marine_seagrass", "marine_underwater_passage"),
                          "variant": "immersive"},
+    "snorkel_scenic": {"sport": "snorkeling",
+                       "tags": ("marine_scenic", "marine_underwater_passage"),
+                       "variant": "immersive"},
     "snorkel_best": {"sport": "snorkeling", "tags": (), "variant": "highlight"},
     "riding_general": {"sport": "bike", "tags": (), "variant": "highlight"},
 }
@@ -203,7 +206,7 @@ def make_moments(rows: list[dict], annotations: dict[str, dict]) -> list[dict]:
                 for name in ("immersive", "highlight", "montage")
             },
             "publicationApproved": False,
-            "eventTypeVerified": bool(annotation and annotation["tags"]),
+            "eventTypeOwnerLabeled": bool(annotation and annotation["tags"]),
         })
     if set(annotations) - seen:
         raise ValueError("Annotations refer to rows without verified preview")
@@ -226,6 +229,8 @@ def _eligible(moment: dict, key: str, mode: str) -> bool:
     if mode == "reviewed" and moment["humanPreference"] != "keep":
         return False
     if (mode == "exploratory" and moment["humanPreference"] == "skip"):
+        return False
+    if config.get("regionLabel") is not None and moment["regionLabel"] != config["regionLabel"]:
         return False
     required = config["tags"]
     return not required or bool(set(required) & set(moment["categoryTags"]))
@@ -253,7 +258,15 @@ def compose(moments: list[dict], *, mode: str = "exploratory",
             or not 1 <= per_source <= 5):
         raise ValueError("Invalid reel budget")
     reels = {}
-    for key, config in COLLECTIONS.items():
+    configs = dict(COLLECTIONS)
+    # Region collections use only explicit owner labels; short hashed IDs do
+    # not leak the region name into local filenames or Git history.
+    for label in sorted({m["regionLabel"] for m in moments
+                         if m["sportHint"] == "snorkeling" and m["regionLabel"]}):
+        ident = "snorkel_region_" + sha256(label.casefold().encode()).hexdigest()[:12]
+        configs[ident] = {"sport": "snorkeling", "tags": (),
+                          "variant": "immersive", "regionLabel": label}
+    for key, config in configs.items():
         eligible = [x for x in moments if _eligible(x, key, mode)]
         chosen, used_ms = [], 0
         by_source, by_tag = Counter(), Counter()
@@ -301,6 +314,7 @@ def compose(moments: list[dict], *, mode: str = "exploratory",
         } for m in chosen]
         reels[key] = {
             "collectionId": key, "sport": config["sport"],
+            "regionLabel": config.get("regionLabel"),
             "variantPolicy": config["variant"],
             "selected": items,
             "selectedCount": len(items),

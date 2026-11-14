@@ -33,6 +33,7 @@ def test_unknown_labels_never_invent_actions_or_trims():
     assert plan["ownerAnnotatedMomentCount"] == 0
     assert plan["knownCategoryTaggedMoments"] == 0
     assert not plan["collections"]["ski_park"]["selected"]
+    assert not plan["collections"]["snorkel_scenic"]["selected"]
     assert len(plan["collections"]["ski_best"]["selected"]) == 1
     for moment in plan["moments"]:
         assert moment["categoryTags"] == []
@@ -157,3 +158,26 @@ def test_exploration_does_not_include_explicit_skips():
     plan = build_plan(rows, None, MANIFEST, mode="exploratory")
     chosen = plan["collections"]["ski_best"]["selected"]
     assert len(chosen) == 1 and chosen[0]["momentId"] == rows[1]["recordId"]
+
+
+def test_owner_region_only_creates_matching_local_region_reel():
+    rows = [row(1, "snorkeling"), row(2, "snorkeling")]
+    doc = annotated(rows)
+    doc["moments"][0]["regionLabel"] = "Verified snorkel outing area"
+    doc["moments"][1]["tags"] = ["marine_scenic"]
+    plan = build_plan(rows, doc, MANIFEST)
+    region = [k for k in plan["collections"] if k.startswith("snorkel_region_")]
+    assert len(region) == 1
+    reel = plan["collections"][region[0]]
+    assert reel["regionLabel"] == "Verified snorkel outing area"
+    assert reel["selectedCount"] == 1
+    assert plan["collections"]["snorkel_scenic"]["selectedCount"] == 1
+
+
+def test_owner_label_is_not_independent_event_verification():
+    rows = [row(1)]
+    doc = annotated(rows)
+    doc["moments"][0]["tags"] = ["ski_rail"]
+    moment = build_plan(rows, doc, MANIFEST)["moments"][0]
+    assert moment["eventTypeOwnerLabeled"] is True
+    assert moment["categoryEvidence"] == "owner_supplied_unindependently_adjudicated"

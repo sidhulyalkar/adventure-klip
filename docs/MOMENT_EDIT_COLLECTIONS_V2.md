@@ -30,7 +30,7 @@ All outputs stay inside private workspace reports.
 ## Collections
 
 - Ski: ski_park, ski_trees, ski_speed, ski_creative, ski_best
-- Snorkel: snorkel_wildlife, snorkel_habitats, snorkel_best
+- Snorkel: snorkel_wildlife, snorkel_habitats, snorkel_scenic, snorkel_best, plus owner-labeled snorkel_region_* groups
 - Riding: riding_general (one category for existing bike corpus)
 
 A recording can have multiple labels. Unknown activity is not auto-routed.
