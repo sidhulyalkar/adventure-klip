@@ -43,6 +43,9 @@ def _fixture(tmp_path, monkeypatch, *, complete=True):
         "catalogAssetCount": 1,
     }
     monkeypatch.setattr(module, "campaign_progress", lambda *a, **k: status)
+    # Real _safe_dest consults the full SQLite catalog. This synthetic fixture
+    # has no catalog; patch only that destination predicate in this test.
+    monkeypatch.setattr(module, "_safe_dest", lambda root, path: Path(path))
     monkeypatch.setattr(
         module, "_packet_candidates",
         lambda *a, **k: (rows, {"invalidProxyReceipts": 0,
