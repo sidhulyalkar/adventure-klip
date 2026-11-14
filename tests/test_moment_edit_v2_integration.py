@@ -102,3 +102,21 @@ def test_real_proxy_trim_is_reversible_and_readable(tmp_path):
     assert result["sha256"] == sha256(target.read_bytes()).hexdigest()
     assert result["nativePtsVerified"] is False
     assert sha256(source.read_bytes()).hexdigest() == old
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Node.js unavailable")
+def test_embedded_annotation_studio_js_syntax(tmp_path):
+    import re
+    from adventure_intelligence.moment_label_studio_v2 import render_label_studio
+    html = render_label_studio([{
+        "recordId": "1"*24, "sourceAssetSha256": "a"*64,
+        "sourceStartMs": 10000, "sourceEndMs": 30000,
+        "sport": "unknown", "humanPreference": None,
+    }], "b"*64)
+    matched = re.search(r"<script>(.*?)</script>", html, re.S)
+    assert matched
+    js = tmp_path / "studio.js"
+    js.write_text(matched.group(1))
+    result = subprocess.run(["node", "--check", str(js)],
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr

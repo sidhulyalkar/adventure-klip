@@ -82,8 +82,8 @@ def validate_annotations(document: dict | None, rows: list[dict],
         if item["sourceAssetSha256"] != row["sourceAssetSha256"]:
             raise ValueError("Annotation does not match the original source identity")
         override = item["sportOverride"]
-        if override is not None and override not in TAGS:
-            raise ValueError("Owner sport override must be ski, snorkeling, bike or null")
+        if override is not None and override not in (*TAGS, "unknown"):
+            raise ValueError("Owner sport override must be ski, snorkeling, bike, unknown or null")
         effective_sport = override or row["sport"]
         labels = item["tags"]
         if (not isinstance(labels, list) or len(labels) > 12
