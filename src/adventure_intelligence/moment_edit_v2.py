@@ -67,6 +67,7 @@ def validate_annotations(document: dict | None, rows: list[dict],
         raise ValueError("Invalid annotation count")
     known = {r["recordId"]: r for r in rows}
     result = {}
+    seen_ids = set()
     for item in items:
         if not isinstance(item, dict) or set(item) != {
                 "recordId", "sourceAssetSha256", "tags", "eventStartMs",
@@ -74,8 +75,9 @@ def validate_annotations(document: dict | None, rows: list[dict],
             raise ValueError("Annotation has missing or unexpected fields")
         rid = item["recordId"]
         if (not isinstance(rid, str) or not ID.fullmatch(rid)
-                or rid in result or rid not in known):
+                or rid in seen_ids or rid not in known):
             raise ValueError("Unknown/duplicate annotation ID")
+        seen_ids.add(rid)
         row = known[rid]
         if item["sourceAssetSha256"] != row["sourceAssetSha256"]:
             raise ValueError("Annotation does not match the original source identity")
@@ -109,6 +111,10 @@ def validate_annotations(document: dict | None, rows: list[dict],
                                    or not 1 <= len(region) <= 100
                                    or any(ord(ch) < 32 for ch in region)):
             raise ValueError("Region must be a short owner-supplied label or null")
+        # Empty template rows are NOT human evidence. Still count their IDs
+        # above so even duplicate blank entries fail closed.
+        if not (labels or start is not None or cleaned or region is not None):
+            continue
         result[rid] = {
             "tags": sorted(labels),
             "eventStartMs": start,

@@ -194,3 +194,12 @@ def test_label_studio_renders_only_local_source_linked_media():
     assert "media/000000000000000000000001.mp4" in html
     assert "manifestSha256" in html
     assert "Export JSON labels" in html
+
+
+def test_blank_annotation_template_is_not_qualified_human_evidence():
+    rows = [row(1), row(2, "snorkeling")]
+    blank = annotated(rows)
+    out = build_plan(rows, blank, MANIFEST)
+    assert out["ownerAnnotatedMomentCount"] == 0
+    assert out["knownCategoryTaggedMoments"] == 0
+    assert all(m["categoryEvidence"] == "not_observed" for m in out["moments"])
