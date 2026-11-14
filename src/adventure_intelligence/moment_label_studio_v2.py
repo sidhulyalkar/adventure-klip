@@ -71,6 +71,10 @@ Labels remain in this browser session until you export them; nothing uploads or 
 <div class="grid"><section class="panel"><h2>1. What is visible?</h2>
 <p class="muted">Select as many applicable categories as you can actually verify.
 Uncertain sightings and unseen landings should stay untagged.</p>
+<div style="margin:11px 0"><label for="clipSport">Verified sport/activity for this clip</label>
+<select id="clipSport"><option value="unknown">Unclassified</option>
+<option value="ski">Skiing</option><option value="snorkeling">Snorkeling</option>
+<option value="bike">Biking / riding (broad)</option></select></div>
 <div id="tags" class="tags"></div>
 <div style="margin-top:12px"><label for="region">Region / outing label (only if personally verified)</label>
 <input id="region" type="text" maxlength="100" placeholder="Optional owner-provided place or outing"></div>
@@ -110,7 +114,7 @@ const version='__VERSION__';
 const decisions=new Map();
 const el=(id)=>document.getElementById(id);
 let filtered=[],index=0,defStart=null,defEnd=null,defects=[],dirty=false;
-function blank(x){return {recordId:x.id,sourceAssetSha256:x.source,tags:[],
+function blank(x){return {recordId:x.id,sourceAssetSha256:x.source,sportOverride:null,tags:[],
   eventStartMs:null,eventEndMs:null,qualitySpans:[],regionLabel:null};}
 function seconds(v){return v===null?'':(v/1000).toFixed(3);}
 function current(){
@@ -127,6 +131,7 @@ function rebuild(){
 function exportCurrent(){
   const x=filtered[index];if(!x)return null;
   const d=blank(x);
+  d.sportOverride=el('clipSport').value===x.sport?null:el('clipSport').value;
   d.tags=Array.from(document.querySelectorAll('input[data-tag]:checked')).map(n=>n.value).sort();
   const a=el('eventStart').value.trim(),b=el('eventEnd').value.trim();
   const parse=(v)=>v===''?null:Math.round(Number(v)*1000);
@@ -172,23 +177,34 @@ function render(){
   el('eventStart').value=seconds(d.eventStartMs);
   el('eventEnd').value=seconds(d.eventEndMs);
   el('region').value=d.regionLabel||'';
-  const box=el('tags');box.replaceChildren();
-  for(const name of (allowed[x.sport]||[])){
-    const wrap=document.createElement('span');wrap.className='tag';
-    const checkbox=document.createElement('input');checkbox.type='checkbox';
-    checkbox.value=name;checkbox.dataset.tag='1';checkbox.checked=d.tags.includes(name);
-    checkbox.id='tag-'+name;
-    const label=document.createElement('label');label.htmlFor=checkbox.id;
-    label.textContent=name.replaceAll('_',' ');
-    wrap.append(checkbox,label);box.append(wrap);
-  }
+  el('clipSport').value=d.sportOverride||x.sport;
+  renderTags(el('clipSport').value,d.tags);
   defects=d.qualitySpans.slice();defStart=null;defEnd=null;
   el('defectStatus').textContent='';renderDefects();
   el('prev').disabled=index===0;el('next').disabled=index===filtered.length-1;
   el('status').className='muted';el('status').textContent='Mark and save this clip; export all saved labels as JSON.';
   dirty=false;
 }
-el('sport').onchange=rebuild;
+function renderTags(sport,selected){
+  const box=el('tags');box.replaceChildren();
+  for(const name of (allowed[sport]||[])){
+    const wrap=document.createElement('span');wrap.className='tag';
+    const checkbox=document.createElement('input');checkbox.type='checkbox';
+    checkbox.value=name;checkbox.dataset.tag='1';checkbox.checked=selected.includes(name);
+    checkbox.id='tag-'+name;
+    const label=document.createElement('label');label.htmlFor=checkbox.id;
+    label.textContent=name.replaceAll('_',' ');
+    wrap.append(checkbox,label);box.append(wrap);
+  }
+}
+el('clipSport').onchange=()=>{
+  renderTags(el('clipSport').value,[]);dirty=true;
+  el('status').textContent='Activity changed; previous category checks cleared. Reapply tags before saving.';
+};
+el('sport').onchange=()=>{if(dirty){
+  el('status').textContent='Save this clip before changing filters.';el('sport').value='all';
+  return;
+}rebuild();};
 function move(delta){if(dirty){el('status').textContent='Unsaved changes: save this clip before navigating.';return;}
   index=Math.min(filtered.length-1,Math.max(0,index+delta));render();}
 el('prev').onclick=()=>move(-1);el('next').onclick=()=>move(1);

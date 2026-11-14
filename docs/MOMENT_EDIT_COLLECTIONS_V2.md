@@ -67,8 +67,12 @@ identities or corrupted proxies; there is no surprise SSD rescan.
 
 The first run writes label.html and annotation-template.json. Open label.html in your Mac browser, play each verified preview, choose multi-label categories, mark event start/end, record defects and export JSON. The exported owner annotations can be passed with --annotations after moving them into workspace reports. If you prefer, edit the JSON records that you have
 inspected. Each blank record already has the exact packet record ID, source SHA
-and frozen manifest SHA. Other records can stay blank. Example values:
+and frozen manifest SHA. Other records can stay blank. For previously unknown catalog activities,
+the browser offers a manual "Verified sport/activity" selector. Its source-linked
+"sportOverride" is stored with the annotation, without rewriting the catalog.
+This is important because most original catalog sports are still unknown. Example values:
 
+    "sportOverride": "ski",
     "tags": ["ski_jump", "ski_park"],
     "eventStartMs": 15000,
     "eventEndMs": 22800,

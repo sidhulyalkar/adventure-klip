@@ -203,3 +203,29 @@ def test_blank_annotation_template_is_not_qualified_human_evidence():
     assert out["ownerAnnotatedMomentCount"] == 0
     assert out["knownCategoryTaggedMoments"] == 0
     assert all(m["categoryEvidence"] == "not_observed" for m in out["moments"])
+
+
+def test_unknown_catalog_clip_can_be_owner_classified_as_ski_or_snorkel():
+    rows = [row(1, sport="unknown"), row(2, sport="unknown")]
+    doc = annotated(rows)
+    doc["moments"][0]["sportOverride"] = "ski"
+    doc["moments"][0]["tags"] = ["ski_rail"]
+    doc["moments"][0]["eventStartMs"] = 14000
+    doc["moments"][0]["eventEndMs"] = 21000
+    doc["moments"][1]["sportOverride"] = "snorkeling"
+    doc["moments"][1]["tags"] = ["marine_ray"]
+    result = build_plan(rows, doc, MANIFEST)
+    assert result["collections"]["ski_park"]["selectedCount"] == 1
+    assert result["collections"]["snorkel_wildlife"]["selectedCount"] == 1
+    assert result["moments"][0]["catalogSportHint"] == "unknown"
+    assert result["moments"][0]["sportHint"] == "ski"
+    assert result["moments"][0]["sportEvidence"] == "owner_override"
+    assert result["moments"][1]["sportHint"] == "snorkeling"
+
+
+def test_invalid_sport_override_does_not_create_model_activity_truth():
+    rows = [row(1, sport="unknown")]
+    doc = annotated(rows)
+    doc["moments"][0]["sportOverride"] = "surfing"
+    with pytest.raises(ValueError, match="sport override"):
+        validate_annotations(doc, rows, MANIFEST)

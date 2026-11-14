@@ -70,7 +70,7 @@ def validate_annotations(document: dict | None, rows: list[dict],
     seen_ids = set()
     for item in items:
         if not isinstance(item, dict) or set(item) != {
-                "recordId", "sourceAssetSha256", "tags", "eventStartMs",
+                "recordId", "sourceAssetSha256", "sportOverride", "tags", "eventStartMs",
                 "eventEndMs", "qualitySpans", "regionLabel"}:
             raise ValueError("Annotation has missing or unexpected fields")
         rid = item["recordId"]
@@ -81,10 +81,14 @@ def validate_annotations(document: dict | None, rows: list[dict],
         row = known[rid]
         if item["sourceAssetSha256"] != row["sourceAssetSha256"]:
             raise ValueError("Annotation does not match the original source identity")
+        override = item["sportOverride"]
+        if override is not None and override not in TAGS:
+            raise ValueError("Owner sport override must be ski, snorkeling, bike or null")
+        effective_sport = override or row["sport"]
         labels = item["tags"]
         if (not isinstance(labels, list) or len(labels) > 12
                 or len(set(labels)) != len(labels)
-                or not all(isinstance(t, str) and t in TAGS.get(row["sport"], ()) for t in labels)):
+                or not all(isinstance(t, str) and t in TAGS.get(effective_sport, ()) for t in labels)):
             raise ValueError("Invalid or cross-sport moment tags")
         start, end = item["eventStartMs"], item["eventEndMs"]
         if (start is None) != (end is None):
@@ -113,9 +117,10 @@ def validate_annotations(document: dict | None, rows: list[dict],
             raise ValueError("Region must be a short owner-supplied label or null")
         # Empty template rows are NOT human evidence. Still count their IDs
         # above so even duplicate blank entries fail closed.
-        if not (labels or start is not None or cleaned or region is not None):
+        if not (override is not None or labels or start is not None or cleaned or region is not None):
             continue
         result[rid] = {
+            "sportOverride": override,
             "tags": sorted(labels),
             "eventStartMs": start,
             "eventEndMs": end,
@@ -176,7 +181,9 @@ def make_moments(rows: list[dict], annotations: dict[str, dict]) -> list[dict]:
     seen = set()
     for row in rows:
         rid = row["recordId"]
-        source, sport = row["sourceAssetSha256"], row["sport"]
+        source = row["sourceAssetSha256"]
+        annotation = annotations.get(rid)
+        sport = annotation["sportOverride"] if annotation and annotation["sportOverride"] else row["sport"]
         a, b = row["sourceStartMs"], row["sourceEndMs"]
         if (rid in seen or not ID.fullmatch(str(rid))
                 or not SHA.fullmatch(str(source))
@@ -187,11 +194,12 @@ def make_moments(rows: list[dict], annotations: dict[str, dict]) -> list[dict]:
                 or not SHA.fullmatch(str(row.get("proxySha256")))):
             raise ValueError("Unqualified source-backed packet row")
         seen.add(rid)
-        annotation = annotations.get(rid)
         moments.append({
             "momentId": rid,
             "sourceAssetSha256": source, "sourceStartMs": a, "sourceEndMs": b,
             "sportHint": sport,
+            "catalogSportHint": row["sport"],
+            "sportEvidence": "owner_override" if annotation and annotation["sportOverride"] else "catalog_unverified",
             "categoryTags": annotation["tags"] if annotation else [],
             "categoryEvidence": annotation["basis"] if annotation else "not_observed",
             "regionLabel": annotation["regionLabel"] if annotation else None,
@@ -208,7 +216,7 @@ def make_moments(rows: list[dict], annotations: dict[str, dict]) -> list[dict]:
             "humanRatings": row.get("humanRatings"),
             "humanEditorialRouting": row.get("humanCurationV2"),
             "editVariants": {
-                name: _clip_boundaries(row, annotation, name)
+                name: _clip_boundaries({**row, "sport": sport}, annotation, name)
                 for name in ("immersive", "highlight", "montage")
             },
             "publicationApproved": False,
@@ -370,7 +378,7 @@ def annotation_template(rows: list[dict], manifest_sha: str) -> dict:
         "version": ANNOTATION_VERSION, "manifestSha256": manifest_sha,
         "moments": [{
             "recordId": r["recordId"], "sourceAssetSha256": r["sourceAssetSha256"],
-            "tags": [], "eventStartMs": None, "eventEndMs": None,
+            "sportOverride": None, "tags": [], "eventStartMs": None, "eventEndMs": None,
             "qualitySpans": [], "regionLabel": None,
         } for r in rows],
     }
