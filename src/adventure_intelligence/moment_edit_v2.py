@@ -222,8 +222,7 @@ def _rating(moment: dict) -> float:
     return sum(valid) / (5 * len(valid)) if valid else 0.0
 
 
-def _eligible(moment: dict, key: str, mode: str) -> bool:
-    config = COLLECTIONS[key]
+def _eligible(moment: dict, config: dict, mode: str) -> bool:
     if moment["sportHint"] != config["sport"]:
         return False
     if mode == "reviewed" and moment["humanPreference"] != "keep":
@@ -267,7 +266,7 @@ def compose(moments: list[dict], *, mode: str = "exploratory",
         configs[ident] = {"sport": "snorkeling", "tags": (),
                           "variant": "immersive", "regionLabel": label}
     for key, config in configs.items():
-        eligible = [x for x in moments if _eligible(x, key, mode)]
+        eligible = [x for x in moments if _eligible(x, config, mode)]
         chosen, used_ms = [], 0
         by_source, by_tag = Counter(), Counter()
         remaining = eligible[:]
