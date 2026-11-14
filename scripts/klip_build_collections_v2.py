@@ -142,7 +142,11 @@ def _render(plan: dict, verified: dict[str, dict], folder: Path) -> dict:
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             report["reels"][category] = {"status": "blocked_render_failed"}
             report["errors"][category] = type(exc).__name__ + ": " + str(exc)[:280]
-    report["status"] = "partial_render_requires_review" if report["errors"] else "completed_preview_renders"
+    made = sum(v["status"] == "preview_rendered_unreviewed" for v in report["reels"].values())
+    report["status"] = ("partial_render_requires_review" if report["errors"] else
+                        "completed_preview_renders" if made else
+                        "no_eligible_moments_requires_labels")
+    report["renderedCollections"] = made
     return report
 
 
