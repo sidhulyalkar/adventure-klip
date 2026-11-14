@@ -16,11 +16,12 @@ from pathlib import Path
 import re
 import statistics
 import subprocess
+import tempfile
 
 from . import adaptive_judge_v2 as ollama
 from . import temporal_second_look as temporal
 from . import studio_preview_judge as local
-from .media import require_tool
+from .media import require_tool, probe
 from .moment_edit_v2 import TAGS, DEFECTS, SHA, ID, VERSION as MOMENT_VERSION
 
 VERSION = "klip-v2-proxy-autoscout-experiment-v1"
@@ -241,6 +242,9 @@ def diversify(rows: list[dict]) -> list[dict]:
 
 def quality_measurements(path: Path) -> dict:
     """Cheap numeric proxy measurements, not defect classification or speed."""
+    meta = probe(path)
+    if not 1 <= float(meta["duration"]) <= 61:
+        raise ValueError("Unbounded preview duration")
     ffmpeg = require_tool("ffmpeg")
     width, height, fps = 64, 36, 2
     proc = subprocess.run(
@@ -317,13 +321,22 @@ def _safe_preview_link(directory: Path, row: dict) -> Path:
 def save_json(path: Path, document: dict) -> None:
     if path.is_symlink():
         raise ValueError("Unsafe output symlink")
-    temp = path.with_name("." + path.name + ".partial")
-    with temp.open("x", encoding="utf-8") as file:
-        json.dump(document, file, indent=2, sort_keys=True, allow_nan=False)
-        file.write("\n")
-        file.flush()
-        os.fsync(file.fileno())
-    os.replace(temp, path)
+    with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=".klip-scout-", suffix=".partial", delete=False) as file:
+        temporary = Path(file.name)
+        try:
+            json.dump(document, file, indent=2, sort_keys=True, allow_nan=False)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_receipts(folder: Path, rows: list[dict], plan_sha: str,

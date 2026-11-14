@@ -11,6 +11,7 @@ import argparse
 from collections import Counter
 from hashlib import sha256
 import json
+import subprocess
 from pathlib import Path
 import sys
 from urllib.request import urlopen
@@ -96,6 +97,12 @@ def execute(args) -> dict:
         }
         save_json(state_path, state)
     receipts = read_receipts(destination, all_rows, plan_sha, policy)
+    # Repair missing output gallery hardlinks from still-verified source proxies
+    # without running inference again. Their fingerprints are checked on load.
+    all_by_id = {r["recordId"]: r for r in all_rows}
+    for rid, receipt in receipts.items():
+        if receipt["status"] == "done":
+            _safe_preview_link(destination, all_by_id[rid])
     report = None
     attempted = 0
 
@@ -128,6 +135,8 @@ def execute(args) -> dict:
             judgment["sampledSourceRelativeMsApprox"] = [
                 row["sourceStartMs"] + t for t in judgment["sampledProxyTimeMs"]
             ]
+            if sha256(video.read_bytes()).hexdigest() != row["proxySha256"]:
+                raise ValueError("Proxy mutated while inference was running")
             receipt.update(status="done",
                            analysis={"proposal": judgment["proposal"],
                                      "numericQuality": quality,
