@@ -25,6 +25,7 @@ from adventure_intelligence.highlight_curation_pilot import _safe_dest
 from adventure_intelligence.moment_edit_v2 import (
     VERSION, COLLECTIONS, build_plan, annotation_template,
 )
+from adventure_intelligence.moment_label_studio_v2 import render_label_studio
 
 
 def _atomic_json(path: Path, body: dict) -> None:
@@ -223,10 +224,10 @@ def run(args: argparse.Namespace) -> dict:
         raise ValueError("Output folder already exists; choose a new versioned run directory")
     dest.mkdir(parents=True, mode=0o700)
     (dest/"media").mkdir(mode=0o700)
-    selected_ids = {x["momentId"] for col in plan["collections"].values()
-                    for x in col["selected"]}
+    # Link ALL source-verified packet proxies to enable labeling even clips
+    # the current sampler did not select into a reel. No video bytes are copied.
     by_id = {x["recordId"]: x for x in rows}
-    for rid in sorted(selected_ids):
+    for rid in sorted(by_id):
         row = by_id[rid]
         src = Path(row["mediaPath"])
         if src.is_symlink() or _file_sha(src) != row["proxySha256"]:
@@ -239,6 +240,8 @@ def run(args: argparse.Namespace) -> dict:
     _atomic_json(dest/"annotation-template.json",
                  annotation_template(rows, checks["manifestSha256"]))
     (dest/"review.html").write_text(_gallery(plan), encoding="utf-8")
+    (dest/"label.html").write_text(
+        render_label_studio(rows, checks["manifestSha256"]), encoding="utf-8")
     render_status = None
     if args.render:
         render_status = _render(plan, by_id, dest/"renders")
@@ -246,6 +249,7 @@ def run(args: argparse.Namespace) -> dict:
     summary = {
         "version": VERSION, "mode": args.mode, "outputDir": str(dest),
         "reviewPage": str(dest/"review.html"),
+        "ownerLabelStudio": str(dest/"label.html"),
         "ownerAnnotationTemplate": str(dest/"annotation-template.json"),
         "momentPlan": str(dest/"moment-plan.json"),
         "catalogSourceCount": status["catalogAssetCount"],

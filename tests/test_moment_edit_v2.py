@@ -181,3 +181,16 @@ def test_owner_label_is_not_independent_event_verification():
     moment = build_plan(rows, doc, MANIFEST)["moments"][0]
     assert moment["eventTypeOwnerLabeled"] is True
     assert moment["categoryEvidence"] == "owner_supplied_unindependently_adjudicated"
+
+
+def test_label_studio_renders_only_local_source_linked_media():
+    from adventure_intelligence.moment_label_studio_v2 import render_label_studio
+    html = render_label_studio([row(1), row(2, "snorkeling")], MANIFEST)
+    assert "connect-src 'none'" in html
+    assert "Klip / Moment Label Studio" in html
+    assert "sourceAssetSha256" in html
+    assert "marine_ray" in html
+    assert "ski_jump" in html
+    assert "media/000000000000000000000001.mp4" in html
+    assert "manifestSha256" in html
+    assert "Export JSON labels" in html
