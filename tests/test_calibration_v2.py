@@ -267,3 +267,28 @@ def test_non_string_quality_and_tag_lists_fail_with_value_error():
     with pytest.raises(ValueError,match="sport tags"):
         cal.validate_review(m,{"version":cal.REVIEW_VERSION,
                                "sampleId":m["sampleId"],"reviews":[r]})
+
+
+def test_frozen_calibration_manifest_tamper_is_rejected(tmp_path):
+    ws,pilot,scout_run=_make_full_fixture(tmp_path)
+    study=ws/"reports"/"sealed"
+    runner=_cli()
+    args=argparse.Namespace(
+        workspace=ws,pilot=pilot,experiment=scout_run,
+        output=study,model="gemma3:4b",count=12,seed="frozen",
+    )
+    runner.prepare(args)
+    manifest_path=study/"sample-manifest.json"
+    frozen=json.loads(manifest_path.read_text())
+    reviewed=review(frozen["clips"][0],sport="ski")
+    export=ws/"reports"/"owner-reviewed.json"
+    export.write_text(json.dumps({
+        "version":cal.REVIEW_VERSION,"sampleId":frozen["sampleId"],
+        "reviews":[reviewed],
+    }))
+    # An edited manifest must not silently redefine model predictions.
+    frozen["clips"][0]["modelTags"]=["marine_ray"]
+    manifest_path.write_text(json.dumps(frozen,indent=2))
+    with pytest.raises(ValueError,match="changed"):
+        runner.evaluate(argparse.Namespace(study=study,reviews=export))
+    assert not (study/"calibration-metrics.json").exists()
