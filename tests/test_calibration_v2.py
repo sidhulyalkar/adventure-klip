@@ -231,3 +231,39 @@ def test_blind_review_embedded_js_is_syntactically_valid(tmp_path):
     result=subprocess.run(["node","--check",str(program)],
                           capture_output=True,text=True,timeout=15)
     assert result.returncode==0,result.stderr
+
+
+def test_model_failed_human_highlight_is_not_lost():
+    c=rows(12)
+    failed=next(x for x in c if x["modelStatus"]=="failed")
+    m=manifest(c)
+    human={"version":cal.REVIEW_VERSION,"sampleId":m["sampleId"],
+           "reviews":[review(failed,sport="ski",decision="keep")]}
+    out=cal.evaluate(m,human)
+    assert out["reviewedModelFailureCount"]==1
+    assert out["humanKeepAmongModelFailures"]==1
+    assert out["excludedFromTagMetrics"]==1
+    assert out["unreviewedNotAssumedNegative"]==11
+
+
+def test_other_is_known_negative_class_not_unknown_abstention():
+    c=rows(8)
+    chosen=next(x for x in c if x["modelStatus"]=="done" and x["modelActivity"]=="ski")
+    m=manifest(c)
+    human={"version":cal.REVIEW_VERSION,"sampleId":m["sampleId"],
+           "reviews":[review(chosen,sport="other",decision="skip")]}
+    out=cal.evaluate(m,human)
+    assert out["sportAccuracyOnKnownReviewed"]==0
+    assert out["sportConfusion"]==[{"human":"other","model":"ski","count":1}]
+
+
+def test_non_string_quality_and_tag_lists_fail_with_value_error():
+    c=rows(8);m=manifest(c)
+    r=review(c[1]);r["quality"]=[["blur"]]
+    with pytest.raises(ValueError,match="quality"):
+        cal.validate_review(m,{"version":cal.REVIEW_VERSION,
+                               "sampleId":m["sampleId"],"reviews":[r]})
+    r["quality"]=[];r["tags"]=[["ski_park"]]
+    with pytest.raises(ValueError,match="sport tags"):
+        cal.validate_review(m,{"version":cal.REVIEW_VERSION,
+                               "sampleId":m["sampleId"],"reviews":[r]})

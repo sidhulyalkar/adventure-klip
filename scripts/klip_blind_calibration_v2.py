@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import json
+from hashlib import sha256
 from pathlib import Path
 import sys
 
@@ -59,7 +60,11 @@ def prepare(args) -> dict:
     for clip in selections:
         matched=next(x for x in rows if x["recordId"]==clip["recordId"])
         scout._safe_preview_link(output,matched)
-    scout.save_json(output/"sample-manifest.json",manifest)
+    manifest_path=output/"sample-manifest.json"
+    scout.save_json(manifest_path,manifest)
+    # Detect accidental edits to frozen predictions before scoring.
+    (output/"sample-manifest.sha256").write_text(
+        sha256(manifest_path.read_bytes()).hexdigest()+"\n",encoding="utf-8")
     (output/"blind-review.html").write_text(page(manifest),encoding="utf-8")
     return {
         "status":"blind_review_ready",
@@ -77,6 +82,14 @@ def evaluate(args) -> dict:
     p=folder/"sample-manifest.json"
     if p.is_symlink() or not p.is_file() or not 50<=p.stat().st_size<=2_000_000:
         raise ValueError("Missing or unsafe calibration manifest")
+    digest=folder/"sample-manifest.sha256"
+    if digest.is_symlink() or not digest.is_file():
+        raise ValueError("Missing frozen calibration manifest fingerprint")
+    expected=digest.read_text().strip()
+    if len(expected)!=64 or any(c not in "0123456789abcdef" for c in expected):
+        raise ValueError("Invalid frozen calibration manifest fingerprint")
+    if sha256(p.read_bytes()).hexdigest()!=expected:
+        raise ValueError("Frozen calibration manifest changed since blind review")
     manifest=json.loads(p.read_text())
     if manifest.get("version")!=cal.VERSION:
         raise ValueError("Study version mismatch")
@@ -95,6 +108,8 @@ def evaluate(args) -> dict:
         "reviewed":report["ownerReviewed"],
         "selected":report["selectedClips"],
         "accuracyOnKnown":report["sportAccuracyOnKnownReviewed"],
+        "reviewedModelFailures":report["reviewedModelFailureCount"],
+        "humanKeepAmongModelFailures":report["humanKeepAmongModelFailures"],
         "tagMetrics":report["tagMetrics"],
         "qualityMetrics":report["qualityMetrics"],
         "metricsFile":str(metrics),

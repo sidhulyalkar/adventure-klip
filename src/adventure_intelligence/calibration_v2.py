@@ -104,11 +104,13 @@ def validate_review(manifest: dict, review: dict) -> list[dict]:
         if r["activity"] not in SPORTS or r["decision"] not in {"keep","skip","unsure"}:
             raise ValueError("Invalid human review decision")
         tags,quality=r["tags"],r["quality"]
-        if (not isinstance(tags,list) or len(tags)!=len(set(tags))
-                or not all(isinstance(t,str) and t in TAGS.get(r["activity"],()) for t in tags)):
+        if (not isinstance(tags,list) or any(type(t) is not str for t in tags)
+                or len(tags)!=len(set(tags))
+                or not all(t in TAGS.get(r["activity"],()) for t in tags)):
             raise ValueError("Invalid human sport tags")
-        if (not isinstance(quality,list) or len(quality)!=len(set(quality))
-                or not all(isinstance(t,str) and t in DEFECTS for t in quality)):
+        if (not isinstance(quality,list) or any(type(t) is not str for t in quality)
+                or len(quality)!=len(set(quality))
+                or not all(t in DEFECTS for t in quality)):
             raise ValueError("Invalid human quality tags")
         a,b=r["eventStartMs"],r["eventEndMs"]
         if (a is None)!=(b is None):
@@ -133,10 +135,22 @@ def evaluate(manifest: dict, review: dict) -> dict:
     tag_tp=Counter();tag_fp=Counter();tag_fn=Counter()
     q_tp=Counter();q_fp=Counter();q_fn=Counter()
     excluded=0
+    model_failed_reviewed=0
+    human_keep_on_failed=0
+    human_unsure=0
     for r in labeled:
         c=by_id[r["recordId"]]
         priorities[(c["modelPriority"],r["decision"])]+=1
-        if c["modelStatus"]!="done" or r["activity"] in ("unknown","other"):
+        if r["decision"]=="unsure":
+            human_unsure+=1
+        if c["modelStatus"]!="done":
+            model_failed_reviewed+=1
+            if r["decision"]=="keep":
+                human_keep_on_failed+=1
+            excluded+=1
+            continue
+        # 'other' is a known negative class; only unknown is an abstention.
+        if r["activity"]=="unknown":
             excluded+=1
             continue
         actual,pred=r["activity"],c["modelActivity"]
@@ -154,6 +168,10 @@ def evaluate(manifest: dict, review: dict) -> dict:
         "selectedClips":len(manifest["clips"]), "ownerReviewed":len(labeled),
         "unreviewedNotAssumedNegative":len(manifest["clips"])-len(labeled),
         "excludedFromTagMetrics":excluded,
+        "reviewedModelFailureCount":model_failed_reviewed,
+        "humanKeepAmongModelFailures":human_keep_on_failed,
+        "humanUnsureDecisions":human_unsure,
+        "successfulModelReviewsWithKnownSport":known,
         "sportAccuracyOnKnownReviewed":round(matches/known,3) if known else None,
         "sportConfusion":[{"human":a,"model":b,"count":n} for (a,b),n in sorted(conf.items())],
         "tagMetrics":{k:_measure(tag_tp[k],tag_fp[k],tag_fn[k])

@@ -1,75 +1,102 @@
-# E6: Klip V2 blind human calibration
+# Klip V2 / E6: blind human calibration
 
-The completed local Auto-Scout candidate scan produced 120 valid preview
-windows (108 model-accepted and 12 schema-failed). Its proposals appear
-overbroad: \`ski_park\` in 45/45 inferred skiing clips; \`blur\` in 102/108
-accepted previews. These are ***not*** measured classifier accuracies.
+The completed Auto-Scout run attempted 120 SHA-verified preview clips.
+108 model responses were accepted; 12 failed schema validation. Model
+suggestions included ski_park for all 45 model-classified ski clips and
+blur in 102 of 108 accepted responses. These are **not accuracy figures**.
 
-This phase uses an existing frozen private pilot, frozen model receipts,
-and local H.264 preview hardlinks. It does **not** decode camera originals,
-call a model, edit/delete footage, change catalog labels or promote rejected
-machine guesses into confirmed events.
+This experiment uses the existing and tested:
+- src/adventure_intelligence/calibration_v2.py (sampling and scoring)
+- src/adventure_intelligence/calibration_studio_v2.py (offline, blind review)
+- scripts/klip_blind_calibration_v2.py (prepare / evaluate)
 
-## What this experiment measures
+Do not introduce a second calibration package for this stage.
 
-1. **Selection:** stratify the 120 previews into predicted ski park,
-   ski-other, snorkel-ray, snorkel-other, other/unknown, and schema-rejected.
-   Target 36 with explicit quotas, deterministic seed, and one-per-recording
-   preference. The stratum is kept in private server-side sample manifest,
-   **not shown on the review webpage**. Absent strata are reallocated.
-2. **Blind review:** watch entire preview before seeing any model output.
-   Label actual activity, visible scene categories, actual important quality
-   defects, Keep/Skip/Unsure, reviewer certainty, optional event boundaries.
-   Export JSON in the browser. Nothing leaves the user's computer.
-3. **Scoring:** compare frozen predictions against explicit certain human
-   clip labels. Score TP/FP/FN/TN, precision, recall and specificity for each
-   category and filming flag. Failed model clips contribute to **coverage**
-   and count of human-positive missed opportunities, not to automatic
-   negative predictions. Unreviewed and uncertain observations cannot
-   create false negatives.
+## Steps
 
-Because we deliberately oversample model failures and particular classes,
-**aggregate accuracy is not an unbiased estimate of archive-wide
-performance**. This is diagnostic calibration of the observed 120 windows,
-not whole-video discovery recall and not held-out preference-model training.
+1. Validate the frozen source pilot and all model receipt SHA identities.
+2. Create a deterministic 36-preview, source-diverse **stratified** sample,
+   including park and ordinary ski, marine-ray and other underwater,
+   biking/unknown, and model-failed controls. Empty buckets are redistributed.
+3. Open an offline local review page hiding all model predictions. Watch
+   clips and explicitly save a human activity, category labels, quality
+   defects, Keep/Skip/Unsure and optional complete event bounds.
+4. Export human review JSON and evaluate it against the frozen predictions.
+   Missing reviews, unknown sport labels and model failures are never
+   automatically treated as negatives. Keep clips on model failures are
+   reported as lost model coverage, not dismissed highlights.
+5. Generate descriptive metrics from this stratified sample, not an unbiased
+   estimate of archive-wide accuracy or action-detection recall.
 
-## Run from a separate clean worktree
+## Run on the existing Mac private workspace
 
+The repository checkout used earlier is expected at
+$HOME/Documents/Projects/adventure-klip.
+
+    bash <<'BASH'
+    set -euo pipefail
+    REPO="$HOME/Documents/Projects/adventure-klip"
+    BRANCH="experiment/klip-v2-blind-calibration"
+    git -C "$REPO" fetch --no-tags \
+      "https://github.com/sidhulyalkar/adventure-klip.git" "refs/heads/$BRANCH"
+    SHA="$(git -C "$REPO" rev-parse 'FETCH_HEAD^{commit}')"
+    STUDY="$(dirname "$REPO")/klip-blind-study-$(date +%Y%m%d-%H%M%S)-$$"
+    git -C "$REPO" worktree add --detach "$STUDY" "$SHA"
+    cd "$STUDY"
+    if [[ -f "$REPO/.venv/bin/activate" ]]; then
+      source "$REPO/.venv/bin/activate"
+    fi
+    export PYTHONPATH="$PWD/src"
     export WS="$HOME/AdventureAI-clean.QJnopt"
     export PILOT="$WS/reports/klip-v2-pilot-20261114-153934-88998"
     export EXP="$WS/reports/klip-v2-autoscout-20261115-130506-89529"
     export CAL="$WS/reports/klip-blind-calibration-$(date +%Y%m%d-%H%M%S)-$$"
-
-    python scripts/klip_blind_calibration_v2.py prepare \
+    python3 -m pytest -q tests/test_calibration_v2.py
+    python3 scripts/klip_blind_calibration_v2.py prepare \
       --workspace "$WS" --pilot "$PILOT" --experiment "$EXP" \
-      --output "$CAL" --size 36
+      --output "$CAL" --count 36
+    printf 'Calibration study: %s\n' "$CAL"
+    open "$CAL/blind-review.html"
+    BASH
 
-    open "$CAL/review.html"
+The private study holds sample-manifest.json, sample-manifest.sha256,
+blind-review.html, and hardlinks to local verified proxy MP4s.
+It does not call Ollama or read original DJI videos.
 
-Review clips in order and **Export private JSON labels**. Browser downloads
-default to \`~/Downloads/klip-blind-owner-<sample-sha>.json\`. Save this file.
+## After manually completing reviews
 
-    python scripts/klip_blind_calibration_v2.py score \
-      --workspace "$WS" --pilot "$PILOT" --experiment "$EXP" \
-      --output "$CAL" --labels "/absolute/path/to/exported-labels.json"
+Click **Save reviewed clip** as you proceed, and **Export review JSON**.
+The downloaded filename begins with:
+klip-calibration-review-<sample-id>.json
 
-The full detailed report appears in \`$CAL/calibration-score.json\`.
+From the same study checkout, point the command to the exact downloaded file:
 
-Only the owner labels with certainty "certain" enter binary precision/recall;
-"unknown" is excluded from those metrics. Source ID, record ID, sample
-manifest hash and original receipt fingerprint are checked before scoring.
-Unreviewed clips stay unreviewed. The score is written once and cannot
-silently replace prior results.
+    python3 scripts/klip_blind_calibration_v2.py evaluate \
+      --study "$CAL" \
+      --reviews "/absolute/path/to/klip-calibration-review-....json"
 
-## Next decision gates
+Then inspect:
 
-- Confirm whether the model can actually distinguish park features from
-  generic ski footage and whether its ray sightings are real animals.
-- Distinguish normal action-camera motion from genuinely unpleasant shake or
-  blur. A model that labels virtually everything blurry should not influence
-  editing.
-- Count genuine human Keep moments among 12 model failures.
-- Only then consider training a tiny positive/negative exemplar ranker using
-  frozen SigLIP2 features, with outing-based test splits.
-- Use video-native temporal models only if preexisting visual retrieval
-  misses complete jumps, rail exits, or underwater interactions.
+    cat "$CAL/calibration-metrics.json"
+
+The score command detects an accidentally edited frozen sample manifest,
+mismatched sample/source identity, duplicate review, invalid tags or
+out-of-bounds event times, and refuses to overwrite existing metrics.
+
+## Human review guidelines
+
+- Ski park: mark a specific visible box, rail, jump or park setting, not
+  generic snow, lift, groomer or merely presumed trick completion.
+- Marine ray: verify a visible ray-like subject rather than accepting
+  reef scenery or an indeterminate fish silhouette as confirmed.
+- Blur and shake: mark only meaningful degradation in watchability.
+  Fast head-mounted POV is not automatically defective.
+- Keep/Skip/Unsure: judge event quality independently from image quality;
+  compelling wildlife footage can still need editing.
+- Give special attention to model-failed clips, which are potential
+  false-negative highlights when machine coverage is incomplete.
+
+This intentionally selected review set is a calibration experiment, not
+validated generalization to independent trips or to the full recording
+archive. Source originals, catalog decisions and publication gates
+remain unchanged.
