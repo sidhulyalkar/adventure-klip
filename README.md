@@ -1,3 +1,25 @@
+# Adventure-Klip: current direction
+
+**Start here:** [Current pipeline and modeling strategy](docs/CURRENT_PIPELINE.md).
+
+Klip aims to discover important moments in personal outdoor footage, classify
+ski and marine events, propose non-destructive edits, and compose watchable
+category-specific or mixed highlight reels. Source verification, event labels,
+human preferences and publication approval remain distinct.
+
+**Current research track:** SHA-backed candidate previews → optional seven-frame
+local Auto-Scout → owner labeling → event-aware edit variants → diverse private
+reel previews. For a cheaper alternative to per-clip vision-language inference,
+the read-only [SigLIP2 exemplar baseline](docs/CURRENT_PIPELINE.md#minimal-read-only-exemplar-probe)
+reuses existing frozen features and reviewed Keep/Skip clips, with no model calls
+or source video decoding.
+
+The long history below documents previous releases, experiments and worktrees.
+An older experiment being documented does not mean it is the current
+production path. Never delete or rescan original footage to generate a report.
+
+---
+
 # Klip experimental: Adaptive POV sampling (opt-in)
 
 Use `klip adaptive-plan` to create a cached-evidence-driven, bounded frame

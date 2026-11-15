@@ -258,3 +258,65 @@ def test_cli_checkpoint_resume_avoids_duplicate_inference(tmp_path,monkeypatch):
     assert (out/"review.html").is_file()
     assert (out/"media").is_dir()
     assert (out/"summary.json").is_file()
+
+
+def test_autoscout_report_api_preserved_by_refactor():
+    from adventure_intelligence import auto_scout_review
+    assert scout.VERSION == auto_scout_review.VERSION
+    assert scout.build_report is auto_scout_review.build_report
+    assert scout.review_html is auto_scout_review.review_html
+    assert scout.PRIORITIES == auto_scout_review.PRIORITIES
+
+
+def test_failed_model_schema_has_safe_stage_detail(monkeypatch, tmp_path):
+    video = tmp_path / "bad-schema.mp4"
+    video.write_bytes(b"x" * 256)
+    monkeypatch.setattr(scout.temporal, "_samples",
+                        lambda _: (["encoded-image"] * 7, list(range(7))))
+    bad = proposal()
+    bad["categories"][0]["tag"] = "marine_ray"
+    def transport(_):
+        return {"message": {"content": json.dumps(bad)}}
+    with pytest.raises(scout.ScoutStageError) as caught:
+        scout.infer_proxy(video, model="gemma3:4b", transport=transport)
+    assert caught.value.stage == "model_schema"
+    assert caught.value.detail == "Invalid, duplicated or cross-sport category proposal"
+    assert "marine_ray" not in str(caught.value)
+
+
+def test_failed_sampler_stops_before_ollama(monkeypatch, tmp_path):
+    video = tmp_path / "bad.mp4"
+    video.write_bytes(b"x" * 256)
+    def bad_sampler(_):
+        raise ValueError("Bounded H264 preview duration invalid")
+    monkeypatch.setattr(scout.temporal, "_samples", bad_sampler)
+    with pytest.raises(scout.ScoutStageError) as caught:
+        scout.infer_proxy(video, model="gemma3:4b", transport=lambda _: (_ for _ in ()).throw(AssertionError("called")))
+    assert caught.value.stage == "frame_sampling"
+    assert caught.value.detail == "invalid_preview_duration"
+
+
+def test_failure_receipt_reports_stage_without_raw_model_response(tmp_path, monkeypatch):
+    ws, pilot = fixture_pilot(tmp_path, count=1)
+    script = Path(__file__).resolve().parents[1] / "scripts" / "klip_auto_scout_experiment_v2.py"
+    spec = importlib.util.spec_from_file_location("auto_scout_cli_failures", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "_ollama_preflight", lambda model: None)
+    monkeypatch.setattr(module, "quality_measurements", lambda path: {"meanBrightness": 0.5})
+    def failed_vision(*args, **kwargs):
+        raise scout.ScoutStageError("model_schema", "Invalid category proposal list")
+    monkeypatch.setattr(module, "infer_proxy", failed_vision)
+    out = ws / "reports" / "auto-failure-study"
+    args = type("Args", (), {"workspace": ws, "pilot": pilot, "output": out,
+        "model": "gemma3:4b", "max_items": 1, "run": True,
+        "resume": False, "retry_failures": False, "report_every": 1})()
+    result = module.execute(args)
+    assert result["failed"] == 1
+    rid = "1" .zfill(24)
+    failure = json.loads((out / "receipts" / (rid + ".json")).read_text())
+    assert failure["failureStage"] == "model_schema"
+    assert failure["failureCode"] == "Invalid category proposal list"
+    report = json.loads((out / "summary.json").read_text())
+    assert report["failureStages"]["model_schema"] == 1
+    assert report["failureCodes"]["Invalid category proposal list"] == 1

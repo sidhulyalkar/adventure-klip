@@ -17,7 +17,7 @@ import sys
 from urllib.request import urlopen
 
 from adventure_intelligence.auto_scout_v2 import (
-    VERSION, _bounded_workspace_path, _safe_preview_link, build_report,
+    VERSION, ScoutStageError, _bounded_workspace_path, _safe_preview_link, build_report,
     diversify, fingerprint, infer_proxy, load_pilot, quality_measurements,
     read_receipts, review_html, save_json,
 )
@@ -128,10 +128,13 @@ def execute(args) -> dict:
             "inputPlanSha256": plan_sha,
             "policyFingerprint": policy,
         }
+        failure_stage = "proxy_quality"
         try:
             # Quality telemetry uses 2-fps tiny grayscale proxy frames only.
             quality = quality_measurements(video)
+            failure_stage = "model_inference"
             judgment = infer_proxy(video, model=args.model)
+            failure_stage = "post_inference_integrity"
             judgment["sampledSourceRelativeMsApprox"] = [
                 row["sourceStartMs"] + t for t in judgment["sampledProxyTimeMs"]
             ]
@@ -147,8 +150,20 @@ def execute(args) -> dict:
                                      "modelTagMayChange": True})
         except (ValueError, OSError, RuntimeError, TimeoutError,
                 subprocess.TimeoutExpired) as exc:
+            # Do not serialize raw model responses, footage paths or user data.
+            # Existing failed receipts without these fields remain readable.
+            stage = exc.stage if isinstance(exc, ScoutStageError) else failure_stage
+            code = exc.detail if isinstance(exc, ScoutStageError) else {
+                "Bounded preview motion/brightness decode failed":
+                    "bounded_grayscale_decode_failed",
+                "Unbounded preview duration": "invalid_preview_duration",
+                "Proxy mutated while inference was running":
+                    "proxy_checksum_changed",
+            }.get(str(exc), "unclassified_" + type(exc).__name__.lower())
             receipt.update(status="failed",
                            errorType=type(exc).__name__,
+                           failureStage=stage,
+                           failureCode=code,
                            reason="read_model_or_decode_failure_unverified")
         path = destination / "receipts" / (rid + ".json")
         # Retry failures can replace only their own failed checkpoint receipt.

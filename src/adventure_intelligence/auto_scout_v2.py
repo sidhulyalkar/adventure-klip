@@ -6,14 +6,11 @@ or treats a model-suggested category / quality issue as ground truth.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from hashlib import sha256
-from html import escape
 import json
-import math
 import os
 from pathlib import Path
-import re
 import statistics
 import subprocess
 import tempfile
@@ -24,11 +21,11 @@ from . import studio_preview_judge as local
 from .media import require_tool, probe
 from .moment_edit_v2 import TAGS, DEFECTS, SHA, ID, VERSION as MOMENT_VERSION
 
-VERSION = "klip-v2-proxy-autoscout-experiment-v1"
+from .auto_scout_review import VERSION, build_report, review_html, _group_queue
 ACTIVITIES = ("ski", "snorkeling", "bike", "other", "unknown")
 PROPOSAL_TAGS = sorted(set().union(*TAGS.values()))
 QUALITY_TAGS = sorted(DEFECTS)
-PRIORITIES = ("review_first", "investigate", "routine")
+from .auto_scout_review import PRIORITIES
 POLICY = (
     "You are a conservative, source-grounded adventure video discovery assistant. "
     "You see exactly SEVEN independent stills in chronological order from one "
@@ -276,24 +273,84 @@ def quality_measurements(path: Path) -> dict:
     }
 
 
+class ScoutStageError(ValueError):
+    """Stable diagnostic for a failed proxy/model stage, without raw model text."""
+
+    def __init__(self, stage: str, detail: str):
+        super().__init__(detail)
+        self.stage = stage
+        self.detail = detail
+
+
+_SCOUT_VALIDATION_ERRORS = frozenset({
+    "Model returned unexpected/missing auto-scout fields",
+    "Model activity/priority is not allowed",
+    "Invalid continuity proposal",
+    "Invalid scout summary/uncertainty",
+    "Invalid or duplicated sampled-frame evidence",
+    "Invalid category proposal list",
+    "Invalid quality proposal list",
+    "Invalid category proposal fields",
+    "Invalid, duplicated or cross-sport category proposal",
+    "Invalid category evidence text",
+    "Invalid quality observation fields",
+    "Invalid or duplicated quality flag",
+    "Invalid quality observation text",
+})
+
+
 def infer_proxy(path: Path, *, model: str, transport=None) -> dict:
-    """One Ollama request using seven sampled stills; no original media."""
+    """One localhost Ollama request using seven bounded, independently sampled stills.
+
+    Preserve the existing prompt/schema/model fingerprint so historical
+    checkpoint receipts can be resumed. Only error classification changes.
+    """
     if not local.valid_local_model(model):
-        raise ValueError("Invalid local Ollama model name")
-    images, stamps = temporal._samples(path)
+        raise ScoutStageError("model_configuration", "invalid_local_model_name")
+
+    try:
+        images, stamps = temporal._samples(path)
+    except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        # The sampler's exact diagnostic messages contain no frame data.
+        message = str(exc)
+        detail = {
+            "Bounded H264 preview duration invalid": "invalid_preview_duration",
+            "Unable to decode one bounded second-look frame from the H264 proxy":
+                "seven_frame_decode_failed",
+        }.get(message, "seven_frame_sampling_failed")
+        raise ScoutStageError("frame_sampling", detail) from exc
     if len(images) != 7 or len(stamps) != 7:
-        raise ValueError("Seven independent still frames are required")
+        raise ScoutStageError("frame_sampling", "seven_frame_count_mismatch")
+
     payload = {
         "model": model, "stream": False, "format": json_schema(),
         "options": {"temperature": 0},
         "messages": [{"role": "user", "content": POLICY, "images": images}],
     }
-    response = ollama._send_local(payload, transport=transport)
+    try:
+        response = ollama._send_local(payload, transport=transport)
+    except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
+        message = str(exc)
+        detail = {
+            "Bounded local judge request exceeded image size limit":
+                "model_request_image_size_limit",
+            "Local model response too large": "model_response_too_large",
+            "Local Ollama timed out": "ollama_timeout",
+            "Local Ollama unavailable": "ollama_unavailable",
+        }.get(message, "ollama_request_failed")
+        raise ScoutStageError("ollama_request", detail) from exc
+
     try:
         parsed = json.loads(response["message"]["content"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("Local model produced invalid structured JSON") from exc
-    prediction = validate_proposal(parsed)
+        raise ScoutStageError("model_json", "invalid_structured_response") from exc
+    try:
+        prediction = validate_proposal(parsed)
+    except ValueError as exc:
+        msg = str(exc)
+        detail = msg if msg in _SCOUT_VALIDATION_ERRORS else "unknown_model_schema_failure"
+        raise ScoutStageError("model_schema", detail) from exc
+
     return {
         "proposal": prediction, "sampledProxyTimeMs": stamps,
         "model": model, "policyFingerprint": fingerprint(model),
@@ -371,116 +428,3 @@ def read_receipts(folder: Path, rows: list[dict], plan_sha: str,
     return result
 
 
-def _group_queue(records: list[dict]) -> list[dict]:
-    # Source diversity first within each priority tier. Keep controls visible.
-    tiers = {k: i for i,k in enumerate(PRIORITIES)}
-    bands = defaultdict(list)
-    for r in records:
-        if r["status"] != "done":
-            continue
-        proposal = r["analysis"]["proposal"]
-        bands[proposal["reviewPriority"]].append(r)
-    ordered = []
-    for priority in PRIORITIES:
-        remaining = bands[priority][:]
-        used_sources = set()
-        while remaining:
-            choice = min(remaining, key=lambda r: (
-                r["sourceSha256"] in used_sources,
-                r["analysis"]["proposal"]["activity"] not in ("ski","snorkeling"),
-                len(r["analysis"]["proposal"]["categories"]) == 0,
-                r["recordId"],
-            ))
-            ordered.append(choice)
-            used_sources.add(choice["sourceSha256"])
-            remaining.remove(choice)
-    return ordered
-
-
-def build_report(receipts: dict[str, dict], *, total: int, processed_limit: int,
-                 source_plan_sha: str, model: str, pilot: Path) -> dict:
-    done = [r for r in receipts.values() if r["status"] == "done"]
-    failed = [r for r in receipts.values() if r["status"] == "failed"]
-    ordered = _group_queue(done)
-    activity = Counter(x["analysis"]["proposal"]["activity"] for x in done)
-    categories = Counter(tag["tag"] for x in done
-                         for tag in x["analysis"]["proposal"]["categories"])
-    priorities = Counter(x["analysis"]["proposal"]["reviewPriority"] for x in done)
-    defects = Counter(flag["kind"] for x in done
-                      for flag in x["analysis"]["proposal"]["qualityFlags"])
-    return {
-        "version": VERSION, "inputPlanSha256": source_plan_sha,
-        "sourcePilot": str(pilot), "model": model,
-        "totalCandidates": total, "requestedLimit": processed_limit,
-        "processed": len(done), "failed": len(failed),
-        "remaining": max(0, total-len(done)-len(failed)),
-        "distinctAnalyzedSources": len({x["sourceSha256"] for x in done}),
-        "activityProposals": dict(sorted(activity.items())),
-        "categoryProposals": dict(sorted(categories.items())),
-        "qualityFlagProposals": dict(sorted(defects.items())),
-        "reviewPriorities": dict(sorted(priorities.items())),
-        "reviewQueue": [{
-            "recordId": rec["recordId"],
-            "sourceSha256": rec["sourceSha256"],
-            "sourceStartMs": rec["sourceStartMs"],
-            "sourceEndMs": rec["sourceEndMs"],
-            "activityProposal": rec["analysis"]["proposal"]["activity"],
-            "categoryProposals": [x["tag"] for x in rec["analysis"]["proposal"]["categories"]],
-            "qualityFlagProposals": [x["kind"] for x in rec["analysis"]["proposal"]["qualityFlags"]],
-            "reviewPriority": rec["analysis"]["proposal"]["reviewPriority"],
-            "summary": rec["analysis"]["proposal"]["summary"],
-            "uncertainty": rec["analysis"]["proposal"]["uncertainty"],
-            "qualityMeasurements": rec["analysis"]["numericQuality"],
-        } for rec in ordered],
-        "failedRecordIds": [rec["recordId"] for rec in failed],
-        "modelProposalsAreNotOwnerVerified": True,
-        "originalVideosRead": 0, "originalVideosModified": 0,
-        "autoEditBoundariesChosen": 0, "masterRendersCreated": 0,
-        "note": "Seven stills plus grayscale proxy metrics. This is a candidate review ordering, not an event-detection or reel-ranking accuracy benchmark.",
-    }
-
-
-def review_html(report: dict) -> str:
-    """Self-contained source-verified local proxy review deck (no network)."""
-    fragments = []
-    for i, clip in enumerate(report["reviewQueue"], 1):
-        rid = clip["recordId"]
-        hint = clip["activityProposal"]
-        tags = ", ".join(clip["categoryProposals"]) or "No specific category proposed"
-        defects = ", ".join(clip["qualityFlagProposals"]) or "No visible defect proposed"
-        fragments.append(
-            "<article><div class='meta'>"
-            + escape(str(i)) + " · " + escape(hint) + " · "
-            + escape(clip["reviewPriority"].replace("_", " "))
-            + "</div><video preload='metadata' playsinline controls src='media/"
-            + rid + ".mp4'></video><h3>" + escape(tags.replace("_"," "))
-            + "</h3><p>" + escape(clip["summary"])
-            + "</p><div class='meta'>"
-            + escape(clip["sourceSha256"][:12]) + " · "
-            + escape(str(round(clip["sourceStartMs"]/1000, 2))) + "–"
-            + escape(str(round(clip["sourceEndMs"]/1000, 2)))
-            + "s</div><p><strong>Possible defects:</strong> " + escape(defects)
-            + "</p><p class='muted'><strong>Uncertainty:</strong> "
-            + escape(clip["uncertainty"]) + "</p></article>"
-        )
-    return """<!doctype html><html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; media-src 'self' file:; img-src 'none'; script-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'">
-<title>Klip / V2 Auto-Scout Review</title>
-<style>
-:root{color-scheme:dark;background:#0c141b;color:#e7f2f3;font:14px/1.55 system-ui}
-body{max-width:1220px;margin:0 auto;padding:28px}
-h1{font-size:23px}h3{font-size:15px;margin:10px 0 4px}
-small,.meta,.muted{color:#98afbc}.meta{font-size:12px;margin:6px 0}
-.header{margin-bottom:25px;border-bottom:1px solid #42535f;padding-bottom:18px}
-.note{background:#20333b;border-left:3px solid #8ec9bd;padding:12px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
-article{border:1px solid #354755;background:#18232b;border-radius:12px;padding:12px}
-video{width:100%;aspect-ratio:16/9;object-fit:contain;background:black;border-radius:8px}
-p{margin:8px 0;font-size:13px}
-</style></head><body><header class="header"><h1>Klip / Auto-Scout</h1>
-<p class="note">All classifications are unverified model suggestions from seven separated stills.
-Camera motion and grayscale changes are NOT speed, skill or reliable blur detection.
-Do not skip unseen events or export final edits from these guesses.</p>
-<p><strong>""" + escape(str(report["processed"])) + """</strong> inspected proxies from <strong>""" + escape(str(report["totalCandidates"])) + """</strong> packet candidates.</p>
-</header><main class="grid">""" + "\n".join(fragments) + "</main></body></html>"
