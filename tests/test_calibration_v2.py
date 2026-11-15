@@ -73,7 +73,7 @@ def test_blind_page_does_not_embed_individual_model_predictions():
 
 
 def test_explicit_negative_flags_overprediction_and_never_counts_unreviewed():
-    c=rows(4)
+    c=rows(8)
     # select a ski successful record
     chosen=next(x for x in c if x["modelStatus"]=="done" and x["modelActivity"]=="ski")
     m=manifest(c)
@@ -81,7 +81,7 @@ def test_explicit_negative_flags_overprediction_and_never_counts_unreviewed():
            "reviews":[review(chosen,sport="ski",tags=[],quality=[],decision="skip")]}
     result=cal.evaluate(m,human)
     assert result["ownerReviewed"]==1
-    assert result["unreviewedNotAssumedNegative"]==3
+    assert result["unreviewedNotAssumedNegative"]==7
     assert result["qualityMetrics"]["blur"]["fp"]==1
     assert result["tagMetrics"]["ski_park"]["fp"]==1
     assert result["keepSkipByModelPriority"][0]["humanDecision"]=="skip"
