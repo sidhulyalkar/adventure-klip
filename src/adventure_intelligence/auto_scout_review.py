@@ -49,6 +49,10 @@ def build_report(receipts: dict[str, dict], *, total: int, processed_limit: int,
     priorities = Counter(x["analysis"]["proposal"]["reviewPriority"] for x in done)
     defects = Counter(flag["kind"] for x in done
                       for flag in x["analysis"]["proposal"]["qualityFlags"])
+    failure_stages = Counter(x.get("failureStage", "unknown_legacy")
+                             for x in failed)
+    failure_codes = Counter(x.get("failureCode", "unknown_legacy")
+                            for x in failed)
     return {
         "version": VERSION, "inputPlanSha256": source_plan_sha,
         "sourcePilot": str(pilot), "model": model,
@@ -59,6 +63,8 @@ def build_report(receipts: dict[str, dict], *, total: int, processed_limit: int,
         "activityProposals": dict(sorted(activity.items())),
         "categoryProposals": dict(sorted(categories.items())),
         "qualityFlagProposals": dict(sorted(defects.items())),
+        "failureStages": dict(sorted(failure_stages.items())),
+        "failureCodes": dict(sorted(failure_codes.items())),
         "reviewPriorities": dict(sorted(priorities.items())),
         "reviewQueue": [{
             "recordId": rec["recordId"],

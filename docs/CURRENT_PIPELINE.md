@@ -129,3 +129,18 @@ Pure review report + gallery code now resides in
 test imports, model prompt, receipt policy, and the running V2 checkpoint
 contract. This is structural refactoring, not a new classifier or a policy
 change. CI must validate before merge. Do not switch the in-flight worktree.
+
+
+## Scout failure observability (new, resume compatible)
+
+The original Auto-Scout wrote only `errorType: ValueError` plus the
+generic `read_model_or_decode_failure_unverified`. A failed receipt now
+also includes sanitized `failureStage` and `failureCode` to distinguish
+`proxy_quality`, `frame_sampling`, `ollama_request`, `model_json`,
+`model_schema` and integrity errors. Raw local model responses, original
+media paths and personally identifiable frame contents are never logged.
+The summary reports counts by failure stage and code. Previously failed
+receipts remain unchanged until explicitly retried. The prompt, strict
+JSON schema, fingerprint, checkpoint version and successful receipt format
+remain unchanged. Do not modify an ongoing worktree or retry failures
+concurrently with that run.

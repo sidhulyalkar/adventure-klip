@@ -273,24 +273,84 @@ def quality_measurements(path: Path) -> dict:
     }
 
 
+class ScoutStageError(ValueError):
+    """Stable diagnostic for a failed proxy/model stage, without raw model text."""
+
+    def __init__(self, stage: str, detail: str):
+        super().__init__(detail)
+        self.stage = stage
+        self.detail = detail
+
+
+_SCOUT_VALIDATION_ERRORS = frozenset({
+    "Model returned unexpected/missing auto-scout fields",
+    "Model activity/priority is not allowed",
+    "Invalid continuity proposal",
+    "Invalid scout summary/uncertainty",
+    "Invalid or duplicated sampled-frame evidence",
+    "Invalid category proposal list",
+    "Invalid quality proposal list",
+    "Invalid category proposal fields",
+    "Invalid, duplicated or cross-sport category proposal",
+    "Invalid category evidence text",
+    "Invalid quality observation fields",
+    "Invalid or duplicated quality flag",
+    "Invalid quality observation text",
+})
+
+
 def infer_proxy(path: Path, *, model: str, transport=None) -> dict:
-    """One Ollama request using seven sampled stills; no original media."""
+    """One localhost Ollama request using seven bounded, independently sampled stills.
+
+    Preserve the existing prompt/schema/model fingerprint so historical
+    checkpoint receipts can be resumed. Only error classification changes.
+    """
     if not local.valid_local_model(model):
-        raise ValueError("Invalid local Ollama model name")
-    images, stamps = temporal._samples(path)
+        raise ScoutStageError("model_configuration", "invalid_local_model_name")
+
+    try:
+        images, stamps = temporal._samples(path)
+    except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        # The sampler's exact diagnostic messages contain no frame data.
+        message = str(exc)
+        detail = {
+            "Bounded H264 preview duration invalid": "invalid_preview_duration",
+            "Unable to decode one bounded second-look frame from the H264 proxy":
+                "seven_frame_decode_failed",
+        }.get(message, "seven_frame_sampling_failed")
+        raise ScoutStageError("frame_sampling", detail) from exc
     if len(images) != 7 or len(stamps) != 7:
-        raise ValueError("Seven independent still frames are required")
+        raise ScoutStageError("frame_sampling", "seven_frame_count_mismatch")
+
     payload = {
         "model": model, "stream": False, "format": json_schema(),
         "options": {"temperature": 0},
         "messages": [{"role": "user", "content": POLICY, "images": images}],
     }
-    response = ollama._send_local(payload, transport=transport)
+    try:
+        response = ollama._send_local(payload, transport=transport)
+    except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
+        message = str(exc)
+        detail = {
+            "Bounded local judge request exceeded image size limit":
+                "model_request_image_size_limit",
+            "Local model response too large": "model_response_too_large",
+            "Local Ollama timed out": "ollama_timeout",
+            "Local Ollama unavailable": "ollama_unavailable",
+        }.get(message, "ollama_request_failed")
+        raise ScoutStageError("ollama_request", detail) from exc
+
     try:
         parsed = json.loads(response["message"]["content"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("Local model produced invalid structured JSON") from exc
-    prediction = validate_proposal(parsed)
+        raise ScoutStageError("model_json", "invalid_structured_response") from exc
+    try:
+        prediction = validate_proposal(parsed)
+    except ValueError as exc:
+        msg = str(exc)
+        detail = msg if msg in _SCOUT_VALIDATION_ERRORS else "unknown_model_schema_failure"
+        raise ScoutStageError("model_schema", detail) from exc
+
     return {
         "proposal": prediction, "sampledProxyTimeMs": stamps,
         "model": model, "policyFingerprint": fingerprint(model),
