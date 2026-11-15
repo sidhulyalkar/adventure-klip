@@ -1,66 +1,75 @@
-# Klip V2: First blind human calibration pilot
+# E6: Klip V2 blind human calibration
 
-The Auto-Scout pass produced 108 validated model outputs and 12 incompatible
-model-category responses across 120 cached source-verified previews. It proposed
-\`ski_park\` in 45/45 skiing clips and \`blur\` in 102/108 accepted clips.
-These are red flags for overprediction, not ground-truth error rates.
+The completed local Auto-Scout candidate scan produced 120 valid preview
+windows (108 model-accepted and 12 schema-failed). Its proposals appear
+overbroad: \`ski_park\` in 45/45 inferred skiing clips; \`blur\` in 102/108
+accepted previews. These are ***not*** measured classifier accuracies.
 
-This new study tests whether proposed categories and highlight priorities
-are useful, **before** changing the editor, retraining, or scanning originals.
+This phase uses an existing frozen private pilot, frozen model receipts,
+and local H.264 preview hardlinks. It does **not** decode camera originals,
+call a model, edit/delete footage, change catalog labels or promote rejected
+machine guesses into confirmed events.
 
-## How the next experiment works
+## What this experiment measures
 
-- Deterministically select a 36-clip stratified sample. Target pools are
-  unusual ski features, other skiing, ray-like marine scenes, other marine,
-  broad biking, unknown activity, and some of the 12 rejected model outputs.
-- Strictly reverify the original frozen packet, all receipt identities and
-  proxy SHA-256 hashes.
-- Hard-link only selected existing H264 proxies into an isolated private
-  report. No decoding needed to prepare the study.
-- Show a local *prediction-blind* browser review page. Explicitly record
-  observed activity, multi-label scene categories, Keep/Skip/Unsure, visible
-  quality problems, and optional event boundaries. Owner observations start
-  empty and are not populated by the local model.
-- Export those owner judgments to a JSON download. Nothing is uploaded or
-  stored permanently in the browser unless the user exports.
-- Score model category and quality precision/recall **only on explicitly
-  human-reviewed, known-activity clips**. Show sport confusion and actual
-  Keep/Skip by model priority. Unreviewed footage is not negative.
+1. **Selection:** stratify the 120 previews into predicted ski park,
+   ski-other, snorkel-ray, snorkel-other, other/unknown, and schema-rejected.
+   Target 36 with explicit quotas, deterministic seed, and one-per-recording
+   preference. The stratum is kept in private server-side sample manifest,
+   **not shown on the review webpage**. Absent strata are reallocated.
+2. **Blind review:** watch entire preview before seeing any model output.
+   Label actual activity, visible scene categories, actual important quality
+   defects, Keep/Skip/Unsure, reviewer certainty, optional event boundaries.
+   Export JSON in the browser. Nothing leaves the user's computer.
+3. **Scoring:** compare frozen predictions against explicit certain human
+   clip labels. Score TP/FP/FN/TN, precision, recall and specificity for each
+   category and filming flag. Failed model clips contribute to **coverage**
+   and count of human-positive missed opportunities, not to automatic
+   negative predictions. Unreviewed and uncertain observations cannot
+   create false negatives.
 
-This is a stratified convenience sample, not archive-wide accuracy or
-cross-outing validation. Selection is based on model categories (withheld
-from the reviewer) and intentionally oversamples uncertain cases. A more
-rigorous later study must hold entire independent outings out.
+Because we deliberately oversample model failures and particular classes,
+**aggregate accuracy is not an unbiased estimate of archive-wide
+performance**. This is diagnostic calibration of the observed 120 windows,
+not whole-video discovery recall and not held-out preference-model training.
 
-## Run from the new calibration branch checkout
+## Run from a separate clean worktree
 
     export WS="$HOME/AdventureAI-clean.QJnopt"
     export PILOT="$WS/reports/klip-v2-pilot-20261114-153934-88998"
     export EXP="$WS/reports/klip-v2-autoscout-20261115-130506-89529"
-    export STUDY="$WS/reports/klip-v2-blind-calibration-$(date +%Y%m%d-%H%M%S)-$$"
+    export CAL="$WS/reports/klip-blind-calibration-$(date +%Y%m%d-%H%M%S)-$$"
 
     python scripts/klip_blind_calibration_v2.py prepare \
       --workspace "$WS" --pilot "$PILOT" --experiment "$EXP" \
-      --output "$STUDY" --count 36
-    open "$STUDY/blind-review.html"
+      --output "$CAL" --size 36
 
-Review and save as many as possible. Export JSON frequently; keep files
-private. The exported file will be in your browser's Downloads directory.
+    open "$CAL/review.html"
 
-To score after exporting reviews:
+Review clips in order and **Export private JSON labels**. Browser downloads
+default to \`~/Downloads/klip-blind-owner-<sample-sha>.json\`. Save this file.
 
-    python scripts/klip_blind_calibration_v2.py evaluate \
-      --study "$STUDY" \
-      --reviews "$HOME/Downloads/klip-calibration-review-<sample-hash>.json"
+    python scripts/klip_blind_calibration_v2.py score \
+      --workspace "$WS" --pilot "$PILOT" --experiment "$EXP" \
+      --output "$CAL" --labels "/absolute/path/to/exported-labels.json"
 
-Inspect \`$STUDY/calibration-metrics.json\`. It reports verified-human sample
-statistics but **does not** update catalog labels, change the original
-Auto-Scout receipts, mutate clip rankings, or render a new reel.
+The full detailed report appears in \`$CAL/calibration-score.json\`.
 
-## Next model decision
+Only the owner labels with certainty "certain" enter binary precision/recall;
+"unknown" is excluded from those metrics. Source ID, record ID, sample
+manifest hash and original receipt fingerprint are checked before scoring.
+Unreviewed clips stay unreviewed. The score is written once and cannot
+silently replace prior results.
 
-Only after reviewing confusion/false positives should we compare the
-read-only frozen SigLIP2 exemplar retrieval baseline against model-only
-scouting. A frozen video encoder is justified if it measurably improves
-held-out action/encounter recall, not simply because its general
-benchmark score is higher.
+## Next decision gates
+
+- Confirm whether the model can actually distinguish park features from
+  generic ski footage and whether its ray sightings are real animals.
+- Distinguish normal action-camera motion from genuinely unpleasant shake or
+  blur. A model that labels virtually everything blurry should not influence
+  editing.
+- Count genuine human Keep moments among 12 model failures.
+- Only then consider training a tiny positive/negative exemplar ranker using
+  frozen SigLIP2 features, with outing-based test splits.
+- Use video-native temporal models only if preexisting visual retrieval
+  misses complete jumps, rail exits, or underwater interactions.
