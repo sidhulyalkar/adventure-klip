@@ -12,7 +12,7 @@ older versioned experiment reports. Older docs are historical evidence.
 | Immutable recording identity + local catalog | catalog.py, import code | Verified source SHA, read-only use preferred |
 | Cached features | scene_atlas.py, semantic_jobs.py, SigLIP2 | Frozen frame-image representations; not continuous action |
 | Whole-archive coarse candidate discovery | full_archive_campaign.py, status + packet | SHA-qualified source windows, motion/control hypotheses |
-| Proxy triage | auto_scout_v2.py and auto_scout CLI | Seven stills, provisional Ollama observations and brightness |
+| Proxy triage | auto_scout_v2.py (evidence), auto_scout_review.py (presentation) and auto_scout CLI | Seven stills, provisional Ollama observations and brightness |
 | Reviewed examples / exemplar matching | examples.py, scene_atlas.py, exemplar retrieval baseline | Human Keep/Skip examples + same-model cosine |
 | Source-backed moment + edit variants | moment_edit_v2.py | Owner event intervals, reversible trims, preview-only |
 | Local owner labeling | moment_label_studio_v2.py | Explicit owner sports, tags, and defect spans |
@@ -117,3 +117,15 @@ Use entire outing groups for hold-out, and measure:
 
 Proceed to full-library reprocessing only if this pilot demonstrably beats
 the existing coarse/visual retrieval baseline.
+
+
+## 2026-11 cleanup: module boundaries
+
+Auto-Scout was previously one 470-line module mixing model inference, disk
+integrity, receipt loading, review queue ranking and HTML rendering.
+Pure review report + gallery code now resides in
+`auto_scout_review.py`. `auto_scout_v2.py` re-exports the same
+`build_report`, `review_html`, and `VERSION` names, preserving scripts,
+test imports, model prompt, receipt policy, and the running V2 checkpoint
+contract. This is structural refactoring, not a new classifier or a policy
+change. CI must validate before merge. Do not switch the in-flight worktree.

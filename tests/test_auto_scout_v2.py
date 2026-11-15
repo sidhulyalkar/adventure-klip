@@ -258,3 +258,11 @@ def test_cli_checkpoint_resume_avoids_duplicate_inference(tmp_path,monkeypatch):
     assert (out/"review.html").is_file()
     assert (out/"media").is_dir()
     assert (out/"summary.json").is_file()
+
+
+def test_autoscout_report_api_preserved_by_refactor():
+    from adventure_intelligence import auto_scout_review
+    assert scout.VERSION == auto_scout_review.VERSION
+    assert scout.build_report is auto_scout_review.build_report
+    assert scout.review_html is auto_scout_review.review_html
+    assert scout.PRIORITIES == auto_scout_review.PRIORITIES
