@@ -18,9 +18,14 @@ def rows(count=48):
     clips=[]
     for i in range(count):
         sport=("ski","snorkeling","bike","unknown")[i%4]
-        tags=(["ski_rail"] if i%8==0 else ["ski_park"]) if sport=="ski" else (
-            ["marine_ray"] if i%8==1 else ["marine_reef"]) if sport=="snorkeling" else (
-            ["riding_general"] if sport=="bike" else []))
+        if sport=="ski":
+            tags=["ski_rail"] if i%8==0 else ["ski_park"]
+        elif sport=="snorkeling":
+            tags=["marine_ray"] if i%8==1 else ["marine_reef"]
+        elif sport=="bike":
+            tags=["riding_general"]
+        else:
+            tags=[]
         clips.append({
             "recordId":f"{i+1:024x}","sourceSha256":f"{i+1:064x}",
             "proxySha256":f"{i+100:064x}",
