@@ -1,6 +1,7 @@
 # Adventure-Klip: current direction
 
 **Start here:** [Current pipeline and modeling strategy](docs/CURRENT_PIPELINE.md).
+**Next hands-on experiment:** [E6 blind human calibration](docs/KLIP_V2_BLIND_CALIBRATION.md), using the completed Auto-Scout preview archive and human Keep/Skip labels.
 
 Klip aims to discover important moments in personal outdoor footage, classify
 ski and marine events, propose non-destructive edits, and compose watchable
