@@ -212,3 +212,17 @@ def test_prep_and_evaluate_pure_local_and_originals_unmodified(tmp_path):
     scored=runner.evaluate(argparse.Namespace(study=out,reviews=exported))
     assert scored["reviewed"]==1
     assert (out/"calibration-metrics.json").is_file()
+
+
+def test_blind_review_embedded_js_is_syntactically_valid(tmp_path):
+    import re, shutil, subprocess
+    if not shutil.which("node"):
+        pytest.skip("Node.js is not installed")
+    html=page(manifest(rows(12)))
+    match=re.search(r"<script>(.*?)</script>",html,re.S)
+    assert match
+    program=tmp_path/"blind-studio.js"
+    program.write_text(match.group(1))
+    result=subprocess.run(["node","--check",str(program)],
+                          capture_output=True,text=True,timeout=15)
+    assert result.returncode==0,result.stderr
