@@ -151,24 +151,24 @@ def _workspace(tmp_path, *, real_video):
         ffmpeg=shutil.which("ffmpeg")
         if not ffmpeg:
             pytest.skip("ffmpeg unavailable")
-        # Use a short synthetic clip (12s) to keep CI fast.
+        # Use a short synthetic clip (16s) to keep CI fast.
         ctx["contextSourceStartMs"]=0
-        ctx["contextSourceEndMs"]=12000
+        ctx["contextSourceEndMs"]=16000
         owner["contextSourceStartMs"]=0
-        owner["contextSourceEndMs"]=12000
+        owner["contextSourceEndMs"]=16000
         owner["runStartMs"]=500
-        owner["runEndMs"]=11000
+        owner["runEndMs"]=15000
         owner["featureMarkers"]=[
             {"kind":"jump","sourceMs":1000},
             {"kind":"jump","sourceMs":2200},
             {"kind":"jump","sourceMs":3900},
-            {"kind":"jump","sourceMs":9000},
+            {"kind":"jump","sourceMs":13500},
         ]
         video=media/"run-context.mp4"
         result=subprocess.run([
             ffmpeg,"-hide_banner","-loglevel","error","-nostdin",
-            "-f","lavfi","-i","color=c=cyan:s=320x180:r=24:d=12",
-            "-f","lavfi","-i","sine=frequency=440:duration=12",
+            "-f","lavfi","-i","color=c=cyan:s=320x180:r=24:d=16",
+            "-f","lavfi","-i","sine=frequency=440:duration=16",
             "-shortest","-c:v","libx264","-pix_fmt","yuv420p",
             "-c:a","aac","-b:a","64k",str(video),
         ],capture_output=True,timeout=50)
@@ -213,7 +213,9 @@ def test_real_synthetic_proxy_renders_two_edits_and_montage(tmp_path):
     assert result["status"]=="non_destructive_multi_scale_preview_ready"
     assert result["balancedGroups"]==2
     assert result["montageCreated"] is True
-    for name in ("balanced-01.mp4","balanced-02.mp4","balanced-montage.mp4"):
+    assert result["gapReviewClips"]==1
+    assert result["tailReviewClips"]==0
+    for name in ("balanced-01.mp4","balanced-02.mp4","balanced-montage.mp4","balanced-gap-review-01.mp4"):
         assert (args.output/"media"/name).stat().st_size>100
     plan=json.loads((args.output/"temporal-edit-plan.json").read_text())
     assert len(plan["renderedSegments"])==2
