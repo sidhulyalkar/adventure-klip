@@ -88,7 +88,7 @@ def test_balanced_source_diverse_queue_respects_owner_ski_run():
     }]
     out=ranker.rank_review_queue(cands+owner,top=5)
     assert out["top"][0]["id"]=="owner-test"
-    assert out["top"][0]["rankClass"]=="reviewed_owner_event"
+    assert out["top"][0]["rankClass"]=="human_reviewed_complete_run"
     assert not any(x["id"]==a["recordId"] for x in out["top"])
     assert {x["activity"] for x in out["top"]}=={"ski","snorkeling","bike"}
 
