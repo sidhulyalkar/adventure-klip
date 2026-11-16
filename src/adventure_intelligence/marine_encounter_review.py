@@ -6,13 +6,18 @@ a clip in review ranking. Nothing here verifies species or measures probabilitie
 from __future__ import annotations
 
 from collections import Counter
+
+from .scene_review_narrative import (
+    NARRATIVE_FIELDS, extract_narrative, empty_narrative,
+)
 from hashlib import sha256
 from html import escape
 import json
 import re
 
 VERSION="klip-marine-blind-review-v1"
-LABEL_VERSION="klip-marine-owner-labels-v1"
+LEGACY_LABEL_VERSION="klip-marine-owner-labels-v1"
+LABEL_VERSION="klip-marine-owner-labels-v2"
 PRESENCE=frozenset(("present","possible","absent","unclear"))
 ANIMAL_TYPES=frozenset(("ray","fish","turtle","shark","octopus","other","unknown","none"))
 BEHAVIOR=frozenset(("swimming","passing","schooling","feeding","interaction","stationary","none","unclear"))
@@ -51,7 +56,8 @@ def manifest(candidates: list[dict], plan_sha: str, receipts_sha: str,
 
 
 def validate_review(m:dict,doc:dict)->list[dict]:
-    if (not isinstance(doc,dict) or doc.get("version")!=LABEL_VERSION
+    if (not isinstance(doc,dict)
+            or doc.get("version") not in (LABEL_VERSION, LEGACY_LABEL_VERSION)
             or doc.get("sampleId")!=m["sampleId"]
             or not isinstance(doc.get("reviews"),list)):
         raise ValueError("Marine review must match exactly one frozen sample")
@@ -60,11 +66,17 @@ def validate_review(m:dict,doc:dict)->list[dict]:
         raise ValueError("Too many marine reviews")
     expected={"recordId","sourceSha256","decision","animalPresence","animalType",
               "behavior",*RATINGS,"eventStartMs","eventEndMs"}
+    legacy=doc["version"]==LEGACY_LABEL_VERSION
     used=set()
     result=[]
     for item in doc["reviews"]:
-        if not isinstance(item,dict) or set(item)!=expected:
+        if not isinstance(item,dict) or not expected <= set(item):
             raise ValueError("Missing or unexpected marine owner label fields")
+        extra=set(item)-expected
+        if extra and (legacy or extra != NARRATIVE_FIELDS):
+            raise ValueError("Unrecognized or incomplete human scene fields")
+        if extra:
+            extract_narrative(item)
         rid=item["recordId"]
         if rid not in known or rid in used or item["sourceSha256"]!=known[rid]["sourceSha256"]:
             raise ValueError("Duplicated, unknown, or mismatched owner record identity")
@@ -128,6 +140,16 @@ def merge_owner(candidates:list[dict],m:dict,labels:dict)->tuple[list[dict],dict
                     if r["animalPresence"]=="present" else
                     "Human-kept underwater scene",
                 )
+            interpretation=extract_narrative(r)
+            if interpretation is not None:
+                counts["reviews_with_narrative_schema"]+=1
+                if interpretation["sceneDescription"].strip():
+                    counts["reviews_with_scene_description"]+=1
+                if interpretation["whyKeep"].strip():
+                    counts["reviews_with_personal_reason"]+=1
+                if r["decision"]=="keep" and r["animalPresence"]!="present":
+                    counts["kept_scenes_without_confirmed_animal"]+=1
+            item["humanSceneInterpretation"]=interpretation
             item["humanMarineReview"]=r
             item["humanMarineQualityScore"]=human_quality_score(r)
             item["humanConfirmedVisibleAnimal"]=r["animalPresence"]=="present"
@@ -142,6 +164,9 @@ def merge_owner(candidates:list[dict],m:dict,labels:dict)->tuple[list[dict],dict
         "counts":dict(sorted(counts.items())),
         "qualityRatingsAreHumanOrdinalNotCalibratedModelConfidence":True,
         "animalClassIsNotSpeciesVerification":True,
+        "freeTextNotAutomaticallyScoredByModel":True,
+        "descriptionNotEquivalentToAnimalPresence":True,
+        "supportsLegacyV1AndSceneFirstV2":True,
         "unreviewedNotNegative":True,
     }
 
