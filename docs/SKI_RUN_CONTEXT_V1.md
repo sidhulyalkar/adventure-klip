@@ -106,3 +106,29 @@ and viewer preference for full-line vs single-moment edits. Retain
 20-second clips as lightweight discovery *thumbnails*, not as fixed
 run boundaries. Do not rewrite the original scan's frozen algorithm or
 claims without a versioned experiment and held-out improvement.
+
+
+## Store reviewed complete lines separately from short highlights
+
+In the local \`run-review.html\` page:
+- Use playback to mark **run start** and **run end** across the full line.
+- Add every jump, rail, box, speed section and transition at its own
+  source-relative playhead time, including features beyond the old 20s cut.
+- Choose a run type and Keep/Skip/Unsure. Check **I verified run start/end**
+  only after watching the full sequence.
+- Export the local run JSON. Nothing is sent or published.
+
+To save a durable source-linked record, run from the same study checkout:
+
+    export OWNER_RUN="$HOME/Downloads/klip-run-<source-sha-prefix>-<anchor-start-ms>.json"
+    export SAVED="$WS/reports/klip-saved-ski-run-$(date +%Y%m%d-%H%M%S)-$$"
+    python3 scripts/klip_save_ski_run.py \
+      --workspace "$WS" --context-dir "$RUN" \
+      --review-json "$OWNER_RUN" --output-dir "$SAVED"
+    cat "$SAVED/run-record.json"
+
+This independently stores the **whole-run bounds** and all feature markers
+with the original source SHA, old anchor, frozen preview fingerprint and owner
+Keep/Skip. One marked Keep without reviewed run boundaries is NOT promoted
+to a positive complete-run example. It creates no new source video copy,
+does not alter the catalog and does not feed uncontrolled guesses to ranking.
