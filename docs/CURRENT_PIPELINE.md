@@ -1,5 +1,8 @@
 # Klip current architecture and next modeling strategy
 
+**Current canonical design:** [Research mission](KLIP_RESEARCH_MISSION.md) · [V3 contracts](KLIP_ARCHITECTURE_V3.md) · [Roadmap](KLIP_IMPLEMENTATION_ROADMAP.md) · [Experiment evidence](../logs/README.md). The code inventory below records implemented, historical and partial components; it is **not** a claim of complete source-wide temporal scene discovery.
+
+
 **Active research track:** clip discovery → sport-specific event classification
 → event-boundary editing → viewer-preferred, diverse category reels. This
 document is the orientation point for new engineers, not a replacement for
