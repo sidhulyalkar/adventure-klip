@@ -74,7 +74,10 @@ def test_context_clamps_to_source_boundary_and_pins_original_anchor():
     assert plan["contextSourceEndMs"]==44000
     assert plan["contextDurationMs"]==44000
     with pytest.raises(ValueError,match="exceeds context budget"):
-        run.plan_context(anchor(),120000,max_s=15)
+        run.plan_context(
+            {**anchor(), "sourceStartMs": 1000, "sourceEndMs": 32000},
+            120000, max_s=30
+        )
 
 
 def test_context_fails_on_ambiguous_or_mismatched_anchors():

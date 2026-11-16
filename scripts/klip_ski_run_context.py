@@ -58,7 +58,7 @@ def _verified_source_for_expansion(ws:Path,asset:dict,args,plan:dict)->Path:
         raise ValueError("Catalogued original is not accessible in trusted source root")
     expected_bytes=asset["sourceBytesFromCatalog"]
     before=local.stat()
-    if before.st_size!=expected_bytes or not before.is_file():
+    if before.st_size!=expected_bytes or not local.is_file():
         raise ValueError("Original media size no longer matches frozen archive audit")
     started=time.monotonic()
     _hash_verified(local,plan["sourceAssetSha256"])
