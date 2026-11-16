@@ -12,8 +12,8 @@ from html import escape
 import json
 import math
 
-VERSION = "klip-full-preview-ranked-review-v1"
-SPORTS = ("ski", "snorkeling", "bike", "unknown")
+VERSION = "klip-full-preview-ranked-review-v2"
+SPORTS = ("ski", "snorkeling", "bike")
 # Scarce, semantically concrete categories aid navigation, but are hypotheses.
 WEIGHTS = {
     "ski_jump": 3.0, "ski_rail": 3.2, "ski_box": 3.2,
@@ -149,75 +149,138 @@ def reviewed_run_groups(owner: dict, edit_plan: dict) -> list[dict]:
     return result
 
 
-def rank_review_queue(raw: list[dict], *, top: int=24,
-                      per_sport: int | None=None) -> dict:
-    """Owner-backed tier first; model tier gets source-balanced opportunities.
+def quarantine_model_candidates(raw:list[dict], *,min_duration_ms:int=6000)->list[dict]:
+    """'Needs context' is NOT a negative human preference."""
+    result=[]
+    for item in raw:
+        if item["origin"]!="autoscout_seven_stills":
+            continue
+        reasons=[]
+        if item["activity"] not in ("ski","snorkeling","bike"):
+            reasons.append("other_or_unknown_activity")
+        if (item["sourceEndMs"]-item["sourceStartMs"]<min_duration_ms
+                and not item.get("humanKeepConfirmed",False)):
+            reasons.append("under_six_seconds_unreviewed")
+        if item.get("humanReviewDecision")=="skip":
+            reasons.append("explicit_owner_skip")
+        if reasons:
+            result.append({
+                "recordId":item["id"],"sourceSha256":item["sourceSha256"],
+                "sourceStartMs":item["sourceStartMs"],
+                "sourceEndMs":item["sourceEndMs"],
+                "activityProposal":item["activity"],
+                "reasons":reasons,"noOriginalFootageDiscarded":True,
+                "notAnAutomaticNegativeLabel":True,
+            })
+    return result
 
-    Allows multiple edits from one human-approved run, but not several VLM
-    windows from one source in the top queue. Failed receipts are a separate
-    coverage queue and MUST NOT be ranked as bad moments.
+
+def rank_review_queue(raw:list[dict], *,top:int=24,per_sport:int|None=None,
+                      snorkeling_target_share:float=0.60,max_bike:int=2)->dict:
+    """Human Kept first, then snorkeling-heavy source-balanced review leads.
+
+    Ranking is editorial triage, never calibrated animal/trick truth.
     """
     if type(top) is not int or not 1<=top<=150:
         raise ValueError("top must be 1..150")
     if per_sport is not None and (type(per_sport) is not int or not 1<=per_sport<=150):
-        raise ValueError("Invalid per-sport cap")
+        raise ValueError("Invalid sport cap")
+    if (type(snorkeling_target_share) not in (int,float)
+            or not math.isfinite(snorkeling_target_share)
+            or not 0<=snorkeling_target_share<=1):
+        raise ValueError("Invalid snorkeling target")
+    if type(max_bike) is not int or not 0<=max_bike<=top:
+        raise ValueError("Invalid bike cap")
+    quarantined=quarantine_model_candidates(raw)
+    excluded={x["recordId"] for x in quarantined}
     owner=sorted(
-        [x for x in raw if x["ownerReviewed"] and x["humanKeepConfirmed"]],
+        [x for x in raw if x["ownerReviewed"] and x["humanKeepConfirmed"]
+         and x["activity"] in ("ski","snorkeling","bike")
+         and x["id"] not in excluded],
         key=lambda x:(
+            0 if x["origin"]=="human_reviewed_run_tentative_edit"
+            else 1 if x.get("humanConfirmedVisibleAnimal") else 2,
             x.get("role")!="main_line_candidate",
+            -(x.get("humanMarineQualityScore") if
+              x.get("humanMarineQualityScore") is not None else -1),
             -len(x.get("featureTimesMs",[])),
-            x["sourceSha256"],x["sourceStartMs"]
+            x["sourceSha256"],x["sourceStartMs"],
         ),
     )
-    proposals=sorted(
-        [x for x in raw if x["origin"]=="autoscout_seven_stills"],
-        key=lambda x:(
-            -x["heuristic"]["reviewOpportunityScore"],
-            x["sourceSha256"],x["sourceStartMs"],x["id"],
-        )
-    )
-    # An owner-approved full run supersedes 20-second derivative windows
-    # from the same recording. This prevents misleading duplicate rankings.
     owner_sources={x["sourceSha256"] for x in owner}
-    proposals=[x for x in proposals if x["sourceSha256"] not in owner_sources]
-    selected=owner[:top]
-    seen_sources=set(owner_sources)
-    sport_used=Counter(x["activity"] for x in selected)
+    proposals=sorted(
+        [x for x in raw if x["origin"]=="autoscout_seven_stills"
+         and x["id"] not in excluded
+         and x["sourceSha256"] not in owner_sources],
+        key=lambda x:(-x["heuristic"]["reviewOpportunityScore"],
+                      x["sourceSha256"],x["sourceStartMs"],x["id"]),
+    )
+    selected=[]; seen=set(); counts=Counter()
+    for x in owner:
+        if len(selected)>=top:
+            break
+        if per_sport is not None and counts[x["activity"]]>=per_sport:
+            continue
+        if x["activity"]=="bike" and counts["bike"]>=max_bike:
+            continue
+        selected.append(x);seen.add(x["sourceSha256"]);counts[x["activity"]]+=1
     groups=defaultdict(list)
-    for item in proposals:
-        groups[item["activity"]].append(item)
-    allowed=("ski","snorkeling","bike","unknown")
-    while len(selected)<top and any(groups.values()):
+    for x in proposals:
+        groups[x["activity"]].append(x)
+    def pop_sport(sport):
+        if per_sport is not None and counts[sport]>=per_sport:
+            return None
+        if sport=="bike" and counts["bike"]>=max_bike:
+            return None
+        q=groups[sport]
+        while q and q[0]["sourceSha256"] in seen:
+            q.pop(0)
+        return q.pop(0) if q else None
+    target=math.ceil(top*snorkeling_target_share)
+    if per_sport is not None:
+        target=min(target,per_sport)
+    while len(selected)<top and counts["snorkeling"]<target:
+        x=pop_sport("snorkeling")
+        if x is None:
+            break
+        selected.append(x);seen.add(x["sourceSha256"]);counts["snorkeling"]+=1
+    while len(selected)<top:
         chosen=None
-        for sport in sorted(
-            allowed,key=lambda s:(sport_used[s], allowed.index(s))
-        ):
-            if per_sport is not None and sport_used[sport]>=per_sport:
-                continue
-            while groups[sport] and groups[sport][0]["sourceSha256"] in seen_sources:
-                groups[sport].pop(0)
-            if groups[sport]:
-                chosen=groups[sport].pop(0)
+        for sport in sorted(("ski","snorkeling","bike"),key=lambda s:(
+                counts[s], {"ski":0,"snorkeling":1,"bike":2}[s])):
+            chosen=pop_sport(sport)
+            if chosen is not None:
                 break
         if chosen is None:
             break
         selected.append(chosen)
-        seen_sources.add(chosen["sourceSha256"])
-        sport_used[chosen["activity"]]+=1
-    top_rows=[]
+        seen.add(chosen["sourceSha256"])
+        counts[chosen["activity"]]+=1
+    ranked=[]
     for i,item in enumerate(selected,1):
-        top_rows.append({**item, "rank":i,
-            "rankClass":"reviewed_owner_event" if item["ownerReviewed"] else
-                        "model_only_review_opportunity"})
+        tier=("human_reviewed_complete_run" if item["origin"]=="human_reviewed_run_tentative_edit"
+              else "human_confirmed_visible_animal_keep" if item.get("humanConfirmedVisibleAnimal")
+              else "human_kept_underwater_scene" if item["ownerReviewed"]
+              else "model_only_review_opportunity")
+        ranked.append({**item,"rank":i,"rankClass":tier})
     return {
-        "top":top_rows,
-        "availableModelCandidates":len(proposals),
-        "ownerApprovedRunCandidateGroups":len(owner),
-        "modelOnlyCandidatesInTop":sum(not x["ownerReviewed"] for x in top_rows),
-        "humanReviewedCandidatesInTop":sum(x["ownerReviewed"] for x in top_rows),
-        "sportMix":dict(sorted(Counter(x["activity"] for x in top_rows).items())),
-        "scoreNotCalibrated":True,
-        "ranksDoNotProveBestFootage":True,
+        "top":ranked,"quarantined":quarantined,
+        "quarantineCounts":dict(sorted(Counter(
+            reason for x in quarantined for reason in x["reasons"]
+        ).items())),
+        "mainGalleryOtherUnknownCount":sum(
+            x["activity"] not in ("ski","snorkeling","bike") for x in ranked),
+        "mainGalleryUnreviewedUnderSixSeconds":sum(
+            not x["humanKeepConfirmed"] and
+            x["sourceEndMs"]-x["sourceStartMs"]<6000 for x in ranked),
+        "snorkelingTarget":target,"snorkelingSelected":counts["snorkeling"],
+        "maxBike":max_bike,"availableModelCandidates":len(proposals),
+        "ownerApprovedRunCandidateGroups":sum(
+            x["origin"]=="human_reviewed_run_tentative_edit" for x in owner),
+        "modelOnlyCandidatesInTop":sum(not x["ownerReviewed"] for x in ranked),
+        "humanReviewedCandidatesInTop":sum(x["ownerReviewed"] for x in ranked),
+        "sportMix":dict(sorted(Counter(x["activity"] for x in ranked).items())),
+        "scoreNotCalibrated":True,"ranksDoNotProveBestFootage":True,
     }
 
 
@@ -226,15 +289,22 @@ def gallery_html(report:dict)->str:
     cards=[]
     for item in report["topRankedClips"]:
         badges=(
-            "Reviewed run" if item["ownerReviewed"]
+            "Human-reviewed ski run" if item["origin"]=="human_reviewed_run_tentative_edit"
+            else "Human-confirmed visible animal" if item.get("humanConfirmedVisibleAnimal")
+            else "Human-kept underwater scene" if item["ownerReviewed"]
             else "Unverified model candidate"
         )
         title=f'#{item["rank"]} · '+item["candidateTitle"]
         label=(f'Clip: {item["sourceStartMs"]/1000:.3f}–'
                f'{item["sourceEndMs"]/1000:.3f}s | '
                f'Source {item["sourceSha256"][:12]}')
-        if item["ownerReviewed"]:
+        if item["origin"]=="human_reviewed_run_tentative_edit":
             evidence="Features: "+", ".join(str(t/1000)+"s" for t in item["featureTimesMs"])
+        elif item.get("humanMarineReview") is not None:
+            human=item["humanMarineReview"]
+            evidence=("Owner saw: "+human["animalPresence"]+" / "+
+                      human["animalType"]+"; behavior: "+human["behavior"]+
+                      "; human filming score: "+str(item.get("humanMarineQualityScore")))
         else:
             evidence=("Suggested tags: "+(", ".join(item["categoryProposals"]) or "none")
                       +". Tags are NOT ground truth.")

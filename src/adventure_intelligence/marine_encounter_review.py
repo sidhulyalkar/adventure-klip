@@ -9,6 +9,7 @@ from collections import Counter
 from hashlib import sha256
 from html import escape
 import json
+import re
 
 VERSION="klip-marine-blind-review-v1"
 LABEL_VERSION="klip-marine-owner-labels-v1"
@@ -28,10 +29,12 @@ def _canonical_sha(x: object)->str:
 def manifest(candidates: list[dict], plan_sha: str, receipts_sha: str,
              pilot_media_rel: str) -> dict:
     """Frozen source IDs and local preview paths, with NO model guesses in UI."""
-    if not isinstance(pilot_media_rel,str) or pilot_media_rel.startswith("/") or "\\" in pilot_media_rel:
-        raise ValueError("Review media path must be a relative reports/ path")
-    if any(part in ("","..") for part in pilot_media_rel.split("/")):
-        raise ValueError("Review media path cannot escape the report folder")
+    if not isinstance(pilot_media_rel,str):
+        raise ValueError("Invalid media path")
+    parts=pilot_media_rel.split("/")
+    if (len(parts)!=3 or parts[0]!=".." or parts[2]!="media"
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,150}",parts[1])):
+        raise ValueError("Only a sibling frozen pilot media folder is allowed")
     entries=sorted([
         {"recordId":x["id"],"sourceSha256":x["sourceSha256"],
          "sourceStartMs":x["sourceStartMs"],"sourceEndMs":x["sourceEndMs"],
