@@ -203,7 +203,7 @@ def _fixture(tmp_path, video=False):
         runStartMs=500,runEndMs=11000,
         runKind="terrain_park",preference="keep",
         reviewerVerifiedContinuousRun=True,
-        featureMarkers:[
+        featureMarkers=[
             {"kind":"jump","sourceMs":1500},
             {"kind":"jump","sourceMs":3000},
             {"kind":"jump","sourceMs":4500},
