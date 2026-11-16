@@ -189,8 +189,9 @@ def rank_review_queue(raw:list[dict], *,top:int=24,per_sport:int|None=None,
             or not math.isfinite(snorkeling_target_share)
             or not 0<=snorkeling_target_share<=1):
         raise ValueError("Invalid snorkeling target")
-    if type(max_bike) is not int or not 0<=max_bike<=top:
+    if type(max_bike) is not int or not 0<=max_bike<=150:
         raise ValueError("Invalid bike cap")
+    max_bike=min(max_bike,top)
     quarantined=quarantine_model_candidates(raw)
     excluded={x["recordId"] for x in quarantined}
     owner=sorted(
@@ -289,7 +290,7 @@ def gallery_html(report:dict)->str:
     cards=[]
     for item in report["topRankedClips"]:
         badges=(
-            "Human-reviewed ski run" if item["origin"]=="human_reviewed_run_tentative_edit"
+            "Human-reviewed ski run" if item.get("origin")=="human_reviewed_run_tentative_edit"
             else "Human-confirmed visible animal" if item.get("humanConfirmedVisibleAnimal")
             else "Human-kept underwater scene" if item["ownerReviewed"]
             else "Unverified model candidate"
@@ -298,7 +299,7 @@ def gallery_html(report:dict)->str:
         label=(f'Clip: {item["sourceStartMs"]/1000:.3f}–'
                f'{item["sourceEndMs"]/1000:.3f}s | '
                f'Source {item["sourceSha256"][:12]}')
-        if item["origin"]=="human_reviewed_run_tentative_edit":
+        if item.get("origin")=="human_reviewed_run_tentative_edit":
             evidence="Features: "+", ".join(str(t/1000)+"s" for t in item["featureTimesMs"])
         elif item.get("humanMarineReview") is not None:
             human=item["humanMarineReview"]

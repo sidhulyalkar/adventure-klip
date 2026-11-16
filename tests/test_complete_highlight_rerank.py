@@ -217,7 +217,8 @@ def _fixture(tmp_path, video=False):
         output=ws/"reports"/"top",context_dir=context,
         owner_run=owner_path,force_break_after_ms=[4500],
         secondary_feature_ms=[9500],top=4,per_sport=None,
-        render=False,
+        render=False,marine_study=None,marine_reviews=None,
+        snorkeling_share=0.60,max_bike=2,
     )
     return args,preview
 
