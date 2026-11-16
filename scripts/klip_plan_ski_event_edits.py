@@ -150,7 +150,8 @@ def _montage(previews: list[dict], media_dir: Path) -> dict | None:
     }
 
 
-def _html(plan:dict,clips:list[dict],montage:dict|None)->str:
+def _html(plan:dict,clips:list[dict],montage:dict|None,
+          review_gaps:list[dict],review_tails:list[dict])->str:
     items=[]
     balanced=plan["alternatives"]["balanced"]["groups"]
     for index, (group,video) in enumerate(zip(balanced,clips),1):
@@ -178,6 +179,25 @@ def _html(plan:dict,clips:list[dict],montage:dict|None)->str:
         "<video controls preload='metadata' src='media/"
         +escape(montage["name"])+"'></video></section>"
     ) if montage else ""
+    review_parts=[]
+    for info in review_gaps:
+        review_parts.append(
+            "<article><h2>Unselected gap: review before discarding</h2>"
+            "<video controls preload='metadata' src='media/"
+            +escape(info["name"])+"'></video><p>This gap may contain "
+            "valuable linking turns or other action.</p></article>"
+        )
+    for info in review_tails:
+        review_parts.append(
+            "<article><h2>Possible missing landing tail</h2>"
+            "<video controls preload='metadata' src='media/"
+            +escape(info["name"])+"'></video><p>Outside marked run end; "
+            "inspect before extending the owner's verified bounds.</p></article>"
+        )
+    review_section=(
+        "<h2>Check omitted footage before accepting edits</h2>"
+        "<div class='grid'>"+"\n".join(review_parts)+"</div>"
+    ) if review_parts else ""
     return """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src 'self' file:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; img-src 'none'">
@@ -192,7 +212,7 @@ video{width:100%;background:black;border-radius:8px;aspect-ratio:16/9}
 <p class="note">Separate editable clips derived from one verified local proxy.
 These are NOT verified trick boundaries, not native-quality masters, and
 not evidence of landings. No original camera video was opened.</p>
-<div class="grid">""" + "\n".join(items) + "</div>"+montage_section+"</body></html>"
+<div class="grid">""" + "\n".join(items) + "</div>"+montage_section+review_section+"</body></html>"
 
 
 def execute(args)->dict:
@@ -248,18 +268,47 @@ def execute(args)->dict:
             video,media/filename,context_plan["contextSourceStartMs"],
             group["sourceStartMs"],group["sourceEndMs"],
         ))
-    # Checked SHA before and after all edits, original not read.
+    review_gaps=[]
+    for i,gap in enumerate(plan["balancedTransitionGaps"],1):
+        if gap["unselectedSourceGapMs"]>=500:
+            shot=_encode_segment(
+                video,media/f"balanced-gap-review-{i:02d}.mp4",
+                context_plan["contextSourceStartMs"],
+                gap["startsAtMs"],gap["endsAtMs"],
+            )
+            shot["mayContainUnmarkedImportantAction"]=True
+            review_gaps.append(shot)
+    review_tails=[]
+    for i,group in enumerate(plan["alternatives"]["balanced"]["groups"],1):
+        if group["postRollShortfallMs"]>=400:
+            a=group["sourceEndMs"]
+            b=min(
+                context_plan["contextSourceEndMs"],
+                group["lastFeatureMs"]+group["requestedPostRollMs"],
+            )
+            if b-a>=400:
+                shot=_encode_segment(
+                    video,media/f"balanced-tail-review-{i:02d}.mp4",
+                    context_plan["contextSourceStartMs"],a,b,
+                )
+                shot["outsideOwnerReviewedRun"]=b>plan["runSourceBoundsMs"][1]
+                review_tails.append(shot)
+    # Verified context proxy has not changed during editing.
     if sha256(video.read_bytes()).hexdigest()!=context_plan["previewRender"]["videoSha256"]:
         raise ValueError("Context preview changed during editing")
     assembly=_montage(clips,media)
     plan["renderedSegments"]=clips
+    plan["reviewGapSegments"]=review_gaps
+    plan["reviewTailSegments"]=review_tails
     plan["montagePreview"]=assembly
     save_json(out/"temporal-edit-plan.json",plan)
-    (out/"review.html").write_text(_html(plan,clips,assembly),encoding="utf-8")
+    (out/"review.html").write_text(
+        _html(plan,clips,assembly,review_gaps,review_tails),encoding="utf-8")
     return {
         "status":"non_destructive_multi_scale_preview_ready",
         "output":str(out),"reviewPage":str(out/"review.html"),
         "balancedGroups":len(clips),"montageCreated":bool(assembly),
+        "gapReviewClips":len(review_gaps),"tailReviewClips":len(review_tails),
         "cadenceBaselineMs":plan["shortGapCadenceBaselineMs"],
         "shortClipLimitRemoved":True,
         "sourceOriginalRead":False,"masterRenderCreated":False,
