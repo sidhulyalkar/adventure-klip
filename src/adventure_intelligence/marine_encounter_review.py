@@ -193,27 +193,75 @@ p,.muted{color:#b8cdd1}.notice{padding:12px;background:#213d46;border-left:3px s
 .panel{padding:15px;border:1px solid #3e6874;background:#182f38;border-radius:12px;margin:12px 0}
 .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap;justify-content:space-between}
 video{width:100%;background:#000;aspect-ratio:16/9;object-fit:contain;border-radius:9px}
-button,select,input{background:#25454f;color:#eff8f8;border:1px solid #678893;padding:9px;border-radius:7px;font:inherit}
+button,select,input,textarea{background:#25454f;color:#eff8f8;border:1px solid #678893;padding:9px;border-radius:7px;font:inherit}
 button{cursor:pointer}button:hover{border-color:#aae2d3}
-select,input[type=number]{width:100%}label{display:block;color:#c5d8da;font-size:13px;margin:7px 0 4px}
+select,input[type=number],textarea{width:100%}textarea{min-height:95px;resize:vertical}
+label{display:block;color:#c5d8da;font-size:13px;margin:7px 0 4px}
+.first{border-color:#76bbad;background:#19373c}
 .error{color:#ffb09a}.hint{color:#a4cbc5}
 @media(max-width:740px){.grid{grid-template-columns:1fr}body{padding:12px}}
 </style></head><body>
-<h1>Marine encounters / blind review</h1>
-<p class="notice">Watch each full local clip before labeling. Model guesses are hidden.
-A ray tag is not proof of a ray. Distinguish a genuinely visible animal
-from attractive reef scenery, and rate the filming independently of animal
-rarity. Nothing uploads or saves until you export the JSON.</p>
+<h1>Klip / Describe the scene first</h1>
+<p class="notice">Your first task is to explain the scene and whether it matters.
+A beautiful reef, moment of exploration, or personal memory may be worth
+saving even when there is no animal. Wildlife is an optional separate
+observation. Existing model guesses are hidden; this review doesn't retrain
+anything automatically. Nothing uploads. Export your annotations to preserve them.</p>
 <div class="panel"><div class="row"><h2 id="position">Clip</h2>
 <div><button id="prev">Previous</button> <button id="next">Next</button></div></div>
 <video id="player" controls preload="metadata" playsinline></video>
-<p class="muted">Video relative to its original recording. Mark encounter start
-and end only when you can actually distinguish the behavior.</p></div>
-<div class="grid"><div class="panel"><h2>Animal and event</h2>
-<label for="decision">Would you keep this clip?</label>
-<select id="decision"><option value="">Choose</option><option value="keep">Keep</option><option value="skip">Skip</option><option value="unsure">Unsure</option></select>
+<p class="muted">Video is source-relative. The reviewed proxy might omit the approach
+or the continuation. Notes should identify what you actually watched.</p></div>
+<section class="panel first"><h2>1. Describe why this moment matters</h2>
+<label for="sceneDescription">What is happening in the scene? (your own words)</label>
+<textarea id="sceneDescription" maxlength="2400" placeholder="e.g. Swimming over a shallow reef; the camera approaches a colorful coral formation before turning away."></textarea>
+<label for="whyKeep">Why is this worth saving, or why would you skip it?</label>
+<textarea id="whyKeep" maxlength="1800" placeholder="e.g. A beautiful reveal with great visibility and a smooth approach; good establishing scene for the reef chapter."></textarea>
+<div class="grid">
+<div><label for="sceneType">Main scene interpretation</label>
+<select id="sceneType"><option value="uncertain">Uncertain / unclassified</option>
+<option value="wildlife_encounter">Wildlife encounter</option>
+<option value="reef_exploration">Reef exploration</option>
+<option value="scenic_underwater">Beautiful underwater scenery</option>
+<option value="movement_action">Movement / action</option>
+<option value="social_personal">People / personal</option>
+<option value="discovery">Unexpected discovery</option>
+<option value="other">Other scene</option></select></div>
+<div><label for="storyRole">Role in the final story</label>
+<select id="storyRole"><option value="unassigned">Not decided</option>
+<option value="key_moment">Key highlight</option>
+<option value="supporting_sequence">Supporting sequence</option>
+<option value="establishing_scene">Establishing context</option>
+<option value="transition">Transition</option>
+<option value="atmosphere">Atmosphere / immersion</option>
+<option value="personal_memory">Personal memory</option></select></div>
+<div><label for="filmingIntent">Was this filming intentional?</label>
+<select id="filmingIntent"><option value="unknown">Unclear</option>
+<option value="intentional">Deliberately captured</option>
+<option value="incidental">Incidental / accidental capture</option></select></div>
+<div><label for="personalImportance">Personal significance</label>
+<select id="personalImportance"><option value="unsure">Unsure</option>
+<option value="high">High</option><option value="medium">Medium</option>
+<option value="low">Low</option></select></div>
+</div>
+<div class="grid"><div><label for="decision">Keep, skip or investigate?</label>
+<select id="decision"><option value="">Choose after watching</option>
+<option value="keep">Keep, meaningful scene</option>
+<option value="skip">Skip</option>
+<option value="unsure">Unsure / needs more context</option></select></div>
+<div><label for="sceneInterest">How engaging is the scene? (optional)</label>
+<select id="sceneInterest"><option value="">Not rated</option>
+<option value="1">1 · not engaging</option><option value="2">2</option>
+<option value="3">3</option><option value="4">4</option>
+<option value="5">5 · exceptional</option></select></div></div>
+<p class="muted">A previous Keep judgment is valuable provenance; this page does
+not automatically import older curation labels. Describe your reasoning so it
+can be linked to those prior experiments later.</p></section>
+<div class="grid"><div class="panel"><h2>2. Optional wildlife evidence</h2>
+<p class="muted">Animal type is only one feature of the story. Leave presence as
+unclear if the scene is interesting for another reason.</p>
 <label for="presence">Is an animal clearly visible?</label>
-<select id="presence"><option value="">Choose</option><option value="present">Clearly present</option><option value="possible">Possible, not clear</option><option value="absent">No animal visible</option><option value="unclear">Cannot judge</option></select>
+<select id="presence"><option value="unclear">Not sure / not the focus</option><option value="present">Clearly present</option><option value="possible">Possible, not clear</option><option value="absent">No animal visible</option><option value="unclear">Cannot judge</option></select>
 <label for="animal">Best observable animal class (not species)</label>
 <select id="animal"><option value="unknown">Unknown</option><option value="ray">Ray</option>
 <option value="fish">Fish</option><option value="turtle">Turtle</option><option value="shark">Shark</option>
@@ -223,10 +271,10 @@ and end only when you can actually distinguish the behavior.</p></div>
 <option value="passing">Passing / crossing</option><option value="schooling">Schooling</option>
 <option value="feeding">Feeding</option><option value="interaction">Interesting interaction</option>
 <option value="stationary">Stationary</option><option value="none">No behavior observable</option></select></div>
-<div class="panel"><h2>Filming quality (1 poor → 5 outstanding)</h2>
+<div class="panel"><h2>3. Filming and story quality (1 poor → 5 outstanding)</h2>
 <p class="muted">Choose values based on playback, not model labels.</p>
 <div id="ratings"></div></div></div>
-<div class="panel"><h2>Optional actual encounter boundaries</h2>
+<div class="panel"><h2>4. Optional important moment boundaries</h2>
 <div class="row"><button id="markIn">Start at playhead</button>
 <button id="markOut">End at playhead</button>
 <button id="clearMarks">Clear bounds</button></div>
@@ -246,6 +294,13 @@ and end only when you can actually distinguish the behavior.</p></div>
 'use strict';
 const clips=__CLIPS__,sampleId=__SAMPLE__;
 const ratings=['visibility','framing','technicalQuality','narrativeCompleteness','behaviorInterest'];
+const narrativeKeys=['sceneDescription','whyKeep','sceneType','storyRole',
+  'filmingIntent','personalImportance','sceneInterest'];
+const emptyScene={
+  sceneDescription:'',whyKeep:'',sceneType:'uncertain',
+  storyRole:'unassigned',filmingIntent:'unknown',
+  personalImportance:'unsure',sceneInterest:null
+};
 const map=new Map(),$=s=>document.getElementById(s);
 let index=0,dirty=false;
 for(const key of ratings){
@@ -265,7 +320,11 @@ function redraw(){
   $('count').textContent=map.size+' / '+clips.length+' reviewed';
   $('player').pause();$('player').src=x.video;$('player').load();
   $('decision').value=r?.decision||'';
-  $('presence').value=r?.animalPresence||'';
+  for(const key of narrativeKeys){
+    const v=r?.[key]??emptyScene[key];
+    $(key).value=v===null?'':v;
+  }
+  $('presence').value=r?.animalPresence||'unclear';
   $('animal').value=r?.animalType||'unknown';
   $('behavior').value=r?.behavior||'unclear';
   for(const k of ratings)$(k).value=r?.[k]??'';
@@ -275,9 +334,14 @@ function redraw(){
   dirty=false;$('status').textContent='Watch fully, then choose labels.';
   $('status').className='muted';
 }
-for(const id of ['decision','presence','animal','behavior','start','end']){
+for(const id of ['decision','presence','animal','behavior','start','end',...narrativeKeys]){
   $(id).onchange=()=>{dirty=true};
 }
+$('presence').addEventListener('change',()=>{
+  if($('presence').value==='absent')$('animal').value='none';
+  else if($('animal').value==='none')$('animal').value='unknown';
+  dirty=true;
+});
 function bounds(id){
   const raw=$(id).value.trim();if(!raw)return null;
   const n=Number(raw);
@@ -286,7 +350,8 @@ function bounds(id){
 }
 function review(){
   const x=clips[index],decision=$('decision').value,presence=$('presence').value;
-  if(!decision||!presence)throw Error('Choose a preference and animal presence.');
+  if(!decision)throw Error('Choose Keep, Skip or Unsure.');
+  if(!presence)throw Error('Choose or leave animal presence as Unclear.');
   const animal=$('animal').value;
   if(presence==='absent'&&animal!=='none')
     throw Error('When no animal is visible, choose animal type None.');
@@ -301,6 +366,12 @@ function review(){
     eventStartMs:a,eventEndMs:b
   };
   for(const k of ratings)result[k]=$(k).value===''?null:Number($(k).value);
+  for(const key of narrativeKeys){
+    result[key]=$(key).value;
+  }
+  result.sceneInterest=$('sceneInterest').value===''?null:Number($('sceneInterest').value);
+  if(result.sceneDescription.length>2400||result.whyKeep.length>1800)
+    throw Error('Scene notes exceed maximum length.');
   return result;
 }
 $('save').onclick=()=>{
@@ -335,7 +406,8 @@ $('file').onchange=async()=>{
   try{
     if(file.size>2000000)throw Error('Import too large');
     const d=JSON.parse(await file.text());
-    if(d.version!=='__VERSION__'||d.sampleId!==sampleId||!Array.isArray(d.reviews))
+    if(!['__VERSION__','__LEGACY__'].includes(d.version)||
+       d.sampleId!==sampleId||!Array.isArray(d.reviews))
       throw Error('Import does not match this frozen review sample');
     const known=new Map(clips.map(x=>[x.id,x])),next=new Map();
     for(const x of d.reviews){
@@ -348,7 +420,26 @@ $('file').onchange=async()=>{
          !['swimming','passing','schooling','feeding','interaction','stationary','none','unclear'].includes(x.behavior)||
          ratings.some(k=>x[k]!==null&&!(Number.isInteger(x[k])&&x[k]>=1&&x[k]<=5)))
         throw Error('Invalid label data in import');
-      next.set(x.recordId,x);
+      const restored={...emptyScene,...x};
+      for(const name of ['sceneDescription','whyKeep']){
+        if(typeof restored[name]!=='string'||
+           restored[name].length>(name==='sceneDescription'?2400:1800))
+           throw Error('Invalid owner description length');
+      }
+      const domains={
+        sceneType:['wildlife_encounter','reef_exploration','scenic_underwater','movement_action','social_personal','discovery','other','uncertain'],
+        storyRole:['key_moment','supporting_sequence','establishing_scene','transition','atmosphere','personal_memory','unassigned'],
+        filmingIntent:['intentional','incidental','unknown'],
+        personalImportance:['high','medium','low','unsure']
+      };
+      for(const [key,allowed] of Object.entries(domains)){
+        if(!allowed.includes(restored[key]))throw Error('Invalid '+key);
+      }
+      if(restored.sceneInterest!==null&&!(
+        Number.isInteger(restored.sceneInterest)&&
+        restored.sceneInterest>=1&&restored.sceneInterest<=5))
+        throw Error('Invalid personal interest rating');
+      next.set(x.recordId,restored);
     }
     map.clear();for(const [k,v] of next)map.set(k,v);
     dirty=false;redraw();$('status').textContent='Imported '+map.size+' reviews.';
@@ -356,4 +447,4 @@ $('file').onchange=async()=>{
 };
 redraw();
 </script></body></html>""".replace("__CLIPS__",values).replace("__SAMPLE__",ident).replace(
-        "__VERSION__",LABEL_VERSION)
+        "__VERSION__",LABEL_VERSION).replace("__LEGACY__",LEGACY_LABEL_VERSION)
