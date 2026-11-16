@@ -28,6 +28,8 @@ The ordering is intentional:
 
 Keep object detection, event quality, personal meaning, visual attractiveness and final-reel relevance as distinct axes.
 
+**Ranking correction:** among human-kept underwater scenes, explicit owner-rated scene interest and filming/story quality can matter more than merely confirming animal presence. This is a transparent rule based on human labels, not a trained semantic model.
+
 ## Multiple time scales
 
 - **Recording:** immutable source SHA, duration, original timebase, outing/camera.

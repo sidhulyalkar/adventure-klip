@@ -208,3 +208,37 @@ def test_existing_frozen_marine_study_sidecar_upgrade(tmp_path):
     assert (output/"review.html").read_bytes()==old_html
     assert prep.execute(setup)["reviewPage"]==upgraded["reviewPage"]
     assert not (output/"private-owner-review.json").exists()
+
+
+def test_high_interest_reef_scene_can_rank_ahead_of_lower_interest_animal():
+    scene_candidate=candidate("1",tags=("marine_scenic",))
+    ray_candidate=candidate("2",tags=("marine_ray",))
+    m=marine.manifest(
+        [scene_candidate,ray_candidate],"a"*64,"b"*64,"../pilot/media")
+    scenic={
+        **basic_label(scene_candidate),**scene.empty_narrative(),
+        "sceneDescription":"Calm, vivid reef reveal, no wildlife necessary.",
+        "whyKeep":"Beautiful flowing view and atmosphere.",
+        "sceneType":"scenic_underwater",
+        "storyRole":"establishing_scene",
+        "sceneInterest":5,
+    }
+    ray={
+        **basic_label(ray_candidate,presence="present",animal="ray"),
+        **scene.empty_narrative(),
+        "sceneDescription":"Distant ray, but the camera swings abruptly.",
+        "whyKeep":"Still useful as evidence of a sighting.",
+        "sceneType":"wildlife_encounter",
+        "sceneInterest":2,
+    }
+    enriched,_=marine.merge_owner(
+        [scene_candidate,ray_candidate],
+        m,{"version":marine.LABEL_VERSION,"sampleId":m["sampleId"],
+           "reviews":[scenic,ray]},
+    )
+    ranking_result=ranking.rank_review_queue(enriched,top=2)
+    top=ranking_result["top"]
+    assert top[0]["sourceSha256"]==scene_candidate["sourceSha256"]
+    assert top[0]["humanConfirmedVisibleAnimal"] is False
+    assert top[1]["humanConfirmedVisibleAnimal"] is True
+    assert all(x["ownerReviewed"] for x in top)
