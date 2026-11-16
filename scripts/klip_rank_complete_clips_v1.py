@@ -21,6 +21,7 @@ import sys
 
 from adventure_intelligence import auto_scout_v2 as scout
 from adventure_intelligence import complete_highlight_rerank as ranker
+from adventure_intelligence import marine_encounter_review as marine
 from adventure_intelligence import ski_event_scaling as scaling
 from adventure_intelligence import ski_run_context as run_context
 from adventure_intelligence.media import require_tool
@@ -181,9 +182,29 @@ def execute(args)->dict:
     elif args.force_break_after_ms or args.secondary_feature_ms:
         raise ValueError("Owner edit overrides require --owner-run and --context-dir")
     suggestions=ranker.candidates(rows,receipts)
+    fingerprint=sha256(json.dumps(
+        {k:receipts[k] for k in sorted(receipts)},
+        sort_keys=True,separators=(",",":"),allow_nan=False,
+    ).encode()).hexdigest()
+    marine_summary=None
+    if bool(args.marine_study) != bool(args.marine_reviews):
+        raise ValueError("--marine-study and --marine-reviews must be provided together")
+    if args.marine_study:
+        study=scout._bounded_workspace_path(ws,args.marine_study,existing=True)
+        if study.parent!=ws/"reports":
+            raise ValueError("Marine study must be a sibling folder under reports/")
+        frozen,_=_read_json(study/"marine-sample.json",limit=2_000_000)
+        expected=marine.manifest(suggestions,plan_sha,fingerprint,
+                                 "../"+pilot.name+"/media")
+        if frozen!=expected:
+            raise ValueError("Marine review sample differs from frozen scout receipts")
+        reviews,_=_read_json(args.marine_reviews.expanduser(),limit=2_000_000)
+        suggestions,marine_summary=marine.merge_owner(suggestions,frozen,reviews)
     selection=ranker.rank_review_queue(
         suggestions+owner_groups,top=args.top,
         per_sport=args.per_sport,
+        snorkeling_target_share=args.snorkeling_share,
+        max_bike=args.max_bike,
     )
     top_list=selection["top"]
     failed=[
@@ -198,10 +219,6 @@ def execute(args)->dict:
         }
         for row in rows if receipts[row["recordId"]]["status"]=="failed"
     ]
-    fingerprint=sha256(json.dumps(
-        {k:receipts[k] for k in sorted(receipts)},
-        sort_keys=True,separators=(",",":"),allow_nan=False,
-    ).encode()).hexdigest()
     report={
         "version":ranker.VERSION,
         "status":"review_ranking_dry_run" if not args.render else "playable_top_review_ready",
@@ -210,10 +227,16 @@ def execute(args)->dict:
         "autoscoutReceiptsSha256":fingerprint,
         "totalFrozenWindows":len(rows),
         "modelAnalyzed":len(suggestions),"modelFailed":len(failed),
+        "quarantinedCount":len(selection["quarantined"]),
+        "marineHumanEvidenceSummary":marine_summary,
+        "sportMix":selection["sportMix"],
         "sourceCoverageOnlyNotFullLibrary":True,
         "fullLibraryRankingCompleted":False,
         "humanReviewedRunProvenance":run_provenance,
         "reviewedRunCandidateCount":len(owner_groups),
+        "marineHumanEvidenceSummary":marine_summary,
+        "animalPresenceAndFilmingQualityReviewed":marine_summary is not None,
+        "unknownAndShortCandidatesQuarantined":True,
         "selection":{k:v for k,v in selection.items() if k!="top"},
         "failedModelControls":failed,
         "topRankedClips":top_list,
@@ -222,13 +245,16 @@ def execute(args)->dict:
         "originalFootageModified":False,
         "trainingPerformed":False,
         "published":False,
-        "clipSelectionRule":"reviewed_run_tier_then_source_diverse_unverified_categories",
+        "clipSelectionRule":"human_run_and_confirmed_animal_tiers_then_snorkeling_focused_model_review",
         "qualifications":[
             "Ranks after owner tier are uncalibrated discovery opportunities, not genuine highlight-quality judgments.",
             "The 120 proxy windows are a sample and cannot establish full-library clip recall.",
             "Model blur/shake flags are not used to lower ranking; prior flags were strongly overpredicted.",
             "Model failures remain unranked investigation controls, never treated as unwanted footage.",
             "Owner-run edits are from an approximate-seek H264 context preview, not a native master.",
+            "Unknown and under-six-second model proposals are quarantined, not considered negatives.",
+            "Human animal type is a broad observation, not species verification.",
+            "Human filming scores are ordinal preferences, not model probabilities.",
         ],
     }
     if not args.render:
@@ -237,6 +263,10 @@ def execute(args)->dict:
             "totalFrozenWindows":len(rows),"modelAnalyzed":len(suggestions),
             "modelFailed":len(failed),"ownerGroups":len(owner_groups),
             "proposedTop":len(top_list),
+            "quarantined":len(selection["quarantined"]),
+            "quarantineCounts":selection["quarantineCounts"],
+            "marineHumanEvidenceSummary":marine_summary,
+            "sportMix":selection["sportMix"],
             "topPreview": [
                 {"rank":x["rank"],"origin":x["origin"],
                  "sport":x["activity"],"source":x["sourceSha256"][:12],
@@ -273,8 +303,12 @@ def execute(args)->dict:
         item["renderReceipt"]=rendered
         item["rankExplanation"]=(
             "Human-reviewed complete run; proposed event grouping needs final cut approval."
+            if item["origin"]=="human_reviewed_run_tentative_edit" else
+            "Human-reviewed visible wildlife encounter; filming scores are subjective owner ratings."
+            if item.get("humanConfirmedVisibleAnimal") else
+            "Human-kept scene. Animal presence may be absent or uncertain."
             if item["ownerReviewed"] else
-            "Provisional rank from specific category hypotheses and source diversity, not human preference."
+            "Provisional wildlife/scene review lead based on sparse model suggestions. Not confirmed footage quality."
         )
         print(
             f"[top-clips] {i}/{len(top_list)} {item['activity']} "
@@ -288,6 +322,8 @@ def execute(args)->dict:
         "modelCandidates":suggestions,
         "ownerRunGroups":owner_groups,
         "rejectedResponseControls":failed,
+        "quarantinedModelCandidates":selection["quarantined"],
+        "marineHumanEvidenceSummary":marine_summary,
         "notFullLibrary":True,
     })
     with (temp/"top-ranked.csv").open("w",encoding="utf-8",newline="") as stream:
@@ -295,7 +331,8 @@ def execute(args)->dict:
         writer.writerow([
             "rank","activity","source_sha256","source_start_seconds",
             "source_end_seconds","evidence_tier","suggested_tags",
-            "model_review_opportunity_score","local_video",
+            "model_review_opportunity_score","human_animal_presence",
+            "human_filming_quality_score","local_video",
         ])
         for item in top_list:
             writer.writerow([
@@ -305,6 +342,8 @@ def execute(args)->dict:
                 item["rankClass"],
                 ",".join(item["categoryProposals"]),
                 (item["heuristic"] or {}).get("reviewOpportunityScore",""),
+                (item.get("humanMarineReview") or {}).get("animalPresence",""),
+                item.get("humanMarineQualityScore") if item.get("humanMarineQualityScore") is not None else "",
                 "media/"+item["mediaFile"],
             ])
     (temp/"review.html").write_text(ranker.gallery_html(report),encoding="utf-8")
@@ -334,6 +373,12 @@ def main()->int:
     p.add_argument("--secondary-feature-ms",type=int,nargs="*",default=[])
     p.add_argument("--top",type=int,default=20)
     p.add_argument("--per-sport",type=int,default=None)
+    p.add_argument("--marine-study",type=Path,
+                   help="Frozen blind marine sample directory created by prep script")
+    p.add_argument("--marine-reviews",type=Path,
+                   help="Optional exported human wildlife observations and filming ratings")
+    p.add_argument("--snorkeling-share",type=float,default=0.60)
+    p.add_argument("--max-bike",type=int,default=2)
     p.add_argument("--render",action="store_true")
     args=p.parse_args()
     try:
