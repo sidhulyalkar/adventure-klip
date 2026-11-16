@@ -246,5 +246,5 @@ def test_renders_only_approved_source_and_keeps_original_immutable(tmp_path):
     assert (output/"run-review.html").is_file()
     assert (output/"owner-annotation-template.json").is_file()
     assert sha256(original.read_bytes()).hexdigest()==old_sha
-    with pytest.raises(ValueError,match="already exists"):
+    with pytest.raises(ValueError,match="new private reports"):
         cli().execute(args)
