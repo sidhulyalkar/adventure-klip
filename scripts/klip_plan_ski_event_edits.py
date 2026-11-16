@@ -126,7 +126,7 @@ def _montage(previews: list[dict], media_dir: Path) -> dict | None:
         if not name.startswith("balanced-") or not name.endswith(".mp4") or "/" in name:
             raise ValueError("Unexpected private preview filename")
     playlist.write_text(
-        "".join("file '"+p["name"]+"'\\n" for p in previews),
+        "".join("file '"+p["name"]+"'\n" for p in previews),
         encoding="utf-8",
     )
     try:
