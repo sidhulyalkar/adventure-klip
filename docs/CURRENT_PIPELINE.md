@@ -24,6 +24,7 @@ older versioned experiment reports. Older docs are historical evidence.
 | Owner evidence ledger | evidence_ledger.py, scripts/klip_evidence_ledger.py | Append-only; adapters for marine v1/v2, blind calibration, ski run; synthetic tests only |
 | Variable-length scene segments | timeline_segments.py, scripts/klip_timeline_segments.py | Level-shift boundaries, in-scene event candidates, duration-proportional budget; synthetic tests only |
 | Fact judge panel | judge_panel.py, scripts/klip_judge_panel.py | Checkable per-sport questions, control questions, two-family rule, owner calibration; fake-transport tests only, no model run |
+| Automated discovery experiment | discovery_experiment.py, scripts/klip_discovery_experiment.py | One resumable run over at most 12 listed recordings: SHA verify, motion, segments, proxies, judge panel, report; tested on generated video with a fake judge |
 | K-MOMENT / K-TIDE research | main branch scripts and offline cache | Eight dense windows; no proven ranking advantage |
 
 Core contracts: **Asset → Observation → Candidate Moment → Owner-reviewed
