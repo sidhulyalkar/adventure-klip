@@ -317,3 +317,61 @@ def test_locate_finds_catalogs_and_review_files_anywhere(workspace, tmp_path):
     report = owner_evidence.from_files(workspace, set(), [tmp_path / "repo" / "reports"])
     assert report["files"][0]["file"] == "repo/reports/marine/labels.json"
     assert "ledger" in report["files"][0]["reason"]
+
+
+def test_plan_fills_spare_slots_with_unlabelled_recordings_from_new_outings(workspace, tmp_path):
+    from adventure_intelligence import evidence_ledger as ledger
+    ledger.append(tmp_path / "ev.jsonl", [ledger.record(
+        source_sha=A, start_ms=0, end_ms=500, decision="keep", selection="owner_marked_span",
+        schema="t", export_digest=sha("e"), record_id="0")])
+    (tmp_path / "roster.json").write_text(json.dumps(roster.propose(roster.catalog_rows(workspace))))
+    import io
+    from contextlib import redirect_stdout
+    base = ["plan", "--workspace", str(workspace), "--ledger", str(tmp_path / "ev.jsonl"),
+            "--roster", str(tmp_path / "roster.json"), "--max", "2"]
+    out = io.StringIO()
+    with redirect_stdout(out):
+        assert _cli().main(base) == 0
+    rows = json.loads(out.getvalue())
+    # A and C are labelled (ledger, Studio reviews, a Studio A/B choice); B is not.
+    assert [r["sourceSha256"] for r in rows] == [A, C]
+    assert set(rows[0]) == {"sourceSha256", "path", "sport"}
+    out = io.StringIO()
+    with redirect_stdout(out):
+        assert _cli().main(base[:-1] + ["3"]) == 0
+    assert [r["sourceSha256"] for r in json.loads(out.getvalue())] == [A, C, B]
+    out = io.StringIO()
+    with redirect_stdout(out):
+        assert _cli().main(base[:-1] + ["3", "--no-fill"]) == 0
+    assert [r["sourceSha256"] for r in json.loads(out.getvalue())] == [A, C]
+
+
+def test_ski_run_annotation_imports_without_its_plan(tmp_path):
+    spec = importlib.util.spec_from_file_location(
+        "led", Path(__file__).parents[1] / "scripts" / "klip_evidence_ledger.py")
+    led = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(led)
+    from adventure_intelligence import ski_run_context
+    plan = {"sourceAssetSha256": A, "recordId": "anchor", "contextSourceStartMs": 1000,
+            "contextSourceEndMs": 90000}
+    doc = {**ski_run_context.owner_annotation_template(plan), "runStartMs": 5000,
+           "runEndMs": 38000, "preference": "keep", "runKind": "terrain_park",
+           "reviewerVerifiedContinuousRun": True}
+    (tmp_path / "run.json").write_text(json.dumps(doc))
+    assert led.main(["import", "--kind", "ski-run", "--review", str(tmp_path / "run.json"),
+                     "--ledger", str(tmp_path / "ev.jsonl")]) == 0
+    from adventure_intelligence import evidence_ledger as ledger
+    (row,) = ledger.load(tmp_path / "ev.jsonl")
+    assert (row["startMs"], row["endMs"], row["decision"]) == (5000, 38000, "keep")
+    assert row["selection"] == "owner_marked_span" and row["contextPlanReconstructed"] is True
+    assert led.main(["import", "--kind", "marine", "--review", str(tmp_path / "run.json"),
+                     "--ledger", str(tmp_path / "ev.jsonl")]) == 2
+
+
+def test_locate_names_unsearched_folders_and_missing_manifests(tmp_path):
+    (tmp_path / "Downloads").mkdir()
+    (tmp_path / "Downloads" / "r.json").write_text(json.dumps({
+        "version": "klip-highlight-curation-review-export-v1", "manifestSha256": "ab" * 32}))
+    found = owner_evidence.locate([tmp_path / "Downloads", tmp_path / "NotMounted"])
+    assert found["foldersNotSearched"] == [str(tmp_path / "NotMounted")]
+    assert found["exportsWhoseManifestWasNotFound"][0]["manifestSha256"] == "ab" * 32

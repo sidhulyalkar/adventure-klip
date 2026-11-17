@@ -290,10 +290,11 @@ def from_files(workspace: Path, ledger_exports: set[str],
 
 def locate(roots: list[Path]) -> dict:
     """Every catalog and owner review file under these folders, with label counts. Read-only."""
-    catalogs, files = [], {}
+    catalogs, files, unreadable, digests = [], {}, [], set()
     for root in roots:
         root = Path(root).expanduser()
         if not root.is_dir():
+            unreadable.append(str(root))  # e.g. a drive that is not mounted
             continue
         for db_path in sorted(root.rglob("catalog.sqlite3")):
             if db_path.is_symlink():
@@ -309,15 +310,22 @@ def locate(roots: list[Path]) -> dict:
                 entry["error"] = str(error)
             catalogs.append(entry)
         for path, doc, digest in _scan_root(root):
+            digests.add(digest)
             if doc["version"] in REVIEW_SCHEMAS and digest not in files:
-                files[digest] = {"file": str(path), "version": doc["version"]}
+                files[digest] = {"file": str(path), "version": doc["version"],
+                                 "needsManifest": doc.get("manifestSha256")}
     by_folder: dict[str, dict[str, int]] = {}
     for f in files.values():
         folder = str(Path(f["file"]).parent)
         by_folder.setdefault(folder, {})
         by_folder[folder][f["version"]] = by_folder[folder].get(f["version"], 0) + 1
+    missing = [{"file": f["file"], "version": f["version"],
+                "manifestSha256": f["needsManifest"]}
+               for f in files.values() if f["needsManifest"] and f["needsManifest"] not in digests]
     return {"catalogs": catalogs, "reviewFiles": len(files),
-            "reviewFilesByFolder": dict(sorted(by_folder.items()))}
+            "reviewFilesByFolder": dict(sorted(by_folder.items())),
+            "exportsWhoseManifestWasNotFound": missing,
+            "foldersNotSearched": unreadable}
 
 
 def collect(workspace: Path | None, ledger_rows: list[dict],

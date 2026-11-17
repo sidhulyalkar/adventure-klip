@@ -219,6 +219,30 @@ def plan(args) -> list[dict]:
         for g in order:
             if queues[g] and len(picked) < args.max:
                 picked.append(queues[g].pop(0))
+    if args.fill and len(picked) < args.max:
+        # Unlabelled recordings, one per outing per round, outings not yet
+        # covered first, a seeded shuffle within each outing.
+        import random
+        rng = random.Random(f"plan:{args.seed}")
+        spare: dict[str, list[str]] = {}
+        for sha in sorted(assets):
+            if (sha in done or sha in picked or assets[sha]["activity"] not in SPORTS
+                    or (args.sport and assets[sha]["activity"] != args.sport)):
+                continue
+            spare.setdefault(group_of(sha), []).append(sha)
+        for shas in spare.values():
+            rng.shuffle(shas)
+        covered = {group_of(s) for s in picked}
+        outings = sorted(spare, key=lambda g: (g in covered, g))
+        while len(picked) < args.max and any(spare[g] for g in outings):
+            for g in outings:
+                if spare[g] and len(picked) < args.max:
+                    picked.append(spare[g].pop(0))
+    print(json.dumps({"labelled": sum(s in weight for s in picked),
+                      "unlabelled": sum(s not in weight for s in picked),
+                      "outings": len({group_of(s) for s in picked}),
+                      "sports": sorted({assets[s]["activity"] for s in picked})}),
+          file=sys.stderr)
     return [{"sourceSha256": s, "path": assets[s]["path"], "sport": assets[s]["activity"]}
             for s in picked]
 
@@ -254,6 +278,9 @@ def main(argv=None) -> int:
     pl.add_argument("--exclude-experiment", type=Path, nargs="*", default=[])
     pl.add_argument("--output", type=Path)
     pl.add_argument("--force", action="store_true", help="replace an existing --output")
+    pl.add_argument("--no-fill", dest="fill", action="store_false",
+                    help="only labelled recordings; by default spare slots take unlabelled "
+                         "recordings from outings not yet covered")
     deck = sub.add_parser("deck", help="write a blind review page")
     ev = sub.add_parser("evaluate", help="held-out ladder and ranked review queue")
     for p in (deck, ev):
@@ -297,7 +324,7 @@ def main(argv=None) -> int:
                 raise ValueError("A discovery run takes 1..12 recordings")
             rows = plan(args)
             if not rows:
-                raise ValueError("No labelled recordings left to scan")
+                raise ValueError("No recordings left to scan")
             _emit(rows, args.output)
         elif args.command in ("import-answers", "import-taps"):
             before = ledger.file_digest(args.answers)
