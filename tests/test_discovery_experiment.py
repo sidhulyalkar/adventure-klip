@@ -143,7 +143,7 @@ def test_source_outside_trusted_root_is_not_read(setup, tmp_path):
     rows[0]["path"] = str(elsewhere)
     setup["sources"].write_text(json.dumps(rows))
     report = go(setup)
-    assert "outside the trusted root" in report["sources"][0]["failure"]
+    assert "not under --trusted-source-root" in report["sources"][0]["failure"]
 
 
 def test_owner_spans_in_the_ledger_add_a_baseline_comparison(setup, tmp_path):

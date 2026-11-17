@@ -195,7 +195,27 @@ def plan(args) -> list[dict]:
         return roster.group_of(mapping, sha)
 
     owner = _owner(args, group_of)
-    assets = _catalog_assets(args.workspace)
+    everything = _catalog_assets(args.workspace)
+    root = args.source_root.expanduser().absolute() if args.source_root else None
+    where: dict[str, int] = {}
+    activity: dict[str, int] = {}
+    for a in everything.values():
+        parts = Path(a["path"]).parts
+        top = str(Path(*parts[:4])) if len(parts) >= 4 else a["path"]
+        where[top] = where.get(top, 0) + 1
+        activity[a["activity"]] = activity.get(a["activity"], 0) + 1
+    # Only recordings under the footage root are considered, and only those are
+    # checked on disk: paths elsewhere (another drive, a stalled card) are never touched.
+    assets = {s: a for s, a in everything.items()
+              if root is None or Path(a["path"]).is_relative_to(root)}
+    missing = [s for s, a in assets.items() if root is not None and not Path(a["path"]).is_file()]
+    for s in missing:
+        del assets[s]
+    plan.diagnostics = {"catalogRecordings": len(everything),
+                        "underSourceRoot": len(assets) + len(missing),
+                        "missingOnDisk": len(missing),
+                        "catalogPathsByFolder": dict(sorted(where.items(), key=lambda kv: -kv[1])[:8]),
+                        "catalogActivity": dict(sorted(activity.items(), key=lambda kv: -kv[1]))}
     done = _done(args.exclude_experiment)
     weight: dict[str, float] = {}
     for j in owner["judgments"]:
@@ -238,6 +258,7 @@ def plan(args) -> list[dict]:
             for g in outings:
                 if spare[g] and len(picked) < args.max:
                     picked.append(spare[g].pop(0))
+    print(json.dumps(plan.diagnostics, indent=2), file=sys.stderr)
     print(json.dumps({"labelled": sum(s in weight for s in picked),
                       "unlabelled": sum(s not in weight for s in picked),
                       "outings": len({group_of(s) for s in picked}),
@@ -278,6 +299,9 @@ def main(argv=None) -> int:
     pl.add_argument("--exclude-experiment", type=Path, nargs="*", default=[])
     pl.add_argument("--output", type=Path)
     pl.add_argument("--force", action="store_true", help="replace an existing --output")
+    pl.add_argument("--source-root", type=Path,
+                    help="footage folder (same as discovery --trusted-source-root); only "
+                         "recordings under it that exist on disk are picked")
     pl.add_argument("--no-fill", dest="fill", action="store_false",
                     help="only labelled recordings; by default spare slots take unlabelled "
                          "recordings from outings not yet covered")
@@ -322,9 +346,12 @@ def main(argv=None) -> int:
         elif args.command == "plan":
             if not 1 <= args.max <= 12:
                 raise ValueError("A discovery run takes 1..12 recordings")
+            plan.diagnostics = {}
             rows = plan(args)
             if not rows:
-                raise ValueError("No recordings left to scan")
+                print(json.dumps(plan.diagnostics, indent=2), file=sys.stderr)
+                raise ValueError("No recordings left to scan; see catalogPathsByFolder and "
+                                 "catalogActivity above")
             _emit(rows, args.output)
         elif args.command in ("import-answers", "import-taps"):
             before = ledger.file_digest(args.answers)

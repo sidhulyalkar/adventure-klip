@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -88,7 +89,7 @@ def test_review_files_are_found_matched_and_unused_ones_reported(workspace):
     unused = {Path(f["file"]).name: f["reason"] for f in found["files"] if not f["used"]}
     assert set(unused) == {"orphan.json", "moments.json", "marine.json"}
     assert "manifest not found" in unused["orphan.json"]
-    assert "ledger" in unused["marine.json"]
+    assert "sampleId" in unused["marine.json"]
 
 
 def test_contradictions_are_set_aside_and_duplicates_merged():
@@ -316,7 +317,7 @@ def test_locate_finds_catalogs_and_review_files_anywhere(workspace, tmp_path):
     assert found["reviewFilesByFolder"] == {str(elsewhere): {"klip-marine-owner-labels-v2": 1}}
     report = owner_evidence.from_files(workspace, set(), [tmp_path / "repo" / "reports"])
     assert report["files"][0]["file"] == "repo/reports/marine/labels.json"
-    assert "ledger" in report["files"][0]["reason"]
+    assert "sampleId" in report["files"][0]["reason"]
 
 
 def test_plan_fills_spare_slots_with_unlabelled_recordings_from_new_outings(workspace, tmp_path):
@@ -375,3 +376,112 @@ def test_locate_names_unsearched_folders_and_missing_manifests(tmp_path):
     found = owner_evidence.locate([tmp_path / "Downloads", tmp_path / "NotMounted"])
     assert found["foldersNotSearched"] == [str(tmp_path / "NotMounted")]
     assert found["exportsWhoseManifestWasNotFound"][0]["manifestSha256"] == "ab" * 32
+
+
+def test_plan_only_picks_existing_recordings_under_the_source_root(workspace, tmp_path):
+    footage = tmp_path / "ssd"
+    footage.mkdir()
+    (footage / "a.mp4").write_bytes(b"x")
+    with sqlite3.connect(workspace / "catalog.sqlite3") as db:
+        db.execute("UPDATE assets SET stored_path=? WHERE id=?", (str(footage / "a.mp4"), A))
+        db.execute("UPDATE assets SET stored_path=? WHERE id=?", (str(footage / "gone.mp4"), B))
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        assert _cli().main(["plan", "--workspace", str(workspace), "--source-root",
+                            str(footage), "--max", "5"]) == 0
+    assert [r["sourceSha256"] for r in json.loads(out.getvalue())] == [A]
+    diagnostics = json.loads(err.getvalue().split("\n}\n")[0] + "\n}")
+    assert diagnostics["missingOnDisk"] == 1 and diagnostics["catalogRecordings"] == 3
+    assert diagnostics["catalogActivity"] == {"ski": 2, "snorkeling": 1}
+
+
+def _marine_sample():
+    from adventure_intelligence import marine_encounter_review as marine
+    clips = [{"id": f"rec{i}", "sourceSha256": A, "sourceStartMs": i * 10000,
+              "sourceEndMs": i * 10000 + 8000, "origin": "autoscout_seven_stills",
+              "activity": "snorkeling"} for i in range(3)]
+    return marine.manifest(clips, sha("plan"), sha("receipts"), "../pilot/media")
+
+
+def _marine_review(sample, decisions):
+    return {"version": "klip-marine-owner-labels-v2", "sampleId": sample["sampleId"],
+            "reviews": [{"recordId": rid, "sourceSha256": A, "decision": d,
+                         "animalPresence": "present", "animalType": "ray",
+                         "behavior": "swimming", "visibility": 4, "framing": 3,
+                         "technicalQuality": 4, "narrativeCompleteness": 3,
+                         "behaviorInterest": 5, "eventStartMs": None, "eventEndMs": None}
+                        for rid, d in decisions.items()]}
+
+
+def test_marine_exports_reconcile_by_sample_and_newest_export_wins(workspace, tmp_path):
+    import os
+    sample = _marine_sample()
+    study = workspace / "reports" / "klip-marine-review-1"
+    study.mkdir(parents=True)
+    (study / "manifest.json").write_text(json.dumps(sample))
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    old, new = downloads / "old.json", downloads / "new.json"
+    old.write_text(json.dumps(_marine_review(sample, {"rec0": "skip", "rec1": "keep"})))
+    new.write_text(json.dumps(_marine_review(sample, {"rec0": "keep"})))
+    os.utime(old, (1, 1))
+    before = {f: f.read_bytes() for f in (old, new, study / "manifest.json")}
+    found = owner_evidence.from_files(workspace, set(), [downloads])
+    got = {(j["startMs"], j["decision"]) for j in found["judgments"]}
+    assert got == {(0, "keep"), (10000, "keep")}  # rec0's later answer replaced the first
+    assert all(j["ratings"]["behaviorInterest"] == 5 for j in found["judgments"])
+    assert all(f["used"] for f in found["files"])
+    assert all(f.read_bytes() == b for f, b in before.items())
+
+
+def test_invalid_marine_export_is_reported_not_fatal(workspace, tmp_path):
+    sample = _marine_sample()
+    (workspace / "reports").mkdir()
+    (workspace / "reports" / "m.json").write_text(json.dumps(sample))
+    bad = _marine_review(sample, {"rec0": "keep"})
+    bad["reviews"][0]["animalType"] = "dragon"
+    (workspace / "reports" / "bad.json").write_text(json.dumps(bad))
+    (entry,) = owner_evidence.from_files(workspace, set())["files"]
+    assert entry["used"] is False and "invalid export" in entry["reason"]
+
+
+def test_curation_export_is_placed_by_its_pilot_manifest(workspace, tmp_path):
+    from hashlib import sha256
+    manifest = {"version": "klip-highlight-curation-manifest-v1", "records": [
+        {"recordId": "r1", "source": {"assetSha256": A}, "event": {"startMs": 1000, "endMs": 9000}},
+        {"recordId": "r2", "source": {"assetSha256": B}, "event": {"startMs": 0, "endMs": 5000}}]}
+    raw = json.dumps(manifest).encode()
+    pilot = workspace / "reports" / "highlight-curation-pilot60-v1"
+    pilot.mkdir(parents=True)
+    (pilot / "curation-manifest.json").write_bytes(raw)
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    (downloads / "klip-curation-reviews-x.json").write_text(json.dumps({
+        "version": "klip-highlight-curation-review-export-v1",
+        "manifestSha256": sha256(raw).hexdigest(),
+        "reviews": [{"recordId": "r1", "annotatorId": "sid", "goal": "personal_memory",
+                     "choice": "keep", "technicalQuality": 4, "aestheticQuality": 5,
+                     "eventReadability": 4},
+                    {"recordId": "r2", "annotatorId": "sid", "goal": "personal_memory",
+                     "choice": "neither"}]}))
+    found = owner_evidence.from_files(workspace, set(), [downloads])
+    (j,) = found["judgments"]
+    assert (j["sourceSha256"], j["startMs"], j["endMs"], j["decision"]) == (A, 1000, 9000, "keep")
+    assert j["goal"] == "curation_personal_memory" and j["ratings"]["aestheticQuality"] == 5
+    assert found["files"][0]["used"] is True
+
+
+def test_ski_run_annotation_found_in_reports_is_used(workspace):
+    from adventure_intelligence import ski_run_context
+    plan = {"sourceAssetSha256": A, "recordId": "anchor", "contextSourceStartMs": 0,
+            "contextSourceEndMs": 60000}
+    doc = {**ski_run_context.owner_annotation_template(plan), "runStartMs": 2000,
+           "runEndMs": 40000, "preference": "keep"}
+    (workspace / "reports").mkdir()
+    (workspace / "reports" / "run.json").write_text(json.dumps(doc))
+    found = owner_evidence.from_files(workspace, set())
+    (j,) = found["judgments"]
+    assert (j["startMs"], j["endMs"], j["selection"]) == (2000, 40000, "owner_marked_span")
+    assert found["files"][0]["planFound"] is False

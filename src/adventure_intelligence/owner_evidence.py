@@ -5,8 +5,12 @@ Sources:
 - the catalog, read live: Studio example reviews, Studio pairwise choices and
   archive benchmark reviews. Only the latest revision of each counts, so a
   correction replaces what it corrects;
-- immutable review files under reports/: blind pair reviews (matched to their
-  frozen manifest by SHA-256) and curated highlight manifests;
+- immutable review files under the workspace reports/ and exports/ folders and
+  any extra folders given (e.g. ~/Downloads), each reconciled with the frozen
+  manifest it was made from: marine and calibration reviews by sampleId (the
+  newest export of a clip wins), curation and blind-pair reviews by manifest
+  SHA-256, ski-run annotations by their anchor record; curated highlight
+  manifests are read as they are;
 - the tap/grid ledger written by value_pairs.
 
 `collect` never writes. It also lists every review file it recognises but does
@@ -28,13 +32,13 @@ _PAIR_CHOICE = {"left": 1.0, "right": 0.0, "tie": 0.5}
 # Review schemas Klip has written. Anything listed here and found on disk is
 # reported as consumed or not, so nothing is dropped without a trace.
 REVIEW_SCHEMAS = {
-    "klip-marine-owner-labels-v1": "ledger import --kind marine",
-    "klip-marine-owner-labels-v2": "ledger import --kind marine",
-    "klip-v2-human-calibration-review-v1": "ledger import --kind calibration",
-    "klip-owner-run-annotations-v1": "ledger import --kind ski-run",
+    "klip-marine-owner-labels-v1": "read automatically with its frozen sample",
+    "klip-marine-owner-labels-v2": "read automatically with its frozen sample",
+    "klip-v2-human-calibration-review-v1": "read automatically with its frozen sample",
+    "klip-owner-run-annotations-v1": "read automatically",
     "social-blind-pair-reviews-v1": "read automatically",
     "klip-highlight-curation-manifest-v1": "read automatically when it holds observer judgments",
-    "klip-highlight-curation-review-export-v1": "import with highlight_curation_review first",
+    "klip-highlight-curation-review-export-v1": "read automatically with its pilot manifest",
     "klip-owner-moment-annotations-v2": "not yet read: ratings and trims of composed moments",
     "klip-reel-timed-reactions-v1": "not yet read: timed reactions while watching a reel",
 }
@@ -246,12 +250,49 @@ def _shown(path: Path, workspace: Path) -> str:
     return str(path.relative_to(workspace)) if path.is_relative_to(workspace) else str(path)
 
 
+_MARINE = ("klip-marine-owner-labels-v1", "klip-marine-owner-labels-v2")
+_SAMPLE_MANIFESTS = {"klip-marine-blind-review-v1": "marine", "klip-v2-blind-calibration-v1":
+                     "calibration"}
+
+
+def _curation_export(manifest: dict, doc: dict, digest: str) -> list[dict]:
+    """Owner choices in a curation review export, placed by the frozen pilot manifest."""
+    records = {r.get("recordId"): r for r in manifest.get("records", []) if isinstance(r, dict)}
+    out = []
+    for row in doc.get("reviews", []):
+        record = records.get(row.get("recordId")) if isinstance(row, dict) else None
+        decision = {"keep": "keep", "skip": "skip"}.get(row.get("choice")) if record else None
+        if not decision:
+            continue
+        event = record.get("event") or {}
+        item = judgment(
+            source=(record.get("source") or {}).get("assetSha256"),
+            start=event.get("startMs"), end=event.get("endMs"), decision=decision,
+            selection="pipeline_selected_window",
+            goal="curation_" + str(row.get("goal") or "unspecified"),
+            origin="highlight-curation", session=digest,
+            ratings={k: row.get(k) for k in ("technicalQuality", "aestheticQuality",
+                                             "eventReadability")},
+            provenance=f"file:{digest}:{row['recordId']}:{row.get('annotatorId')}")
+        if item:
+            out.append(item)
+    return out
+
+
 def from_files(workspace: Path, ledger_exports: set[str],
                extra: list[Path] | None = None) -> dict:
     files = _scan(workspace, extra)
-    manifests = {d: doc for _, doc, d in files if doc["version"] == "social-blind-pairs-v1"}
+    manifests = {d: doc for _, doc, d in files if doc["version"] in (
+        "social-blind-pairs-v1", "klip-highlight-curation-manifest-v1")}
+    samples = {(_SAMPLE_MANIFESTS[doc["version"]], doc.get("sampleId")): doc
+               for _, doc, _ in files if doc["version"] in _SAMPLE_MANIFESTS}
+    run_plans = {doc.get("recordId"): doc for _, doc, _ in files
+                 if doc["version"] == "klip-ski-source-run-context-v1"}
     judgments, pairs, report = [], [], []
     seen_curated = set()
+    # Window reviews of one frozen sample: for each clip, the newest export wins,
+    # so a later re-export of a draft replaces the earlier answer.
+    newest: dict[tuple, tuple] = {}
     for path, doc, digest in files:
         version = doc["version"]
         if version not in REVIEW_SCHEMAS:
@@ -273,16 +314,46 @@ def from_files(workspace: Path, ledger_exports: set[str],
             seen_curated.add(digest)
             judgments += made
             entry.update(used=bool(made), items=len(made), reason=None)
-        elif version in ("klip-marine-owner-labels-v1", "klip-marine-owner-labels-v2",
-                         "klip-v2-human-calibration-review-v1",
-                         "klip-owner-run-annotations-v1"):
-            imported = digest in ledger_exports
-            entry.update(used=imported, items=None,
-                         reason=None if imported else "not in the evidence ledger yet: "
-                         + REVIEW_SCHEMAS[version])
+        elif version == "klip-highlight-curation-review-export-v1":
+            manifest = manifests.get(doc.get("manifestSha256"))
+            made = _curation_export(manifest, doc, digest) if manifest else []
+            judgments += made
+            entry.update(used=bool(made), items=len(made),
+                         reason=None if manifest else "pilot curation-manifest.json not found; "
+                         "pass its folder with --reports")
+        elif version in (*_MARINE, "klip-v2-human-calibration-review-v1"):
+            kind = "marine" if version in _MARINE else "calibration"
+            manifest = samples.get((kind, doc.get("sampleId")))
+            if manifest is None:
+                entry.update(used=False, items=None, reason="frozen sample manifest not found "
+                             "(matched by sampleId); pass its folder with --reports")
+            else:
+                try:
+                    rows = ledger.ADAPTERS[kind](manifest, doc, digest)
+                except (ValueError, KeyError, TypeError) as error:
+                    entry.update(used=False, items=None, reason=f"invalid export: {error}")
+                else:
+                    stamp = (path.stat().st_mtime, digest)
+                    for row in rows:
+                        key = (kind, row["sampleId"], row["recordId"])
+                        if key not in newest or newest[key][0] < stamp:
+                            newest[key] = (stamp, row)
+                    entry.update(used=True, items=len(rows), reason=None)
+        elif version == "klip-owner-run-annotations-v1":
+            plan_doc = run_plans.get(doc.get("anchorRecordId"))
+            try:
+                context = plan_doc or ledger.ski_run_plan_from_annotation(doc)
+                rows = ledger.from_ski_run(context, doc, digest)
+            except (ValueError, KeyError, TypeError) as error:
+                entry.update(used=False, items=None, reason=f"invalid annotation: {error}")
+            else:
+                judgments += from_ledger(rows)
+                entry.update(used=True, items=len(rows), reason=None,
+                             planFound=plan_doc is not None)
         else:
             entry.update(used=False, items=None, reason=REVIEW_SCHEMAS[version])
         report.append(entry)
+    judgments += from_ledger([row for _, row in newest.values()])
     return {"judgments": judgments, "pairs": pairs, "files": report}
 
 

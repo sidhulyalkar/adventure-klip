@@ -87,7 +87,7 @@ def cut_proxy(source: Path, dest: Path, start_ms: int, end_ms: int, *, width: in
 
 
 def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, decode,
-                   audio, cut, frames, transport, log) -> dict:
+                   audio, cut, frames, transport, log, trusted_root: Path) -> dict:
     sha = row["sourceSha256"]
     timing: dict[str, float] = {}
 
@@ -102,7 +102,9 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
     if identity is None:
         path = resolve(row["path"])
         if path is None:
-            raise ValueError("Source is outside the trusted root or missing")
+            under = Path(row["path"]).is_relative_to(trusted_root)
+            raise ValueError("Source file not found under the trusted root" if under else
+                             "Source path is not under --trusted-source-root")
         size = timed("verify", lambda: _hash_verified(path, sha))
         duration_ms = int(float(probe(path)["duration"]) * 1000)
         identity = {"version": VERSION, "sourceSha256": sha, "sport": row["sport"],
@@ -279,7 +281,7 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
         try:
             timings[sha] = _source_stages(
                 row, output / sha, config, stages, resolve=resolve, decode=decode,
-                audio=audio, cut=cut, frames=frames, transport=transport, log=log)["timingSeconds"]
+                audio=audio, cut=cut, trusted_root=trusted, frames=frames, transport=transport, log=log)["timingSeconds"]
         except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
             # One bad recording must not stop the others, and is never a negative.
             failures[sha] = f"{type(error).__name__}: {error}"
