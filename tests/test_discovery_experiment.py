@@ -165,3 +165,40 @@ def test_preflight_names_models_that_are_not_pulled():
         raise RuntimeError("Ollama is not running on this machine")
     with pytest.raises(RuntimeError):
         experiment.missing_models(["gemma3:27b"], fetch=down)
+
+
+def test_audio_timeline_is_saved_once_and_resumed(setup):
+    calls = []
+
+    def audio(path):
+        calls.append(path)
+        return [{"t_ms": 0, "rms": 0.1, "spectralFlux": None, "zeroCrossingRate": 0.2}]
+
+    go(setup, stages=("verify", "motion", "audio", "segments"), audio=audio)
+    saved = json.loads((setup["out"] / setup["sha"] / "audio.json").read_text())
+    assert saved["series"] == [{"t_ms": 0, "rms": 0.1, "spectralFlux": None}]
+    go(setup, stages=("verify", "motion", "audio", "segments"), audio=audio)
+    assert len(calls) == 1
+
+
+def test_silent_recording_records_an_empty_audio_timeline(setup):
+    go(setup, stages=("verify", "motion", "audio"))
+    assert json.loads((setup["out"] / setup["sha"] / "audio.json").read_text())["series"] == []
+
+
+def test_proxy_keeps_sound_when_the_source_has_it(tmp_path):
+    clip = tmp_path / "loud.mp4"
+    subprocess.run([shutil.which("ffmpeg"), "-loglevel", "error", "-f", "lavfi", "-i",
+                    "testsrc2=s=160x90:r=10:d=4", "-f", "lavfi", "-i", "sine=f=440:d=4",
+                    "-shortest", "-pix_fmt", "yuv420p", str(clip)], check=True)
+    before = clip.read_bytes()
+    experiment.cut_proxy(clip, tmp_path / "p.mp4", 500, 3500, width=160)
+    streams = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-show_entries",
+                              "stream=codec_type", "-of", "csv=p=0", str(tmp_path / "p.mp4")],
+                             capture_output=True, text=True, check=True).stdout.split()
+    assert sorted(streams) == ["audio", "video"] and clip.read_bytes() == before
+    experiment.cut_proxy(clip, tmp_path / "q.mp4", 500, 3500, width=160, audio=False)
+    streams = subprocess.run([shutil.which("ffprobe"), "-v", "error", "-show_entries",
+                              "stream=codec_type", "-of", "csv=p=0", str(tmp_path / "q.mp4")],
+                             capture_output=True, text=True, check=True).stdout.split()
+    assert streams == ["video"]

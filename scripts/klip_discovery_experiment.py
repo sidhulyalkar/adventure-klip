@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the discovery experiment end to end on a short, explicit list of recordings.
 
-    verify SHA -> motion timeline -> segments -> proxy clips -> judge panel -> report
+    verify SHA -> motion timeline -> audio timeline -> segments -> proxy clips -> judge panel -> report
 
 Resumable: rerun the same command after an interruption and finished work is
 skipped. Sources are read-only; output must be outside the footage directory.
@@ -17,7 +17,7 @@ Then run, and rerun to resume:
         --trusted-source-root /Volumes/SSD/DJI --allow-mounted-ssd \\
         --output "$WS/reports/discovery-001" [--ledger owner-evidence.jsonl]
 
-Use --stages verify motion segments to stop before any model call.
+Use --stages verify motion audio segments to stop before any model call.
 """
 from __future__ import annotations
 
