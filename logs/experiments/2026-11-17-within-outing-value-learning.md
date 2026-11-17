@@ -36,3 +36,23 @@
 - Decision: keep; run on real data before any further modelling work.
 - Next: owner confirms roster, runs discovery on 8–12 recordings across 5+ outings,
   imports existing exports, taps 150 pairs, runs `evaluate`.
+
+## Revision 2 (same day): all owner labels, grid review, recording plan
+
+- Audit: the ledger read 4 of about a dozen owner-review formats, and the learner used only
+  keep/skip from those. Studio example reviews, Studio A/B choices, archive benchmark
+  reviews, blind pair reviews, curated highlight manifests and all 1–5 ratings were unused.
+- `owner_evidence.collect` now reads all of them read-only. It keeps the latest revision
+  per item, merges duplicates, sets aside keep/skip contradictions, and lists recognised
+  but unread files (moment annotations v2, reel reactions, unimported exports).
+- Cross-outing pairs train only when neither outing is held out and never score; a test
+  instruments the fit to confirm.
+- Ratings order Keeps within one session at half weight, training only.
+- New default review: 4-up grid from one outing, uniform random segments; tick keeps, star
+  best. Gives keep labels, orderings, and an unbiased per-outing keep rate and recall
+  (`sampledKeepRecallAtBudget`). Shuffled repeats measure consistency; contradicted clips
+  and stars are dropped.
+- `plan` writes a discovery source list that covers labelled recordings, one per outing
+  per round; `harvest` reports coverage.
+- Tests: 825 passed. Grid page checked in headless Chrome at a 1512×860 viewport: clips
+  play, keys, star, sound, back, reload, export, import validation.

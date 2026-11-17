@@ -162,7 +162,7 @@ def fit_selecting_l2(pairs: list[dict], items: dict[str, dict], *, variant: str,
         for l2 in L2_GRID:
             scores = []
             for held in groups:
-                model = fit([p for p in pairs if p["group"] != held], items,
+                model = fit([p for p in pairs if held not in p["groups"]], items,
                             variant=variant, l2=l2)
                 value = model and accuracy(model, [p for p in pairs if p["group"] == held], items)
                 if value is not None:

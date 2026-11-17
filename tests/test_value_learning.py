@@ -434,11 +434,12 @@ def test_cli_deck_import_and_evaluate_end_to_end(tmp_path, capsys):
     (tmp_path / "roster.json").write_text(json.dumps(confirmed))
     ledger.append(tmp_path / "evidence.jsonl", owner_ledger(made["truth"], skip_every=2))
 
-    assert cli.main(["deck", "--experiment", str(tmp_path / "exp"), "--roster",
-                     str(tmp_path / "roster.json"), "--pairs", "30", "--repeats", "5"]) == 0
+    assert cli.main(["deck", "--format", "pairs", "--experiment", str(tmp_path / "exp"),
+                     "--roster", str(tmp_path / "roster.json"), "--pairs", "30",
+                     "--repeats", "5"]) == 0
     written = json.loads(capsys.readouterr().out)
-    deck = json.loads((tmp_path / "exp" / written["deck"]).read_text())
-    assert (tmp_path / "exp" / written["page"]).is_file() and written["rosterConfirmed"]
+    deck = json.loads(Path(written["deck"]).read_text())
+    assert Path(written["page"]).is_file() and written["rosterConfirmed"]
 
     def louder(side):
         return made["truth"][(side["sourceSha256"], side["startMs"], side["endMs"])]
@@ -447,7 +448,7 @@ def test_cli_deck_import_and_evaluate_end_to_end(tmp_path, capsys):
     (tmp_path / "answers.json").write_text(json.dumps({
         "version": pairs_mod.ANSWERS_VERSION, "deckSha256": pairs_mod.deck_digest(deck),
         "answers": answers}))
-    assert cli.main(["import-taps", "--deck", str(tmp_path / "exp" / written["deck"]),
+    assert cli.main(["import-taps", "--deck", written["deck"],
                      "--answers", str(tmp_path / "answers.json"),
                      "--pairs-ledger", str(tmp_path / "pairs.jsonl")]) == 0
     capsys.readouterr()

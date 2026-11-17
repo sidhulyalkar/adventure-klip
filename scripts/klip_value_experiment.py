@@ -1,31 +1,34 @@
 #!/usr/bin/env python3
 """Rank an outing's footage by what the owner would keep, and check it against the owner.
 
-Works on discovery experiment output plus the owner ledgers. It never opens
-video and never calls a model. Typical order:
+Never opens video and never calls a model. Reads the catalog and reports
+read-only; writes only the files each command names. Typical order:
 
-    klip_value_experiment.py roster --workspace "$WS" > roster.json      # then check and confirm it
-    klip_value_experiment.py deck --experiment "$WS/reports/discovery-001" --roster roster.json
-    #   open the taps-*.html it wrote, answer, export
-    klip_value_experiment.py import-taps --deck taps-*.deck.json --answers klip-tap-answers-*.json \\
+    klip_value_experiment.py roster  --workspace "$WS" > roster.json   # check, then confirm it
+    klip_value_experiment.py harvest --workspace "$WS" --ledger owner-evidence.jsonl --roster roster.json
+    klip_value_experiment.py plan    --workspace "$WS" --ledger owner-evidence.jsonl --roster roster.json \\
+        > sources.json                                                  # input for the discovery run
+    klip_value_experiment.py deck    --experiment "$WS/reports/discovery-001" --workspace "$WS" --roster roster.json
+    klip_value_experiment.py import-answers --deck <deck.json> --answers <export.json> \\
         --pairs-ledger owner-pairs.jsonl
-    klip_value_experiment.py evaluate --experiment "$WS/reports/discovery-001" \\
+    klip_value_experiment.py evaluate --experiment "$WS/reports/discovery-001" --workspace "$WS" \\
         --ledger owner-evidence.jsonl --pairs-ledger owner-pairs.jsonl --roster roster.json \\
-        --workspace "$WS" --output "$WS/reports/value-001"
-
-`evaluate` writes report.json (held-out comparison) and queue.json (ranked
-segments with reasons) into a new directory and refuses to reuse one.
+        --output "$WS/reports/value-001"
 """
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+import sqlite3
 import sys
 
 from adventure_intelligence import evidence_ledger as ledger
 from adventure_intelligence import outing_roster as roster
+from adventure_intelligence import owner_evidence
 from adventure_intelligence import value_pairs as pairs_mod
+
+SPORTS = ("ski", "snorkeling", "bike")
 
 
 def _json(path: Path):
@@ -34,8 +37,31 @@ def _json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _mapping(args):
+    if not getattr(args, "roster", None):
+        return {}, False
+    doc = roster.validate(_json(args.roster))
+    return roster.outing_by_source(doc), doc["status"] == "owner_confirmed"
+
+
+def _owner(args, group_of):
+    """All owner judgments and every pair derived from them."""
+    rows = ledger.load(args.ledger) if getattr(args, "ledger", None) else []
+    answers = (pairs_mod.load(args.pairs_ledger)
+               if getattr(args, "pairs_ledger", None) else [])
+    collected = owner_evidence.collect(getattr(args, "workspace", None), rows)
+    grid = pairs_mod.grid_judgments(answers)
+    judgments = collected["judgments"] + grid
+    pairs = (pairs_mod.from_ledger(collected["judgments"], group_of, seed=args.seed)
+             + pairs_mod.from_ratings(collected["judgments"], group_of, seed=args.seed)
+             + pairs_mod.from_direct(collected["pairs"], group_of)
+             + pairs_mod.from_taps(answers, group_of)
+             + pairs_mod.from_grid(answers, group_of))
+    return {"collected": collected, "answers": answers, "judgments": judgments,
+            "pairs": pairs, "rows": rows}
+
+
 def _load(args):
-    """Evidence, items and pairs shared by `deck` and `evaluate`."""
     from adventure_intelligence import value_eval, value_features as features
     sources, duplicates = {}, 0
     for folder in args.experiment:
@@ -44,29 +70,122 @@ def _load(args):
                 duplicates += 1  # first experiment listed wins; never mix two runs of one source
             else:
                 sources[sha] = source
-    mapping, confirmed = {}, False
-    if args.roster:
-        doc = roster.validate(_json(args.roster))
-        mapping, confirmed = roster.outing_by_source(doc), doc["status"] == "owner_confirmed"
-    embeddings = (features.attach_embeddings(sources, args.workspace)
-                  if getattr(args, "workspace", None) else None)
-    rows = ledger.load(args.ledger) if getattr(args, "ledger", None) else []
-    taps = pairs_mod.load(args.pairs_ledger) if getattr(args, "pairs_ledger", None) else []
+    mapping, confirmed = _mapping(args)
 
     def group_of(sha):
         return roster.group_of(mapping, sha)
 
+    owner = _owner(args, group_of)
+    embeddings = (features.attach_embeddings(sources, args.workspace)
+                  if args.workspace and (args.workspace / "catalog.sqlite3").is_file() else None)
     pool = features.segment_intervals(sources)
+    taps = [r for r in owner["answers"] if "left" in r]
     items = features.build_items(
-        sources, pool + value_eval.ledger_intervals(rows) + value_eval.pair_intervals(taps),
-        group_of, seed=args.seed)
+        sources, pool + value_eval.judgment_intervals(owner["judgments"])
+        + value_eval.pair_intervals(owner["collected"]["pairs"] + taps)
+        + value_eval.grid_intervals(owner["answers"]), group_of, seed=args.seed)
     pool_ids = {features.item_id(*interval) for interval in pool} & set(items)
-    all_pairs = pairs_mod.from_ledger(rows, group_of, seed=args.seed) + pairs_mod.from_taps(
-        taps, group_of)
-    missing = sorted({r["sourceSha256"][:12] for r in rows if r["sourceSha256"] not in sources})
-    return {"sources": sources, "items": items, "pool_ids": pool_ids, "pairs": all_pairs,
-            "rows": rows, "taps": taps, "confirmed": confirmed, "embeddings": embeddings,
-            "duplicates": duplicates, "ledgerSourcesWithoutEvidence": missing}
+    labelled = {j["sourceSha256"] for j in owner["judgments"]}
+    return {**owner, "sources": sources, "items": items, "pool_ids": pool_ids,
+            "confirmed": confirmed, "embeddings": embeddings, "duplicates": duplicates,
+            "group_of": group_of,
+            "labelledSourcesWithoutEvidence": len(labelled - set(sources))}
+
+
+def _catalog_assets(workspace: Path) -> dict[str, dict]:
+    database = workspace / "catalog.sqlite3"
+    if database.is_symlink() or not database.is_file():
+        raise ValueError("No catalog in this workspace")
+    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as db:
+        db.execute("PRAGMA query_only=ON")
+        return {r[0]: {"path": r[1], "activity": r[2], "duration": r[3]} for r in db.execute(
+            "SELECT sha256,stored_path,activity,duration FROM assets WHERE duration>0")}
+
+
+def _done(folders: list[Path]) -> set[str]:
+    done = set()
+    for folder in folders or []:
+        done |= set(_json(folder / "experiment.json")["sources"])
+    return done
+
+
+def harvest(args) -> dict:
+    mapping, confirmed = _mapping(args)
+
+    def group_of(sha):
+        return roster.group_of(mapping, sha)
+
+    owner = _owner(args, group_of)
+    by_origin: dict[str, dict] = {}
+    for j in owner["judgments"]:
+        row = by_origin.setdefault(j["origin"], {"keep": 0, "skip": 0, "unsure": 0,
+                                                 "ownerMarkedSpans": 0, "withRatings": 0})
+        row[j["decision"]] += 1
+        row["ownerMarkedSpans"] += j["selection"] == "owner_marked_span"
+        row["withRatings"] += bool(j["ratings"])
+    by_outing: dict[str, dict] = {}
+    for p in owner["pairs"]:
+        for g in p["groups"]:
+            by_outing.setdefault(g, {"pairs": 0, "judgments": 0})["pairs"] += 1
+    for j in owner["judgments"]:
+        by_outing.setdefault(group_of(j["sourceSha256"]), {"pairs": 0, "judgments": 0})[
+            "judgments"] += 1
+    tiers: dict[str, dict] = {}
+    for p in owner["pairs"]:
+        t = tiers.setdefault(p["tier"], {"pairs": 0, "scoreable": 0})
+        t["pairs"] += 1
+        t["scoreable"] += p["evalEligible"]
+    unused = [f for f in owner["collected"]["files"] if not f["used"]]
+    return {
+        "rosterConfirmed": confirmed,
+        "counts": owner["collected"]["counts"],
+        "judgmentsByOrigin": by_origin, "pairsByTier": tiers,
+        "outings": {"withAnyLabel": sum(not g.startswith("source:") for g in by_outing),
+                    "recordingsWithoutOuting": sum(g.startswith("source:") for g in by_outing),
+                    "byOuting": dict(sorted(by_outing.items(),
+                                            key=lambda kv: -kv[1]["judgments"] - kv[1]["pairs"]))},
+        "reviewFiles": {"consumed": sum(f["used"] for f in owner["collected"]["files"]),
+                        "notConsumed": unused},
+        "contradictions": owner["collected"]["contradictions"],
+        "gridConsistency": pairs_mod.grid_consistency(owner["answers"]),
+        "tapConsistency": pairs_mod.self_consistency(owner["answers"]),
+    }
+
+
+def plan(args) -> list[dict]:
+    """Next recordings to scan: the most-labelled recording of each outing first, then the next."""
+    mapping, _ = _mapping(args)
+
+    def group_of(sha):
+        return roster.group_of(mapping, sha)
+
+    owner = _owner(args, group_of)
+    assets = _catalog_assets(args.workspace)
+    done = _done(args.exclude_experiment)
+    weight: dict[str, float] = {}
+    for j in owner["judgments"]:
+        weight[j["sourceSha256"]] = weight.get(j["sourceSha256"], 0) + 1
+    for p in owner["pairs"]:
+        for side in (p["left"], p["right"]):
+            weight[side["sourceSha256"]] = weight.get(side["sourceSha256"], 0) + 0.5
+    queues: dict[str, list[str]] = {}
+    for sha, _ in sorted(weight.items(), key=lambda kv: (-kv[1], kv[0])):
+        asset = assets.get(sha)
+        if sha in done or asset is None or asset["activity"] not in SPORTS:
+            continue
+        if args.sport and asset["activity"] != args.sport:
+            continue
+        queues.setdefault(group_of(sha), []).append(sha)
+    # Outings with the most labels first; one recording per outing per round,
+    # so the batch spreads across as many outings as possible.
+    order = sorted(queues, key=lambda g: (-sum(weight[s] for s in queues[g]), g))
+    picked = []
+    while len(picked) < args.max and any(queues[g] for g in order):
+        for g in order:
+            if queues[g] and len(picked) < args.max:
+                picked.append(queues[g].pop(0))
+    return [{"sourceSha256": s, "path": assets[s]["path"], "sport": assets[s]["activity"]}
+            for s in picked]
 
 
 def main(argv=None) -> int:
@@ -75,22 +194,37 @@ def main(argv=None) -> int:
     ros = sub.add_parser("roster", help="propose outings from catalog capture times")
     ros.add_argument("--workspace", type=Path, required=True)
     ros.add_argument("--gap-hours", type=float, default=6.0)
-    deck = sub.add_parser("deck", help="write a blind side-by-side tap page")
-    ev = sub.add_parser("evaluate", help="held-out ladder and ranked review queue")
-    for p in (deck, ev):
-        p.add_argument("--experiment", type=Path, nargs="+", required=True)
-        p.add_argument("--roster", type=Path)
+
+    def owner_inputs(p, *, workspace_required=False):
+        p.add_argument("--workspace", type=Path, required=workspace_required,
+                       help="reads catalog reviews, cached embeddings and review files")
         p.add_argument("--ledger", type=Path)
         p.add_argument("--pairs-ledger", type=Path)
-        p.add_argument("--workspace", type=Path, help="catalog with cached frame embeddings")
+        p.add_argument("--roster", type=Path)
         p.add_argument("--seed", type=int, default=0)
-    deck.add_argument("--pairs", type=int, default=130)
-    deck.add_argument("--repeats", type=int, default=20)
+
+    har = sub.add_parser("harvest", help="report every owner label and whether it is used")
+    owner_inputs(har, workspace_required=True)
+    pl = sub.add_parser("plan", help="print a discovery source list that covers your labels")
+    owner_inputs(pl, workspace_required=True)
+    pl.add_argument("--max", type=int, default=12)
+    pl.add_argument("--sport", choices=SPORTS)
+    pl.add_argument("--exclude-experiment", type=Path, nargs="*", default=[])
+    deck = sub.add_parser("deck", help="write a blind review page")
+    ev = sub.add_parser("evaluate", help="held-out ladder and ranked review queue")
+    for p in (deck, ev):
+        owner_inputs(p)
+        p.add_argument("--experiment", type=Path, nargs="+", required=True)
+    deck.add_argument("--format", choices=("grid", "pairs"), default="grid")
+    deck.add_argument("--screens", type=int, default=30, help="grid screens")
+    deck.add_argument("--per-screen", type=int, default=4)
+    deck.add_argument("--pairs", type=int, default=130, help="pair format only")
+    deck.add_argument("--repeats", type=int)
     deck.add_argument("--max-seconds", type=float, default=60.0)
     deck.add_argument("--active", action="store_true",
-                      help="spend half the deck on pairs the current head separates least")
+                      help="pairs format: half the deck from pairs the current head separates least")
     ev.add_argument("--output", type=Path, required=True)
-    imp = sub.add_parser("import-taps")
+    imp = sub.add_parser("import-answers", aliases=["import-taps"])
     imp.add_argument("--deck", type=Path, required=True)
     imp.add_argument("--answers", type=Path, required=True)
     imp.add_argument("--pairs-ledger", type=Path, required=True)
@@ -99,47 +233,73 @@ def main(argv=None) -> int:
         if args.command == "roster":
             print(json.dumps(roster.propose(roster.catalog_rows(args.workspace),
                                             gap_hours=args.gap_hours), indent=2))
-        elif args.command == "import-taps":
+        elif args.command == "harvest":
+            print(json.dumps(harvest(args), indent=2))
+        elif args.command == "plan":
+            if not 1 <= args.max <= 12:
+                raise ValueError("A discovery run takes 1..12 recordings")
+            rows = plan(args)
+            if not rows:
+                raise ValueError("No labelled recordings left to scan")
+            print(json.dumps(rows, indent=2))
+        elif args.command in ("import-answers", "import-taps"):
             before = ledger.file_digest(args.answers)
-            rows = pairs_mod.tap_records(_json(args.deck), _json(args.answers), before)
+            frozen = _json(args.deck)
+            if frozen.get("version") == pairs_mod.GRID_DECK_VERSION:
+                rows = pairs_mod.grid_records(frozen, _json(args.answers), before)
+            else:
+                rows = pairs_mod.tap_records(frozen, _json(args.answers), before)
             result = pairs_mod.append(args.pairs_ledger, rows)
-            print(json.dumps({**result, "selfConsistency": pairs_mod.self_consistency(
-                pairs_mod.load(args.pairs_ledger))}, indent=2))
+            everything = pairs_mod.load(args.pairs_ledger)
+            print(json.dumps({**result, "gridConsistency": pairs_mod.grid_consistency(everything),
+                              "tapConsistency": pairs_mod.self_consistency(everything)}, indent=2))
         elif args.command == "deck":
             if len(args.experiment) != 1:
-                raise ValueError("A deck plays proxies from exactly one experiment directory")
+                raise ValueError("A deck plays clips from exactly one experiment directory")
             state = _load(args)
-            scores = None
-            if args.active:
-                from adventure_intelligence import value_head as head
-                model = head.fit_selecting_l2(state["pairs"], state["items"], variant="full")
-                if model is None:
-                    raise ValueError("--active needs earlier owner pairs to fit a head")
-                scores = {i: head.score(model, item) for i, item in state["items"].items()}
-            built = pairs_mod.build_deck(
-                state["items"], experiment=args.experiment[0].name, pairs=args.pairs,
-                repeats=args.repeats, seed=args.seed, max_seconds=args.max_seconds, scores=scores)
-            stem = args.experiment[0] / f"taps-{pairs_mod.deck_digest(built)[:12]}"
+            name = args.experiment[0].name
+            if args.format == "grid":
+                built = pairs_mod.build_grid(
+                    state["items"], experiment=name, screens=args.screens,
+                    per_screen=args.per_screen, seed=args.seed, max_seconds=args.max_seconds,
+                    repeats=4 if args.repeats is None else args.repeats)
+                page_html = pairs_mod.grid_html(built)
+            else:
+                scores = None
+                if args.active:
+                    from adventure_intelligence import value_head as head
+                    model = head.fit_selecting_l2(state["pairs"], state["items"], variant="full")
+                    if model is None:
+                        raise ValueError("--active needs earlier owner pairs to fit a head")
+                    scores = {i: head.score(model, item) for i, item in state["items"].items()}
+                built = pairs_mod.build_deck(
+                    state["items"], experiment=name, pairs=args.pairs,
+                    repeats=20 if args.repeats is None else args.repeats, seed=args.seed,
+                    max_seconds=args.max_seconds, scores=scores)
+                page_html = pairs_mod.deck_html(built)
+            stem = args.experiment[0] / f"{args.format}-{pairs_mod.deck_digest(built)[:12]}"
             page, frozen = stem.with_suffix(".html"), stem.with_suffix(".deck.json")
             if page.exists() or frozen.exists():
                 raise ValueError(f"This deck already exists: {page.name}")
             frozen.write_text(json.dumps(built, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            page.write_text(pairs_mod.deck_html(built), encoding="utf-8")
-            print(json.dumps({"page": page.name, "deck": frozen.name,
-                              "pairs": len(built["pairs"]), "uniquePairs": built["uniquePairs"],
+            page.write_text(page_html, encoding="utf-8")
+            print(json.dumps({"page": str(page), "deck": str(frozen),
+                              "screensOrPairs": len(built.get("screens", built.get("pairs", []))),
                               "outings": built["outings"],
                               "rosterConfirmed": state["confirmed"]}, indent=2))
         else:
             from adventure_intelligence import value_eval
             if args.output.exists() or args.output.is_symlink():
                 raise ValueError("Output directory exists; each evaluation needs a new one")
-            if not args.ledger and not args.pairs_ledger:
-                raise ValueError("Give --ledger and/or --pairs-ledger; there is nothing to learn from")
             state = _load(args)
+            if not state["pairs"]:
+                raise ValueError("No owner pairs found; run harvest to see which labels exist")
+            answers = state["answers"]
             report = value_eval.evaluate(
-                state["items"], state["pairs"], state["rows"], pool_ids=state["pool_ids"],
+                state["items"], state["pairs"], state["judgments"], pool_ids=state["pool_ids"],
                 roster_confirmed=state["confirmed"], seed=args.seed,
-                self_consistency=pairs_mod.self_consistency(state["taps"]) if state["taps"] else None)
+                self_consistency={"taps": pairs_mod.self_consistency(answers),
+                                  "grid": pairs_mod.grid_consistency(answers)})
             report["inputs"] = {
                 "experiments": {f.name: ledger.file_digest(f / "experiment.json")
                                 for f in args.experiment},
@@ -147,10 +307,14 @@ def main(argv=None) -> int:
                 "pairsLedgerSha256": (ledger.file_digest(args.pairs_ledger)
                                       if args.pairs_ledger and args.pairs_ledger.exists() else None),
                 "rosterSha256": ledger.file_digest(args.roster) if args.roster else None,
+                "catalogSha256": (ledger.file_digest(args.workspace / "catalog.sqlite3")
+                                  if args.workspace and (args.workspace / "catalog.sqlite3").is_file()
+                                  else None),
+                "ownerEvidence": state["collected"]["counts"],
                 "rosterConfirmed": state["confirmed"], "embeddings": state["embeddings"],
                 "seed": args.seed, "sourcesWithEvidence": len(state["sources"]),
                 "sourcesListedInTwoExperiments": state["duplicates"],
-                "ledgerSourcesWithoutEvidence": state["ledgerSourcesWithoutEvidence"],
+                "labelledRecordingsNotInTheseExperiments": state["labelledSourcesWithoutEvidence"],
             }
             queue = value_eval.review_queue(state["items"], state["pairs"], state["pool_ids"])
             args.output.mkdir(parents=True)

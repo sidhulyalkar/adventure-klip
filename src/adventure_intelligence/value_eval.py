@@ -121,7 +121,7 @@ def _bootstrap(per_group_a: dict, per_group_b: dict, *, seed: int, resamples: in
             "interval95": [round(float(np.quantile(means, q)), 4) for q in (0.025, 0.975)]}
 
 
-def evaluate(items: dict[str, dict], pairs: list[dict], ledger_rows: list[dict], *,
+def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *,
              pool_ids: set[str], roster_confirmed: bool, seed: int = 0,
              self_consistency: dict | None = None) -> dict:
     """Leave-one-outing-out comparison of the baseline ladder and the learned head."""
@@ -135,7 +135,7 @@ def evaluate(items: dict[str, dict], pairs: list[dict], ledger_rows: list[dict],
     kept: dict[str, dict[str, list[tuple[int, int]]]] = {}
     pool_sources = {items[i]["sourceSha256"] for i in pool_ids}
     spans_without_pool = 0
-    for r in ledger_rows:
+    for r in judgments:
         if r["decision"] == "keep" and r["selection"] == "owner_marked_span":
             if r["sourceSha256"] in pool_sources:
                 group = next(items[i]["group"] for i in pool_ids
@@ -152,7 +152,8 @@ def evaluate(items: dict[str, dict], pairs: list[dict], ledger_rows: list[dict],
     for variant in head.VARIANTS:
         scores: dict[str, float | None] = {}
         for group in sorted(set(groups) | set(kept)):
-            model = head.fit_selecting_l2([p for p in pairs if p["group"] != group], items,
+            # A pair touching the held-out outing on either side is left out.
+            model = head.fit_selecting_l2([p for p in pairs if group not in p["groups"]], items,
                                           variant=variant)
             for i, item in items.items():
                 if item["group"] == group:
@@ -188,6 +189,32 @@ def evaluate(items: dict[str, dict], pairs: list[dict], ledger_rows: list[dict],
                            "perOuting": {g: _round(v) for g, v in chance.items()}}
         recall[str(budget)] = table
 
+    # Segments the owner judged after a uniform random draw: their keep rate
+    # estimates the outing's, and the share of those keeps a ranker puts in
+    # its budget estimates its recall over the whole outing.
+    sampled: dict[str, dict[str, bool]] = {}
+    for r in judgments:
+        i = item_id(r["sourceSha256"], r["startMs"], r["endMs"])
+        if r["selection"] == "random_segment_sample" and i in pool_ids and r["decision"] in (
+                "keep", "skip"):
+            sampled.setdefault(items[i]["group"], {})[i] = r["decision"] == "keep"
+    sampled_recall = {}
+    for budget in BUDGETS:
+        table = {}
+        for name, scores in rankers.items():
+            per_group = {}
+            for g, judged in sorted(sampled.items()):
+                keeps = {i for i, keep in judged.items() if keep}
+                if keeps:
+                    chosen = {s["itemId"] for s in _select(pools[g], scores, budget)}
+                    per_group[g] = len(keeps & chosen) / len(keeps)
+            table[name] = {"macro": _round(_macro(per_group)),
+                           "perOuting": {g: _round(v) for g, v in per_group.items()}}
+        # A random ranking keeps about `budget` of any outing's keeps.
+        table["chance"] = {"macro": budget, "perOuting": {g: budget for g in sampled}}
+        sampled_recall[str(budget)] = table
+    keep_rate = {g: _round(sum(v.values()) / len(v)) for g, v in sorted(sampled.items())}
+
     singles = [n for n in rankers if not n.startswith("head_")]
     best = max(singles, key=lambda n: (accuracy[n]["macro"] or 0.0, n)) if groups else None
     deltas = {}
@@ -208,11 +235,14 @@ def evaluate(items: dict[str, dict], pairs: list[dict], ledger_rows: list[dict],
             "pairsByGoal": _count(p["goal"] for p in scored),
             "trainOnlyPairs": sum(not p["evalEligible"] for p in pairs),
             "ownerKeptSpansInPool": sum(len(v) for g in kept.values() for v in g.values()),
+            "randomlySampledJudgedSegments": sum(len(v) for v in sampled.values()),
             "ownerKeptSpansOutsideAnyExperiment": spans_without_pool,
             "poolSegments": len(pool_ids),
             "unassignedGroups": sum(g.startswith("source:") for g in groups),
         },
         "pairAccuracy": accuracy, "recallAtBudget": recall,
+        "sampledKeepRecallAtBudget": sampled_recall,
+        "sampledKeepRate": keep_rate,
         "bestBaseline": best, "pairedDeltas": deltas,
         "ownerSelfConsistency": self_consistency,
         "gate": _gate(groups, scored, best, deltas, roster_confirmed),
@@ -253,7 +283,7 @@ def review_queue(items: dict[str, dict], pairs: list[dict], pool_ids: set[str],
     model = head.fit_selecting_l2(pairs, items, variant=variant)
     if model is None:
         return {"version": VERSION, "model": None, "outings": {}}
-    trained_on = {p["group"] for p in head.usable(pairs, items)}
+    trained_on = {g for p in head.usable(pairs, items) for g in p["groups"]}
     outings: dict[str, list[dict]] = {}
     for i in sorted(pool_ids):
         item = items[i]
@@ -280,7 +310,7 @@ def _count(values) -> dict[str, int]:
     return dict(sorted(out.items()))
 
 
-def ledger_intervals(rows: list[dict]) -> list[tuple[str, int, int]]:
+def judgment_intervals(rows: list[dict]) -> list[tuple[str, int, int]]:
     return [(r["sourceSha256"], r["startMs"], r["endMs"]) for r in rows]
 
 
@@ -289,5 +319,10 @@ def pair_intervals(rows: list[dict]) -> list[tuple[str, int, int]]:
             for r in rows for s in (r["left"], r["right"])]
 
 
+def grid_intervals(rows: list[dict]) -> list[tuple[str, int, int]]:
+    return [(c["sourceSha256"], c["startMs"], c["endMs"])
+            for r in rows if "clips" in r for c in r["clips"]]
+
+
 __all__ = ["evaluate", "review_queue", "baseline_scores", "pair_accuracy",
-           "ledger_intervals", "pair_intervals", "item_id"]
+           "judgment_intervals", "pair_intervals", "grid_intervals", "item_id"]

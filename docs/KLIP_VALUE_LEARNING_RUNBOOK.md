@@ -1,97 +1,197 @@
 # Learning what Klip should keep: runbook
 
 **Evidence level:** implemented; synthetic CI passed (planted-signal recovery, held-out
-isolation, gate behaviour); tap page driven end to end in headless Chrome with real
-clips. **Not yet run on owner footage. No claim about what the owner values exists yet.**
+isolation, gate behaviour, every owner-label reader). Both review pages driven end to end
+in headless Chrome with real clips. **Not yet run on owner footage. No claim about what
+the owner values exists yet.**
 
 ## The question this answers
 
 Given one outing's footage and a review budget, does a ranking put the moments the owner
-would keep near the top, on outings it has never seen? Everything here serves that one
-question. Category labels, judge facts and embeddings are inputs to it, never the answer.
+would keep near the top, on outings it has never seen? Category labels, judge facts and
+embeddings are inputs to that question, never the answer.
 
-## Pieces
+## Every owner label is read
 
-| Step | Module | What it produces |
+`owner_evidence.collect` gathers every judgment once, in its latest form:
+
+| Where it lives | What is read | How it is used |
 |---|---|---|
-| Outings | `outing_roster.py` | Proposed outings from capture-time gaps; provisional until you confirm |
-| Evidence | `discovery_experiment.py` (now with an `audio` stage and proxies with sound) | Per-recording motion, loudness, segments, proxies, judge facts |
-| Features | `value_features.py` | Per interval: motion level and peaks, audio surprise, novelty within the outing and against the archive, judge facts, mean embedding. Missing stays missing |
-| Pairs | `value_pairs.py` | "Keep A over B" from the evidence ledger (same outing, same goal, non-overlapping) and from taps |
-| Taps | `value_pairs.build_deck` / `deck_html` | A blind page: two clips from one outing, pick one. 130 pairs plus 20 swapped repeats |
-| Head | `value_head.py` | Ridge Bradley–Terry on evidence differences. Readable weights. Scaling, fact list and embedding PCA fitted on training outings only |
-| Evaluation | `value_eval.py` | Leave-one-outing-out pair accuracy and keep-recall at 10% and 25% of footage, for chance, each single measurement, a fusion, and two head variants; outing-bootstrap intervals; a gate |
-| CLI | `scripts/klip_value_experiment.py` | `roster`, `deck`, `import-taps`, `evaluate` |
+| Evidence ledger (marine v1/v2, calibration, ski-run imports) | keep/skip/unsure, owner event spans, 1–5 ratings | Keep-over-Skip pairs; owner spans measure recall; ratings order Keeps within one review session (half weight, training only) |
+| Catalog `example_revisions` (Studio reviews) | latest revision per example; keep/skip/neutral | As above. An interval you drew or whose edges you moved counts as an owner-marked span |
+| Catalog `pairwise_revisions` (Studio A/B) | latest choice per comparison | Direct pairs |
+| Catalog `benchmark_review_revisions` | latest keep/skip per review | Keep-over-Skip pairs |
+| `reports/**` blind pair reviews | choice, matched to the frozen manifest by SHA-256 | Direct pairs |
+| `reports/**` curated highlight manifests | each observer's keep/skip and ratings | Pairs and rating order |
+| Tap and grid ledger | your answers on the new pages | Pairs, random-sample keep labels, self-consistency |
 
-## How to run it (about 45 minutes of your time in total)
+Rules:
+- A later revision replaces the one it corrects.
+- The same judgment reached by two routes counts once.
+- A keep and a skip of the same interval under the same goal are set aside and listed for
+  you to resolve.
+- Pairs that span two outings train only when neither outing is held out, and never score.
+- `harvest` lists every review file it recognises but does not use, with the reason:
+  - marine, calibration or ski-run exports not yet imported to the ledger;
+  - blind-pair reviews whose manifest is missing;
+  - formats not read yet (moment annotations v2, reel timed reactions).
 
-Everything below reads derived files only, except step 2, which is the bounded discovery
-run that already exists and needs the SSD.
+## Which review interface, and why the grid
 
-1. **Confirm outings (5 min).**
-   `klip_value_experiment.py roster --workspace "$WS" > roster.json`. Fix merges and
-   splits, then set `"status": "owner_confirmed"`. Every held-out number depends on this.
+The interfaces you have answer different questions:
 
-2. **Get evidence for 8–12 recordings from at least 5 outings.** Pick recordings that
-   already have owner Keeps where possible. Use `klip_discovery_experiment.py run` with
-   `--stages verify motion audio segments proxies` first; add `judge` later. No model time
-   is needed for the first evaluation.
+- **Marine/scene review and curation review** (one clip, keep/skip, ratings, a written
+  reason): the richest per clip, and the only place you explain *why*. Also the slowest,
+  and every clip was chosen by a pipeline, so its keep rate says nothing about the rest of
+  the footage.
+- **Blind A/B pairs and Studio compare**: fast, and good at ordering, but one bit per
+  answer, no sense of whether *either* clip is worth keeping, and usually across outings.
+- **Ski-run boundary annotation**: exact edges. Use it for trimming, not for ranking.
 
-3. **Import existing judgments.** `klip_evidence_ledger.py import ...` for each export,
-   as before. Only owner-marked spans count for recall; pipeline windows count for pairs.
+**The grid, now the default `deck`, answers the ranking question most efficiently.** Each
+screen shows four segments from one outing, drawn uniformly at random from the whole
+timeline. You tick the ones you'd keep, star the best, and press Enter. One screen gives:
 
-4. **Tap (25 min).** `klip_value_experiment.py deck --experiment <dir> --roster roster.json`
-   writes `taps-<id>.html` into the experiment folder. Open it, answer with the arrow keys,
-   press S to hear one clip, export. Then
-   `klip_value_experiment.py import-taps --deck ... --answers ... --pairs-ledger owner-pairs.jsonl`.
-   The import prints how often you gave the same answer to repeated pairs. That number is
-   the ceiling: no model can agree with you more often than you agree with yourself.
+- four keep/skip labels;
+- up to six orderings (every ticked clip over every unticked one, the star over the
+  other ticks);
+- because the draw is uniform, an unbiased estimate of your keep rate for that outing,
+  and of each ranker's recall on the whole outing (`sampledKeepRecallAtBudget`). Before
+  this, recall needed owner-marked spans, which you have few of.
 
-5. **Evaluate.** `klip_value_experiment.py evaluate --experiment <dir> --roster roster.json
-   --ledger owner-evidence.jsonl --pairs-ledger owner-pairs.jsonl --workspace "$WS"
-   --output "$WS/reports/value-001"`. Read `gate` first, then `pairAccuracy`, then
-   `recallAtBudget`. `queue.json` is a ranked list with the evidence behind each score;
-   it is in-sample and is not a result.
+30 screens plus 4 shuffled repeats take about 20–25 minutes and yield about 120 labels and
+up to 180 orderings. The same time in pairs yields about 150 orderings and no labels.
+Repeats measure how consistently you answer: per clip, and for the star.
+
+Keep the written-reason pages for one job: after an evaluation, review the dozen clips the
+model was most confidently wrong about and write why. Those notes say which evidence to
+add next.
+
+## Commands for your MacBook Pro
+
+Update the code (once):
+
+```bash
+cd ~/path/to/adventure-klip            # your clone
+git fetch origin
+git switch value/within-outing-preference-v1     # or: git switch -c value/within-outing-preference-v1 --track origin/value/within-outing-preference-v1
+source .venv/bin/activate              # whichever environment you already use
+python -m pip install -e '.[vision,images]'
+python -m pytest -q tests/test_value_learning.py tests/test_owner_evidence.py
+```
+
+Set paths for the session:
+
+```bash
+export WS=~/path/to/klip-workspace     # holds catalog.sqlite3 and reports/
+export SSD=/Volumes/YourSSD            # mount the footage drive first
+export LEDGERS=$WS/reports/owner-ledgers && mkdir -p "$LEDGERS"
+```
+
+1. Outings (about 5 minutes). Open `roster.json`, fix merges and splits, and set
+   `"status": "owner_confirmed"`.
+
+   ```bash
+   python scripts/klip_value_experiment.py roster --workspace "$WS" > "$LEDGERS/roster.json"
+   ```
+
+2. Import file exports into the ledger, then see what's used. `harvest` lists any export
+   still missing from the ledger. Import each with `klip_evidence_ledger.py import` as
+   before, and repeat until `notConsumed` holds only formats marked "not yet read".
+
+   ```bash
+   python scripts/klip_value_experiment.py harvest --workspace "$WS" \
+       --ledger "$LEDGERS/owner-evidence.jsonl" --roster "$LEDGERS/roster.json"
+   ```
+
+3. Pick recordings that cover your labels. This takes the most-labelled recording of
+   each outing first. Run discovery without models, in two steps:
+
+   ```bash
+   python scripts/klip_value_experiment.py plan --workspace "$WS" \
+       --ledger "$LEDGERS/owner-evidence.jsonl" --roster "$LEDGERS/roster.json" \
+       --max 12 > "$LEDGERS/sources-001.json"
+
+   python scripts/klip_discovery_experiment.py run --sources "$LEDGERS/sources-001.json" \
+       --workspace "$WS" --trusted-source-root "$SSD" --allow-mounted-ssd \
+       --output "$WS/reports/discovery-001" --stages verify motion audio segments
+   ```
+
+   Check the timings it prints, then rerun the same command with
+   `--stages verify motion audio segments proxies` to cut review clips. It resumes; nothing
+   is decoded twice.
+
+4. Review (about 20–25 minutes). Then open the printed `grid-….html` in Chrome or Safari.
+
+   ```bash
+   python scripts/klip_value_experiment.py deck --experiment "$WS/reports/discovery-001" \
+       --workspace "$WS" --roster "$LEDGERS/roster.json"
+   ```
+
+   If the clips don't play from a file, serve the folder locally and open the page from
+   there:
+
+   ```bash
+   python -m http.server 8765 --bind 127.0.0.1 --directory "$WS/reports/discovery-001"
+   # open http://127.0.0.1:8765/grid-<id>.html
+   ```
+
+   Press Export when done; the file lands in `~/Downloads`. Import it:
+
+   ```bash
+   python scripts/klip_value_experiment.py import-answers \
+       --deck "$WS/reports/discovery-001/grid-<id>.deck.json" \
+       --answers ~/Downloads/klip-grid-answers-<id>.json \
+       --pairs-ledger "$LEDGERS/owner-pairs.jsonl"
+   ```
+
+5. Evaluate. Read in this order:
+   - `gate`;
+   - `ownerSelfConsistency`;
+   - `pairAccuracy`;
+   - `sampledKeepRecallAtBudget`.
+
+   `queue.json` is in-sample, a worklist rather than a result.
+
+   ```bash
+   python scripts/klip_value_experiment.py evaluate --experiment "$WS/reports/discovery-001" \
+       --workspace "$WS" --ledger "$LEDGERS/owner-evidence.jsonl" \
+       --pairs-ledger "$LEDGERS/owner-pairs.jsonl" --roster "$LEDGERS/roster.json" \
+       --output "$WS/reports/value-001"
+   ```
+
+For a second batch of recordings, run `plan ... --exclude-experiment
+"$WS/reports/discovery-001"`. Then pass both experiment folders to `evaluate
+--experiment`.
 
 ## How to read the gate
 
 - `pilot_no_claim`: fewer than 5 outings or 100 scored pairs, or the roster is
-  unconfirmed. Read the numbers as a smoke test only.
-- `head_not_shown_better`: rank with the best single measurement and spend effort on
+  unconfirmed. Treat the numbers as a smoke test.
+- `head_not_shown_better`: rank with the best single measurement. Spend effort on
   evidence or labels, not models.
 - `head_beats_best_baseline`: the head's lead over the best baseline has a 95% outing
   bootstrap interval above zero. The best baseline is picked on the same data, which
   favours it, so this is a fair win.
 
-## How to run the loop after the first evaluation
+## The loop after the first evaluation
 
-Each round costs about 25 minutes of tapping and decides the next piece of work:
-
-1. **If audio or novelty alone is close to your self-consistency,** the problem is mostly
-   solved for that sport; spend time on boundaries and assembly instead.
-2. **If everything is near chance,** the evidence does not see what you value. Write a
-   one-line reason on a few disagreements and add the measurement they point to (for
-   example, a judge question). Do not add model capacity.
-3. **If the head wins,** run `deck --active`. Half the next deck is pairs the head
-   cannot separate. Those train the head but never score it, so accuracy stays honest.
-4. **Only add the frozen video encoder or public highlight priors** (V-JEPA 2, Mr. HiSum)
-   as new evidence columns, compared through this same report. K-TIDE returns only if
-   a result here shows that temporal context is the missing piece.
-
-## Rules this keeps
-
-- Held-out outing: no pair, scale, fact name or embedding axis from it reaches its model.
-  A test checks this by instrumenting the fit.
-- Unreviewed footage is unknown, never a loser in a pair.
-- Repeated taps merge into their original; a contradictory repeat becomes a tie.
-- Uncertainty-sampled taps train but never score.
-- Every evaluation writes to a new directory and records the SHA-256 of each input.
+1. **A single measurement is close to your self-consistency:** ranking is mostly solved
+   for that sport; move to boundaries and reel assembly.
+2. **Everything is near chance:** the evidence does not see what you value. Write reasons
+   on the dozen confident misses and add the measurement they point to (often a judge
+   question). Do not add model capacity.
+3. **The head wins:** add another grid round on new recordings, or `deck --format pairs
+   --active` to spend a round on pairs the head cannot separate. Those train, never score.
+4. **Larger pieces come in only as new evidence columns compared through this report:**
+   a frozen video encoder, public highlight priors, K-TIDE if temporal context is shown to
+   be the gap.
 
 ## Known limits
 
-- Embedding novelty needs cached SigLIP2 frames for these recordings; without them those
-  columns are empty and the `full` head reduces to signals plus facts.
-- Pairs from different goals (marine, ski run, taps) are pooled for training and reported
-  by goal; the head does not yet condition on goal.
-- Segments longer than 60 s are left out of decks; long scenes need a different review.
-- Tap proxies are re-encoded at 960 px, which may hide detail the original shows.
+- Moment annotations v2 and reel timed reactions are found and reported, not yet read.
+- Goals are pooled for training and reported separately; the head does not condition on
+  goal.
+- Grid and tap decks skip segments longer than 60 s.
+- Review clips are 960 px re-encodes and may hide detail the original shows.
+- Embedding columns need cached SigLIP2 frames for the scanned recordings.

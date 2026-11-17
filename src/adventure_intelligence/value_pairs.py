@@ -37,6 +37,9 @@ def _side_id(side: dict) -> str:
 def from_ledger(records: list[dict], group_of, *, cap: int = 400, seed: int = 0) -> list[dict]:
     """Every Keep over every Skip within one outing and one goal.
 
+    `records` are evidence-ledger rows or owner_evidence judgments; both carry
+    sourceSha256, startMs, endMs, decision, goal and evidenceId.
+
     Intervals that overlap in the same recording are not paired: skipping a
     wide window does not rank it below a moment the owner kept inside it.
     """
@@ -57,8 +60,8 @@ def from_ledger(records: list[dict], group_of, *, cap: int = 400, seed: int = 0)
                 right = _side(skip["sourceSha256"], skip["startMs"], skip["endMs"])
                 made.setdefault((_side_id(left), _side_id(right)), {
                     "left": left, "right": right, "outcome": 1.0,
-                    "tier": "owner_keep_over_skip", "group": group, "goal": goal,
-                    "evalEligible": True,
+                    "tier": "owner_keep_over_skip", "group": group, "groups": [group],
+                    "goal": goal, "evalEligible": True,
                     "evidenceIds": [keep["evidenceId"], skip["evidenceId"]]})
         rows = [made[k] for k in sorted(made)]
         if len(rows) > cap:
@@ -80,7 +83,8 @@ def from_taps(rows: list[dict], group_of) -> list[dict]:
     """
     latest = {}
     for row in rows:
-        latest[(row["deckSha256"], row["index"])] = row
+        if row.get("version", VERSION) == VERSION:
+            latest[(row["deckSha256"], row["index"])] = row
     outcome = {k: _OUTCOME.get(r["choice"]) for k, r in latest.items()}
     for (deck, _), row in latest.items():
         origin = (deck, row["repeatOf"])
@@ -102,7 +106,8 @@ def from_taps(rows: list[dict], group_of) -> list[dict]:
         out.append({
             "left": row["left"], "right": row["right"],
             "outcome": outcome[key],
-            "tier": "owner_tap", "group": group, "goal": TAP_GOAL, "weight": 1.0,
+            "tier": "owner_tap", "group": group, "groups": [group], "goal": TAP_GOAL,
+            "weight": 1.0,
             # Pairs picked because a model was unsure are harder than average
             # and would understate accuracy, so they train but are not scored.
             "evalEligible": row["sampling"] == "random",
@@ -117,7 +122,8 @@ def self_consistency(rows: list[dict]) -> dict:
     """
     by_deck: dict[tuple, dict] = {}
     for row in rows:
-        by_deck[(row["deckSha256"], row["index"])] = row
+        if row.get("version", VERSION) == VERSION:
+            by_deck[(row["deckSha256"], row["index"])] = row
     flip = {"left": "right", "right": "left", "tie": "tie", "cannot_tell": "cannot_tell"}
     repeats = same = decisive = decisive_same = 0
     for (deck, _), row in by_deck.items():
@@ -134,6 +140,270 @@ def self_consistency(rows: list[dict]) -> dict:
             "sameAnswer": round(same / repeats, 4) if repeats else None,
             "decisiveRepeats": decisive,
             "decisiveSameAnswer": round(decisive_same / decisive, 4) if decisive else None}
+
+
+def from_direct(pairs: list[dict], group_of) -> list[dict]:
+    """Owner A/B choices made elsewhere (Studio, blind pair study).
+
+    A pair from two outings still teaches preference, so it trains whenever
+    neither of its outings is held out. It never scores a model, because the
+    evaluation question is a choice within one outing.
+    """
+    out = []
+    for p in pairs:
+        groups = sorted({group_of(p["left"]["sourceSha256"]),
+                         group_of(p["right"]["sourceSha256"])})
+        same = len(groups) == 1
+        out.append({"left": p["left"], "right": p["right"], "outcome": p["outcome"],
+                    "tier": "owner_" + p["origin"].replace("-", "_"),
+                    "group": groups[0] if same else "cross:" + "|".join(groups),
+                    "groups": groups, "goal": p["goal"], "weight": 1.0,
+                    "evalEligible": same, "evidenceIds": [p["evidenceId"]]})
+    return out
+
+
+def from_ratings(judgments: list[dict], group_of, *, min_gap: float = 1.0,
+                 cap: int = 200, seed: int = 0) -> list[dict]:
+    """Two Keeps rated in the same review session: the clearly better-rated one wins.
+
+    Ratings describe quality aspects, not the keep decision itself, so these
+    pairs are weaker: half weight, training only.
+    """
+    sessions: dict[tuple, list[dict]] = {}
+    for j in judgments:
+        if j["decision"] == "keep" and len(j.get("ratings") or {}) >= 2:
+            key = (group_of(j["sourceSha256"]), j["goal"], j["session"])
+            sessions.setdefault(key, []).append(j)
+    out = []
+    for (group, goal, _), rows in sorted(sessions.items()):
+        made = []
+        for i, a in enumerate(rows):
+            for b in rows[i + 1:]:
+                shared = sorted(set(a["ratings"]) & set(b["ratings"]))
+                if len(shared) < 2:
+                    continue
+                gap = (sum(a["ratings"][k] for k in shared)
+                       - sum(b["ratings"][k] for k in shared)) / len(shared)
+                if abs(gap) < min_gap:
+                    continue
+                win, lose = (a, b) if gap > 0 else (b, a)
+                made.append({
+                    "left": _side(win["sourceSha256"], win["startMs"], win["endMs"]),
+                    "right": _side(lose["sourceSha256"], lose["startMs"], lose["endMs"]),
+                    "outcome": 1.0, "tier": "owner_rating_order", "group": group,
+                    "groups": [group], "goal": goal, "weight": 0.5, "evalEligible": False,
+                    "evidenceIds": [win["evidenceId"], lose["evidenceId"]]})
+        if len(made) > cap:
+            made = random.Random(f"{seed}:{group}:{goal}").sample(made, cap)
+        out += made
+    return out
+
+
+# ---- grid: four clips from one outing --------------------------------------------
+
+GRID_DECK_VERSION = "klip-grid-deck-v1"
+GRID_ANSWERS_VERSION = "klip-grid-answers-v1"
+GRID_VERSION = "klip-owner-grid-ledger-v1"
+GRID_GOAL = "outing_highlight"
+
+
+def build_grid(items: dict[str, dict], *, experiment: str, screens: int = 30,
+               per_screen: int = 4, repeats: int = 4, seed: int = 0,
+               max_seconds: float = 60.0) -> dict:
+    """Screens of segments drawn uniformly at random from one outing and sport.
+
+    Uniform draws over every segment of the timeline (proposals, controls and
+    unreviewed alike) make the keep rate and the recall measured from these
+    answers unbiased estimates for the whole outing.
+    """
+    if not (1 <= screens <= 200 and 2 <= per_screen <= 6 and 0 <= repeats <= screens):
+        raise ValueError("Grid needs 1..200 screens of 2..6 clips")
+    rng = random.Random(f"{GRID_DECK_VERSION}:{seed}:{experiment}")
+    pools: dict[tuple, list[dict]] = {}
+    for item in items.values():
+        if item["hasProxy"] and item["endMs"] - item["startMs"] <= max_seconds * 1000:
+            pools.setdefault((item["group"], item["sport"]), []).append(item)
+    pools = {k: sorted(v, key=lambda i: i["itemId"]) for k, v in sorted(pools.items())
+             if len(v) >= per_screen}
+    if not pools:
+        raise ValueError(f"No outing has {per_screen} playable segments to compare")
+    queues = {}
+    for key, pool in pools.items():
+        order = list(pool)
+        rng.shuffle(order)
+        queues[key] = order
+    built, keys = [], list(pools)
+    while len(built) < screens:
+        progressed = False
+        for key in keys:
+            if len(built) >= screens:
+                break
+            queue = queues[key]
+            if len(queue) < per_screen:  # this outing is used up; reshuffle it
+                queue[:] = list(pools[key])
+                rng.shuffle(queue)
+            clips = [queue.pop() for _ in range(per_screen)]
+            built.append({"group": key[0], "sport": key[1], "clips": clips})
+            progressed = True
+        if not progressed:
+            break
+    entries = [dict(e, repeatOfEntry=None) for e in built]
+    for origin in rng.sample(list(entries), min(repeats, len(entries))):
+        at = next(i for i, e in enumerate(entries) if e is origin)
+        clips = list(origin["clips"])
+        while len(clips) > 1 and clips == origin["clips"]:
+            rng.shuffle(clips)
+        position = rng.randint(min(len(entries), at + 6), len(entries))
+        entries.insert(position, {**origin, "clips": clips, "repeatOfEntry": origin})
+    index_of = {id(e): i for i, e in enumerate(entries)}
+    return {"version": GRID_DECK_VERSION, "experiment": experiment, "seed": seed,
+            "goal": GRID_GOAL,
+            "question": "Tick every clip you would keep from this outing. Star the best one.",
+            "screens": [{
+                "index": i, "group": e["group"], "sport": e["sport"],
+                "clips": [_side(c["sourceSha256"], c["startMs"], c["endMs"]) for c in e["clips"]],
+                "roles": [c["role"] for c in e["clips"]], "sampling": "random",
+                "repeatOf": index_of[id(e["repeatOfEntry"])] if e["repeatOfEntry"] else None,
+            } for i, e in enumerate(entries)],
+            "outings": len(pools)}
+
+
+def grid_records(deck: dict, answers: dict, export_digest: str) -> list[dict]:
+    """Validate an exported grid answer file against its deck; one row per screen."""
+    digest = deck_digest(deck)
+    if (not isinstance(answers, dict) or answers.get("version") != GRID_ANSWERS_VERSION
+            or answers.get("deckSha256") != digest or not isinstance(answers.get("answers"), list)):
+        raise ValueError("Answers do not belong to this deck")
+    out, seen = [], set()
+    for a in answers["answers"]:
+        index = a.get("index") if isinstance(a, dict) else None
+        if type(index) is not int or not 0 <= index < len(deck["screens"]) or index in seen:
+            raise ValueError("Invalid or duplicate grid answer")
+        seen.add(index)
+        screen = deck["screens"][index]
+        n = len(screen["clips"])
+        skipped = a.get("cannotJudge") is True
+        keep, best = a.get("keep"), a.get("best")
+        if (not isinstance(keep, list) or any(type(k) is not int or not 0 <= k < n for k in keep)
+                or len(set(keep)) != len(keep)
+                or (best is not None and (type(best) is not int or best not in keep))):
+            raise ValueError("Grid answer must tick clip positions and star a ticked clip")
+        if skipped:
+            keep, best = [], None
+        body = {"version": GRID_VERSION, "deckSha256": digest, "index": index,
+                "clips": screen["clips"], "roles": screen["roles"],
+                "keep": sorted(keep), "best": best, "cannotJudge": skipped,
+                "sampling": screen["sampling"], "repeatOf": screen["repeatOf"],
+                "goal": deck["goal"], "reviewer": "owner", "exportSha256": export_digest}
+        body["pairEvidenceId"] = sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
+        out.append(body)
+    return out
+
+
+def _grid_screens(rows: list[dict]) -> dict[tuple, dict]:
+    latest = {}
+    for row in rows:
+        if row.get("version") == GRID_VERSION:
+            latest[(row["deckSha256"], row["index"])] = row
+    return latest
+
+
+def grid_judgments(rows: list[dict]) -> list[dict]:
+    """Keep/skip for each clip shown. A clip answered both ways on a repeat is dropped."""
+    votes: dict[str, dict] = {}
+    for row in _grid_screens(rows).values():
+        if row["cannotJudge"]:
+            continue
+        for k, clip in enumerate(row["clips"]):
+            key = _side_id(clip)
+            entry = votes.setdefault(key, {"clip": clip, "decisions": set(), "ids": [],
+                                           "sampling": row["sampling"]})
+            entry["decisions"].add("keep" if k in row["keep"] else "skip")
+            entry["ids"].append(f'{row["pairEvidenceId"]}:{k}')
+    out = []
+    for _, entry in sorted(votes.items()):
+        if len(entry["decisions"]) != 1:
+            continue
+        clip = entry["clip"]
+        out.append({"sourceSha256": clip["sourceSha256"], "startMs": clip["startMs"],
+                    "endMs": clip["endMs"], "decision": next(iter(entry["decisions"])),
+                    "selection": "random_segment_sample", "goal": GRID_GOAL,
+                    "origin": "grid", "session": "grid", "ratings": {},
+                    "evidenceId": sha256("|".join(sorted(entry["ids"])).encode()).hexdigest()[:32]})
+    return out
+
+
+def from_grid(rows: list[dict], group_of) -> list[dict]:
+    """Within one screen: each ticked clip over each unticked one; the star over other ticks.
+
+    One screen of four can give up to six orderings and four keep/skip labels.
+    A repeat screen adds no pairs of its own; where it contradicts the
+    original, that screen's star pairs are dropped and contradicted clips are
+    left out of the keep/skip pairs.
+    """
+    screens = _grid_screens(rows)
+    contradicted, bad_star = set(), set()
+    for (deck, _), row in screens.items():
+        origin = screens.get((deck, row["repeatOf"])) if row["repeatOf"] is not None else None
+        if origin is None or origin["cannotJudge"] or row["cannotJudge"]:
+            continue
+        first = {_side_id(c): k in origin["keep"] for k, c in enumerate(origin["clips"])}
+        for k, c in enumerate(row["clips"]):
+            if first.get(_side_id(c)) != (k in row["keep"]):
+                contradicted.add(_side_id(c))
+        a = _side_id(origin["clips"][origin["best"]]) if origin["best"] is not None else None
+        b = _side_id(row["clips"][row["best"]]) if row["best"] is not None else None
+        if a != b:
+            bad_star.add((deck, row["repeatOf"]))
+    out, seen = [], set()
+    for (deck, index), row in sorted(screens.items()):
+        if row["cannotJudge"] or row["repeatOf"] is not None:
+            continue
+        group = group_of(row["clips"][0]["sourceSha256"])
+        if any(group_of(c["sourceSha256"]) != group for c in row["clips"]):
+            continue
+        clips = [(k, c) for k, c in enumerate(row["clips"]) if _side_id(c) not in contradicted]
+        kept = [c for k, c in clips if k in row["keep"]]
+        dropped = [c for k, c in clips if k not in row["keep"]]
+        made = [(w, lose, "owner_grid_keep") for w in kept for lose in dropped]
+        if row["best"] is not None and (deck, index) not in bad_star:
+            star = row["clips"][row["best"]]
+            made += [(star, other, "owner_grid_best") for other in kept
+                     if _side_id(other) != _side_id(star)]
+        for win, lose, tier in made:
+            key = (_side_id(win), _side_id(lose))
+            if key in seen or _side_id(win) == _side_id(lose):
+                continue
+            seen.add(key)
+            out.append({"left": win, "right": lose, "outcome": 1.0, "tier": tier,
+                        "group": group, "groups": [group], "goal": GRID_GOAL, "weight": 1.0,
+                        "evalEligible": row["sampling"] == "random",
+                        "evidenceIds": [row["pairEvidenceId"]]})
+    return out
+
+
+def grid_consistency(rows: list[dict]) -> dict:
+    """Agreement between a screen and its shuffled repeat: per clip keep, and the star."""
+    screens = _grid_screens(rows)
+    clips = same = stars = same_star = 0
+    for (deck, _), row in screens.items():
+        origin = screens.get((deck, row["repeatOf"])) if row["repeatOf"] is not None else None
+        if origin is None or origin["cannotJudge"] or row["cannotJudge"]:
+            continue
+        first = {_side_id(c): k in origin["keep"] for k, c in enumerate(origin["clips"])}
+        for k, c in enumerate(row["clips"]):
+            clips += 1
+            same += first[_side_id(c)] == (k in row["keep"])
+        if origin["best"] is not None or row["best"] is not None:
+            stars += 1
+            same_star += (origin["best"] is not None and row["best"] is not None
+                          and _side_id(origin["clips"][origin["best"]])
+                          == _side_id(row["clips"][row["best"]]))
+    return {"repeatedClips": clips,
+            "sameKeepDecision": round(same / clips, 4) if clips else None,
+            "repeatedStars": stars,
+            "sameStar": round(same_star / stars, 4) if stars else None}
 
 
 # ---- tap deck -----------------------------------------------------------------
@@ -260,7 +530,7 @@ def load(path: Path) -> list[dict]:
     if not path.exists():
         return []
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-    if any(r.get("version") != VERSION for r in rows):
+    if any(r.get("version") not in (VERSION, GRID_VERSION) for r in rows):
         raise ValueError("Pair ledger contains records from an unknown version")
     return rows
 
@@ -379,6 +649,129 @@ el('export').onclick=()=>{
   link.download='klip-tap-answers-'+deck.deckSha256.slice(0,12)+'.json';
   link.click();URL.revokeObjectURL(link.href);exported=true;
   el('status').textContent='Exported '+answers.length+' answers.';
+};
+window.addEventListener('beforeunload',e=>{if(!exported){e.preventDefault();e.returnValue='';}});
+show();
+</script></body></html>
+"""
+
+
+def grid_html(deck: dict) -> str:
+    """Self-contained grid page. Hides roles, sampling and source identities."""
+    public = {"deckSha256": deck_digest(deck), "question": deck["question"],
+              "screens": [{"index": s["index"], "clips": [_proxy(c) for c in s["clips"]]}
+                          for s in deck["screens"]]}
+    data = json.dumps(public, separators=(",", ":")).replace("<", "\\u003c")
+    return (_GRID_PAGE.replace("__DECK__", data)
+            .replace("__ANSWERS_VERSION__", GRID_ANSWERS_VERSION))
+
+
+_GRID_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Klip grid review</title>
+<style>
+body{font:15px/1.4 system-ui,sans-serif;margin:0;background:#14171a;color:#e8e8e8}
+main{max-width:1500px;margin:0 auto;padding:12px 16px}
+h1{font-size:18px;margin:4px 0} .muted{color:#9aa4ad;margin:2px 0 10px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.tile{position:relative;border:4px solid transparent;border-radius:8px;cursor:pointer;background:#000}
+.tile.keep{border-color:#3ecf6e} .tile.best{border-color:#ffc83d}
+.tile video{width:100%;display:block;border-radius:4px;aspect-ratio:16/9;background:#000;
+  max-height:calc((100vh - 190px) / 2);object-fit:contain}
+.mark:empty{display:none}
+.badge{position:absolute;top:6px;left:8px;background:#000a;padding:2px 8px;border-radius:4px;font-weight:600}
+.mark{position:absolute;top:6px;right:8px;background:#000a;padding:2px 8px;border-radius:4px}
+.tile.heard .badge::after{content:" \\1F50A"}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;align-items:center}
+button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid #556;background:#232a31;color:inherit;cursor:pointer}
+button.primary{background:#2c5d3d;border-color:#3ecf6e}
+button:focus-visible,.tile:focus-visible{outline:3px solid #7fb4ff}
+progress{width:200px}
+</style></head><body><main>
+<h1 id="question"></h1>
+<p class="muted">1-4 or click: keep / not keep &middot; Shift+1-4 or double-click: best &middot;
+Enter: next (nothing ticked = none worth keeping) &middot; X: can't judge &middot; U: back &middot;
+S: sound &middot; F: speed. Answers stay in this browser until you export them.</p>
+<div class="grid" id="grid"></div>
+<div class="bar">
+<button id="next" class="primary">Next (Enter)</button><button id="cannot">Can't judge (X)</button>
+<button id="undo">Back (U)</button><button id="sound" aria-pressed="false">Sound: off</button>
+<button id="speed">Speed 1x</button><progress id="progress" value="0" max="1"></progress>
+<span id="status" role="status" aria-live="polite"></span>
+<button id="export">Export answers</button>
+</div>
+</main>
+<script id="deck" type="application/json">__DECK__</script>
+<script>
+'use strict';
+const deck=JSON.parse(document.getElementById('deck').textContent);
+const key='klip-grid-'+deck.deckSha256;
+const el=id=>document.getElementById(id);
+let answers=[];
+try{answers=JSON.parse(localStorage.getItem(key)||'[]');}catch(e){answers=[];}
+if(!Array.isArray(answers))answers=[];
+let rate=1,heard=-1,keep=new Set(),best=null,exported=answers.length===0;
+function save(){try{localStorage.setItem(key,JSON.stringify(answers));}catch(e){}exported=false;}
+function tiles(){return [...document.querySelectorAll('.tile')];}
+function paint(){
+  tiles().forEach((t,k)=>{t.classList.toggle('keep',keep.has(k));t.classList.toggle('best',best===k);
+    t.classList.toggle('heard',heard===k);t.setAttribute('aria-pressed',String(keep.has(k)));
+    t.querySelector('.mark').textContent=best===k?'\\u2605 best':keep.has(k)?'keep':'';
+    t.querySelector('video').muted=heard!==k;});
+  const n=answers.length,total=deck.screens.length;
+  el('progress').max=total;el('progress').value=n;
+  el('next').textContent=keep.size?'Next: keep '+keep.size+' (Enter)':'Next: none worth keeping (Enter)';
+  el('sound').textContent='Sound: '+(heard<0?'off':String(heard+1));
+  el('sound').setAttribute('aria-pressed',String(heard>=0));
+}
+function show(){
+  const n=answers.length,total=deck.screens.length;
+  const grid=el('grid');grid.innerHTML='';keep=new Set();best=null;
+  if(n>=total){el('status').textContent='Done: '+total+' screens. Export your answers.';paint();return;}
+  el('status').textContent='Screen '+(n+1)+' of '+total;
+  deck.screens[n].clips.forEach((src,k)=>{
+    const t=document.createElement('div');t.className='tile';t.tabIndex=0;t.setAttribute('role','button');
+    t.setAttribute('aria-label','Clip '+(k+1));
+    t.innerHTML='<span class="badge">'+(k+1)+'</span><span class="mark"></span>';
+    const v=document.createElement('video');v.src=src;v.loop=true;v.muted=true;v.playsInline=true;
+    v.playbackRate=rate;t.appendChild(v);v.play().catch(()=>{});
+    t.addEventListener('click',()=>toggle(k));t.addEventListener('dblclick',()=>star(k));
+    grid.appendChild(t);});
+  paint();
+}
+function toggle(k){if(keep.has(k)){keep.delete(k);if(best===k)best=null;}else keep.add(k);paint();}
+function star(k){if(best===k){best=null;}else{best=k;keep.add(k);}paint();}
+function submit(cannot){
+  if(answers.length>=deck.screens.length)return;
+  answers.push({index:deck.screens[answers.length].index,keep:cannot?[]:[...keep].sort(),
+    best:cannot?null:best,cannotJudge:!!cannot});save();show();
+}
+function back(){if(answers.length){answers.pop();save();show();}}
+function sound(){const n=tiles().length;heard=heard+1>=n?-1:heard+1;paint();}
+el('question').textContent=deck.question;
+el('next').onclick=()=>submit(false);el('cannot').onclick=()=>submit(true);
+el('undo').onclick=back;el('sound').onclick=sound;
+el('speed').onclick=()=>{rate=rate===1?2:1;el('speed').textContent='Speed '+rate+'x';
+  tiles().forEach(t=>t.querySelector('video').playbackRate=rate);};
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='BUTTON'&&(e.key===' '||e.key==='Enter'))return;
+  const digit=e.code&&e.code.startsWith('Digit')?Number(e.code.slice(5))-1:-1;
+  if(digit>=0&&digit<tiles().length){e.preventDefault();e.shiftKey?star(digit):toggle(digit);}
+  else if(e.key==='Enter'){e.preventDefault();submit(false);}
+  else if(e.key==='x'||e.key==='X'){submit(true);}
+  else if(e.key==='u'||e.key==='U'){back();}
+  else if(e.key==='s'||e.key==='S'){sound();}
+  else if(e.key==='f'||e.key==='F'){el('speed').click();}
+});
+el('export').onclick=()=>{
+  const body=JSON.stringify({version:'__ANSWERS_VERSION__',deckSha256:deck.deckSha256,
+    answers:answers},null,2);
+  const link=document.createElement('a');
+  link.href=URL.createObjectURL(new Blob([body],{type:'application/json'}));
+  link.download='klip-grid-answers-'+deck.deckSha256.slice(0,12)+'.json';
+  link.click();URL.revokeObjectURL(link.href);exported=true;
+  el('status').textContent='Exported '+answers.length+' screens.';
 };
 window.addEventListener('beforeunload',e=>{if(!exported){e.preventDefault();e.returnValue='';}});
 show();
