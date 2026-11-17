@@ -20,7 +20,7 @@ def encode_dataset(manifest: Path, checkpoint: Path, *, batch_size: int = 8,
     if (checkpoint.is_symlink() or not checkpoint.is_file()
             or checkpoint.stat().st_size > 200_000_000):
         raise ValueError("Missing/symlinked/oversized local checkpoint")
-    doc, _ = load_manifest(manifest)
+    doc, manifest_sha = load_manifest(manifest)
     validate_manifest(doc, root=manifest.parent, verify_shards=True)
     if device not in {"cpu", "cuda", "mps"} or not 1 <= batch_size <= 64:
         raise ValueError("Invalid device or batch size")
@@ -33,7 +33,8 @@ def encode_dataset(manifest: Path, checkpoint: Path, *, batch_size: int = 8,
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     if (not isinstance(state, dict)
             or state.get("modelVersion") != MODEL_VERSION
-            or state.get("teacherModelKey") != doc["featureModelKey"]):
+            or state.get("teacherModelKey") != doc["featureModelKey"]
+            or state.get("manifestSha256") != manifest_sha):
         raise ValueError("Model version or frozen teacher mismatch")
     config = state.get("modelConfig")
     if not isinstance(config, dict) or set(config) != {
@@ -86,6 +87,8 @@ def encode_dataset(manifest: Path, checkpoint: Path, *, batch_size: int = 8,
         "version": "klip-ktide-embedding-report-v1",
         "modelVersion": MODEL_VERSION,
         "featureModelKey": doc["featureModelKey"],
+        "datasetManifestSha256": manifest_sha,
+        "trainingObjectiveVersion": state.get("trainingObjectiveVersion"),
         "checkpointSha256": sha256(checkpoint.read_bytes()).hexdigest(),
         "numSamples": len(out),
         "randomControlSeed": 1337,
