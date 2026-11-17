@@ -1,7 +1,10 @@
 # Adventure-Klip: current direction
 
-**Start here:** [Current pipeline and modeling strategy](docs/CURRENT_PIPELINE.md).
-**Next hands-on experiment:** [E6 blind human calibration](docs/KLIP_V2_BLIND_CALIBRATION.md), using the completed Auto-Scout preview archive and human Keep/Skip labels.
+**Start here:** [Mission and product objective](docs/KLIP_RESEARCH_MISSION.md) → [V3 architecture](docs/KLIP_ARCHITECTURE_V3.md) → [Prioritized roadmap](docs/KLIP_IMPLEMENTATION_ROADMAP.md).
+
+**Engineering handoff:** [Claude Code brief](docs/KLIP_CLAUDE_CODE_BRIEF.md) · [Append-only experiment ledger](logs/README.md) · [Known results and unresolved failures](logs/experiments/2026-11-16-state-and-lessons.md) · [Current implementation map](docs/CURRENT_PIPELINE.md).
+
+**Active review work:** scene-first owner descriptions and story judgments (instead of animal-only categories), with backward-compatible marine annotations. This is a research branch, not an automatically learning production model.
 
 Klip aims to discover important moments in personal outdoor footage, classify
 ski and marine events, propose non-destructive edits, and compose watchable

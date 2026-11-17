@@ -88,7 +88,7 @@ def test_balanced_source_diverse_queue_respects_owner_ski_run():
     }]
     out=ranker.rank_review_queue(cands+owner,top=5)
     assert out["top"][0]["id"]=="owner-test"
-    assert out["top"][0]["rankClass"]=="reviewed_owner_event"
+    assert out["top"][0]["rankClass"]=="human_reviewed_complete_run"
     assert not any(x["id"]==a["recordId"] for x in out["top"])
     assert {x["activity"] for x in out["top"]}=={"ski","snorkeling","bike"}
 
@@ -217,7 +217,8 @@ def _fixture(tmp_path, video=False):
         output=ws/"reports"/"top",context_dir=context,
         owner_run=owner_path,force_break_after_ms=[4500],
         secondary_feature_ms=[9500],top=4,per_sport=None,
-        render=False,
+        render=False,marine_study=None,marine_reviews=None,
+        snorkeling_share=0.60,max_bike=2,
     )
     return args,preview
 
@@ -261,3 +262,153 @@ def test_cli_outputs_real_top_clips_and_checked_checksums(tmp_path):
     assert sha256(preview.read_bytes()).hexdigest()==old
     with pytest.raises(ValueError,match="new private output"):
         _cli().execute(args)
+
+
+def _marine_label(candidate,*,presence="present",kind="ray",decision="keep",
+                  ratings=(5,4,5,4,4)):
+    return {
+        "recordId":candidate["id"],
+        "sourceSha256":candidate["sourceSha256"],
+        "decision":decision,
+        "animalPresence":presence,
+        "animalType":kind,
+        "behavior":"passing" if presence=="present" else "none",
+        "visibility":ratings[0],"framing":ratings[1],
+        "technicalQuality":ratings[2],
+        "narrativeCompleteness":ratings[3],
+        "behaviorInterest":ratings[4],
+        "eventStartMs":None,"eventEndMs":None,
+    }
+
+
+def test_default_queue_quarantines_other_unknown_and_short_model_clips():
+    specs=[
+        (1,"unknown",[],13000),
+        (2,"snorkeling",["marine_ray"],20000),
+        (3,"bike",["riding_general"],1000),
+        (4,"snorkeling",["marine_reef"],1900),
+        (5,"ski",["ski_jump"],20000),
+    ]
+    inputs=[];receipts={}
+    for i,sport,tags,duration in specs:
+        a,r=row(i,sport,tags)
+        a["sourceEndMs"]=a["sourceStartMs"]+duration
+        inputs.append(a);receipts[a["recordId"]]=r
+    cands=ranker.candidates(inputs,receipts)
+    result=ranker.rank_review_queue(cands,top=5)
+    assert all(x["activity"] in ("ski","snorkeling","bike") for x in result["top"])
+    assert all(x["sourceEndMs"]-x["sourceStartMs"]>=6000 for x in result["top"])
+    assert result["quarantineCounts"]["other_or_unknown_activity"]==1
+    assert result["quarantineCounts"]["under_six_seconds_unreviewed"]==2
+    assert len(result["quarantined"])==3
+    assert all(x["notAnAutomaticNegativeLabel"] for x in result["quarantined"])
+
+
+def test_marine_review_is_blind_and_visible_wildlife_beats_model_only_tags():
+    from adventure_intelligence import marine_encounter_review as marine
+    a,r1=row(1,"snorkeling",["marine_ray"])
+    b,r2=row(2,"snorkeling",["marine_ray","marine_reef"])
+    c,r3=row(3,"snorkeling",["marine_reef"])
+    candidates=ranker.candidates(
+        [a,b,c],{a["recordId"]:r1,b["recordId"]:r2,c["recordId"]:r3})
+    manifest=marine.manifest(candidates,"a"*64,"b"*64,"../pilot/media")
+    assert len(manifest["clips"])==3
+    assert "categoryProposals" not in repr(manifest)
+    html=marine.blind_review_html(manifest)
+    assert "connect-src 'none'" in html
+    assert "../pilot/media/" in html
+    # The model's metadata was not serialized into browser clip records.
+    assert '"categoryProposals"' not in html
+    reviewed={
+        "version":marine.LABEL_VERSION,"sampleId":manifest["sampleId"],
+        "reviews":[
+            _marine_label(candidates[0]),
+            _marine_label(candidates[1],presence="absent",
+                          kind="none",decision="skip",ratings=(1,1,1,1,1)),
+        ],
+    }
+    combined,summary=marine.merge_owner(candidates,manifest,reviewed)
+    assert summary["counts"]["reviewed_model_ray_no_visible_animal"]==1
+    assert summary["counts"]["confirmed_visible_animal_keep"]==1
+    assert combined[0]["humanConfirmedVisibleAnimal"] is True
+    assert combined[1]["humanReviewDecision"]=="skip"
+    ranking=ranker.rank_review_queue(combined,top=3)
+    assert ranking["top"][0]["id"]==candidates[0]["id"]
+    assert ranking["top"][0]["rankClass"]=="human_confirmed_visible_animal_keep"
+    assert all(x["id"]!=candidates[1]["id"] for x in ranking["top"])
+
+
+def test_owner_kept_short_wildlife_exception_and_bad_labels_rejected():
+    from adventure_intelligence import marine_encounter_review as marine
+    a,r=row(1,"snorkeling",["marine_ray"])
+    a["sourceEndMs"]=a["sourceStartMs"]+1800
+    cands=ranker.candidates([a],{a["recordId"]:r})
+    sample=marine.manifest(cands,"a"*64,"b"*64,"../pilot/media")
+    item=_marine_label(cands[0])
+    doc={"version":marine.LABEL_VERSION,"sampleId":sample["sampleId"],
+         "reviews":[item]}
+    merged,_=marine.merge_owner(cands,sample,doc)
+    result=ranker.rank_review_queue(merged,top=1)
+    assert result["top"][0]["humanConfirmedVisibleAnimal"] is True
+    assert result["quarantined"]==[]
+    bad=dict(item,sourceSha256="f"*64)
+    with pytest.raises(ValueError,match="identity"):
+        marine.validate_review(sample,{**doc,"reviews":[bad]})
+    bad=dict(item,animalPresence="absent",animalType="ray")
+    with pytest.raises(ValueError,match="type none"):
+        marine.validate_review(sample,{**doc,"reviews":[bad]})
+    bad=dict(item,visibility=6)
+    with pytest.raises(ValueError,match="ratings"):
+        marine.validate_review(sample,{**doc,"reviews":[bad]})
+    with pytest.raises(ValueError,match="sibling"):
+        marine.manifest(cands,"a"*64,"b"*64,"../../escape/media")
+
+
+def test_blind_marine_prepare_and_rerank_with_actual_export(tmp_path):
+    from adventure_intelligence import marine_encounter_review as marine
+    path=Path(__file__).resolve().parents[1]/"scripts"/"klip_prepare_marine_encounter_review.py"
+    spec=importlib.util.spec_from_file_location("klip_prepare_marine_test",path)
+    prep=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prep)
+    args,preview=_fixture(tmp_path,video=False)
+    report=args.workspace/"reports"/"marine"
+    prep_args=argparse.Namespace(workspace=args.workspace,pilot=args.pilot,
+                                autoscout=args.autoscout,output=report,run=False)
+    dry=prep.execute(prep_args)
+    assert dry["snorkelingPreviews"]==1
+    assert not report.exists()
+    prep_args.run=True
+    ready=prep.execute(prep_args)
+    assert ready["modelPredictionsHiddenFromReview"] is True
+    sample=json.loads((report/"marine-sample.json").read_text())
+    clip=sample["clips"][0]
+    matching={"id":clip["recordId"],"sourceSha256":clip["sourceSha256"]}
+    reviews={
+        "version":marine.LABEL_VERSION,"sampleId":sample["sampleId"],
+        "reviews":[_marine_label(matching)],
+    }
+    export=args.workspace/"reports"/"marine-owner.json"
+    export.write_text(json.dumps(reviews))
+    args.marine_study=report
+    args.marine_reviews=export
+    result=_cli().execute(args)
+    assert result["proposedTop"]==4
+    assert result["marineHumanEvidenceSummary"]["counts"]["confirmed_visible_animal_keep"]==1
+    assert result["topPreview"][0]["origin"]=="human_reviewed_run_tentative_edit"
+    assert result["sportMix"]["snorkeling"]==1
+
+
+@pytest.mark.skipif(not shutil.which("node"),reason="Node unavailable")
+def test_marine_review_browser_javascript_syntax(tmp_path):
+    from adventure_intelligence import marine_encounter_review as marine
+    a,r=row(1,"snorkeling",["marine_ray"])
+    cands=ranker.candidates([a],{a["recordId"]:r})
+    sample=marine.manifest(cands,"a"*64,"b"*64,"../pilot/media")
+    html=marine.blind_review_html(sample)
+    import re
+    match=re.search(r"<script>(.*?)</script>",html,re.S)
+    assert match
+    script=tmp_path/"review.js";script.write_text(match.group(1))
+    check=subprocess.run(["node","--check",str(script)],
+                         capture_output=True,text=True,timeout=15)
+    assert check.returncode==0,check.stderr
