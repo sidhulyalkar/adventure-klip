@@ -304,3 +304,16 @@ def test_cli_grid_round_trip(tmp_path, capsys):
     report = json.loads((tmp_path / "out" / "report.json").read_text())
     assert report["coverage"]["pairsByTier"]["owner_grid_keep"] > 0
     assert report["pairAccuracy"]["audio_peak_rel"]["macro"] > 0.8
+
+
+def test_locate_finds_catalogs_and_review_files_anywhere(workspace, tmp_path):
+    elsewhere = tmp_path / "repo" / "reports" / "marine"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "labels.json").write_text(json.dumps({"version": "klip-marine-owner-labels-v2"}))
+    found = owner_evidence.locate([tmp_path])
+    (cat,) = found["catalogs"]
+    assert cat["example_revisions"] == 3 and cat["pairwise_revisions"] == 2
+    assert found["reviewFilesByFolder"] == {str(elsewhere): {"klip-marine-owner-labels-v2": 1}}
+    report = owner_evidence.from_files(workspace, set(), [tmp_path / "repo" / "reports"])
+    assert report["files"][0]["file"] == "repo/reports/marine/labels.json"
+    assert "ledger" in report["files"][0]["reason"]

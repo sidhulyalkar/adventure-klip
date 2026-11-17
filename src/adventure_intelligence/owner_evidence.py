@@ -180,11 +180,16 @@ def from_catalog(workspace: Path) -> dict:
 
 # ---- review files -----------------------------------------------------------------
 
-def _scan(workspace: Path) -> list[tuple[Path, dict, str]]:
-    root = Path(workspace) / "reports"
+def _scan(workspace: Path, extra: list[Path] | None = None) -> list[tuple[Path, dict, str]]:
+    found, seen = [], set()
+    for root in [Path(workspace) / "reports", *(extra or [])]:
+        if root.is_dir():
+            found += [f for f in _scan_root(root) if f[2] not in seen and not seen.add(f[2])]
+    return found
+
+
+def _scan_root(root: Path) -> list[tuple[Path, dict, str]]:
     found = []
-    if not root.is_dir():
-        return found
     for path in sorted(root.rglob("*.json")):
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
             continue
@@ -237,8 +242,13 @@ def _curated(doc: dict, digest: str) -> list[dict]:
     return out
 
 
-def from_files(workspace: Path, ledger_exports: set[str]) -> dict:
-    files = _scan(workspace)
+def _shown(path: Path, workspace: Path) -> str:
+    return str(path.relative_to(workspace)) if path.is_relative_to(workspace) else str(path)
+
+
+def from_files(workspace: Path, ledger_exports: set[str],
+               extra: list[Path] | None = None) -> dict:
+    files = _scan(workspace, extra)
     manifests = {d: doc for _, doc, d in files if doc["version"] == "social-blind-pairs-v1"}
     judgments, pairs, report = [], [], []
     seen_curated = set()
@@ -246,7 +256,7 @@ def from_files(workspace: Path, ledger_exports: set[str]) -> dict:
         version = doc["version"]
         if version not in REVIEW_SCHEMAS:
             continue
-        entry = {"file": str(path.relative_to(workspace)), "version": version,
+        entry = {"file": _shown(path, Path(workspace)), "version": version,
                  "sha256": digest[:16]}
         if version == "social-blind-pairs-v1":
             continue  # a manifest; counted through its reviews
@@ -278,13 +288,46 @@ def from_files(workspace: Path, ledger_exports: set[str]) -> dict:
 
 # ---- everything together -------------------------------------------------------------
 
-def collect(workspace: Path | None, ledger_rows: list[dict]) -> dict:
+def locate(roots: list[Path]) -> dict:
+    """Every catalog and owner review file under these folders, with label counts. Read-only."""
+    catalogs, files = [], {}
+    for root in roots:
+        root = Path(root).expanduser()
+        if not root.is_dir():
+            continue
+        for db_path in sorted(root.rglob("catalog.sqlite3")):
+            if db_path.is_symlink():
+                continue
+            entry = {"workspace": str(db_path.parent)}
+            try:
+                with sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True) as db:
+                    for table in ("assets", "example_revisions", "pairwise_revisions",
+                                  "benchmark_review_revisions"):
+                        entry[table] = (db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                                        if _table(db, table) else None)
+            except sqlite3.Error as error:
+                entry["error"] = str(error)
+            catalogs.append(entry)
+        for path, doc, digest in _scan_root(root):
+            if doc["version"] in REVIEW_SCHEMAS and digest not in files:
+                files[digest] = {"file": str(path), "version": doc["version"]}
+    by_folder: dict[str, dict[str, int]] = {}
+    for f in files.values():
+        folder = str(Path(f["file"]).parent)
+        by_folder.setdefault(folder, {})
+        by_folder[folder][f["version"]] = by_folder[folder].get(f["version"], 0) + 1
+    return {"catalogs": catalogs, "reviewFiles": len(files),
+            "reviewFilesByFolder": dict(sorted(by_folder.items()))}
+
+
+def collect(workspace: Path | None, ledger_rows: list[dict],
+            extra_reports: list[Path] | None = None) -> dict:
     """All judgments and direct pairs. Duplicates merge; contradictions are set aside."""
     judgments = from_ledger(ledger_rows)
     pairs, counts, files = [], {"ledger": len(ledger_rows)}, []
     if workspace is not None:
         catalog = from_catalog(workspace)
-        found = from_files(workspace, {r["exportSha256"] for r in ledger_rows})
+        found = from_files(workspace, {r["exportSha256"] for r in ledger_rows}, extra_reports)
         judgments += catalog["judgments"] + found["judgments"]
         pairs += catalog["pairs"] + found["pairs"]
         counts.update(catalog["counts"])

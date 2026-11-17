@@ -84,8 +84,11 @@ Set paths for the session:
 
 ```bash
 # WS is Klip's data folder (holds catalog.sqlite3), not the code checkout.
-# Default: $ADVENTURE_HOME or ~/AdventureAI. If unsure:
-#   find ~ /Volumes -maxdepth 5 -name catalog.sqlite3 2>/dev/null
+# Default: $ADVENTURE_HOME or ~/AdventureAI. If unsure, list every catalog and
+# review export with label counts:
+#   python scripts/klip_value_experiment.py locate ~ /Volumes/YourSSD
+# Review exports outside $WS/reports can be added to harvest/plan/deck/evaluate
+# with --reports DIR [DIR ...].
 export WS=~/AdventureAI
 export SSD=/Volumes/YourSSD            # mount the footage drive first
 export LEDGERS=$WS/reports/owner-ledgers && mkdir -p "$LEDGERS"

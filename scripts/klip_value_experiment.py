@@ -83,7 +83,8 @@ def _owner(args, group_of):
     rows = ledger.load(args.ledger) if getattr(args, "ledger", None) else []
     answers = (pairs_mod.load(args.pairs_ledger)
                if getattr(args, "pairs_ledger", None) else [])
-    collected = owner_evidence.collect(getattr(args, "workspace", None), rows)
+    collected = owner_evidence.collect(getattr(args, "workspace", None), rows,
+                                       [r.expanduser() for r in getattr(args, "reports", None) or []])
     grid = pairs_mod.grid_judgments(answers)
     judgments = collected["judgments"] + grid
     pairs = (pairs_mod.from_ledger(collected["judgments"], group_of, seed=args.seed)
@@ -235,11 +236,15 @@ def main(argv=None) -> int:
         p.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE,
                        help="Klip data folder with catalog.sqlite3 "
                             f"(default: $ADVENTURE_HOME or {DEFAULT_WORKSPACE})")
+        p.add_argument("--reports", type=Path, nargs="*", default=[],
+                       help="extra folders holding review exports (workspace/reports is always read)")
         p.add_argument("--ledger", type=Path)
         p.add_argument("--pairs-ledger", type=Path)
         p.add_argument("--roster", type=Path)
         p.add_argument("--seed", type=int, default=0)
 
+    loc = sub.add_parser("locate", help="find every Klip catalog and review export under folders")
+    loc.add_argument("roots", type=Path, nargs="+")
     har = sub.add_parser("harvest", help="report every owner label and whether it is used")
     owner_inputs(har, workspace_required=True)
     pl = sub.add_parser("plan", help="print a discovery source list that covers your labels")
@@ -280,7 +285,9 @@ def main(argv=None) -> int:
                 args.workspace = None
             else:
                 args.workspace = _workspace(args.workspace)
-        if args.command == "roster":
+        if args.command == "locate":
+            print(json.dumps(owner_evidence.locate(args.roots), indent=2))
+        elif args.command == "roster":
             _emit(roster.propose(roster.catalog_rows(args.workspace),
                                  gap_hours=args.gap_hours), args.output)
         elif args.command == "harvest":
