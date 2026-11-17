@@ -1,7 +1,11 @@
 # Klip current architecture and next modeling strategy
 
-**Active research track:** clip discovery → sport-specific event classification
-→ event-boundary editing → viewer-preferred, diverse category reels. This
+**Current canonical design:** [Research mission](KLIP_RESEARCH_MISSION.md) · [V3 contracts](KLIP_ARCHITECTURE_V3.md) · [Roadmap](KLIP_IMPLEMENTATION_ROADMAP.md) · [Experiment evidence](../logs/README.md). The code inventory below records implemented, historical and partial components; it is **not** a claim of complete source-wide temporal scene discovery.
+
+
+**Active research track:** full-timeline scene discovery → temporal/story
+understanding → goal-conditioned ranking → owner review, as defined in the
+research mission. Sport and animal labels are evidence, not the objective. This
 document is the orientation point for new engineers, not a replacement for
 older versioned experiment reports. Older docs are historical evidence.
 
@@ -17,6 +21,7 @@ older versioned experiment reports. Older docs are historical evidence.
 | Source-backed moment + edit variants | moment_edit_v2.py | Owner event intervals, reversible trims, preview-only |
 | Local owner labeling | moment_label_studio_v2.py | Explicit owner sports, tags, and defect spans |
 | Category reel planning/rendering | campaign_reels.py, klip_build_collections_v2.py | Draft local H264 proxies; no verified final master |
+| Owner evidence ledger | evidence_ledger.py, scripts/klip_evidence_ledger.py | Append-only; adapters for marine v1/v2, blind calibration, ski run; synthetic tests only |
 | K-MOMENT / K-TIDE research | main branch scripts and offline cache | Eight dense windows; no proven ranking advantage |
 
 Core contracts: **Asset → Observation → Candidate Moment → Owner-reviewed

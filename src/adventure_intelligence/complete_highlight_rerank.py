@@ -199,9 +199,13 @@ def rank_review_queue(raw:list[dict], *,top:int=24,per_sport:int|None=None,
          and x["activity"] in ("ski","snorkeling","bike")
          and x["id"] not in excluded],
         key=lambda x:(
-            0 if x["origin"]=="human_reviewed_run_tentative_edit"
-            else 1 if x.get("humanConfirmedVisibleAnimal") else 2,
+            # The reviewed ski line stays first, but an ordinary, personally
+            # meaningful reef scene can outrank a poorly filmed animal sighting.
+            0 if x["origin"]=="human_reviewed_run_tentative_edit" else 1,
             x.get("role")!="main_line_candidate",
+            -((x.get("humanSceneInterpretation") or {}).get("sceneInterest")
+              if (x.get("humanSceneInterpretation") or {}).get("sceneInterest") is not None
+              else -1),
             -(x.get("humanMarineQualityScore") if
               x.get("humanMarineQualityScore") is not None else -1),
             -len(x.get("featureTimesMs",[])),
@@ -309,13 +313,26 @@ def gallery_html(report:dict)->str:
         else:
             evidence=("Suggested tags: "+(", ".join(item["categoryProposals"]) or "none")
                       +". Tags are NOT ground truth.")
+        owner_scene=item.get("humanSceneInterpretation") or {}
+        story_notes=[]
+        for field,title in (("sceneDescription","Scene description"),
+                            ("whyKeep","Owner's reason")):
+            value=owner_scene.get(field)
+            if isinstance(value,str) and value.strip():
+                story_notes.append("<p><strong>"+escape(title)+":</strong> "+
+                                   escape(value)+"</p>")
+        if owner_scene.get("storyRole") not in (None,"unassigned"):
+            story_notes.append(
+                "<p class='muted'>Story role: "+
+                escape(owner_scene["storyRole"].replace("_"," "))+"</p>"
+            )
         cards.append(
             "<article><video controls preload='metadata' playsinline src='media/"
             +escape(item["mediaFile"])+"'></video><h2>"+escape(title)
             +"</h2><strong>"+escape(badges)+"</strong><p>"+escape(label)
             +"</p><p>"+escape(evidence)
             +"</p><p class='muted'>"+escape(item.get("rankExplanation",""))
-            +"</p></article>"
+            +"</p>"+"".join(story_notes)+"</article>"
         )
     return """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
