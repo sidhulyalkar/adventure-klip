@@ -83,7 +83,10 @@ python -m pytest -q tests/test_value_learning.py tests/test_owner_evidence.py
 Set paths for the session:
 
 ```bash
-export WS=~/path/to/klip-workspace     # holds catalog.sqlite3 and reports/
+# WS is Klip's data folder (holds catalog.sqlite3), not the code checkout.
+# Default: $ADVENTURE_HOME or ~/AdventureAI. If unsure:
+#   find ~ /Volumes -maxdepth 5 -name catalog.sqlite3 2>/dev/null
+export WS=~/AdventureAI
 export SSD=/Volumes/YourSSD            # mount the footage drive first
 export LEDGERS=$WS/reports/owner-ledgers && mkdir -p "$LEDGERS"
 ```
@@ -92,7 +95,7 @@ export LEDGERS=$WS/reports/owner-ledgers && mkdir -p "$LEDGERS"
    `"status": "owner_confirmed"`.
 
    ```bash
-   python scripts/klip_value_experiment.py roster --workspace "$WS" > "$LEDGERS/roster.json"
+   python scripts/klip_value_experiment.py roster --workspace "$WS" --output "$LEDGERS/roster.json"
    ```
 
 2. Import file exports into the ledger, then see what's used. `harvest` lists any export
@@ -110,7 +113,7 @@ export LEDGERS=$WS/reports/owner-ledgers && mkdir -p "$LEDGERS"
    ```bash
    python scripts/klip_value_experiment.py plan --workspace "$WS" \
        --ledger "$LEDGERS/owner-evidence.jsonl" --roster "$LEDGERS/roster.json" \
-       --max 12 > "$LEDGERS/sources-001.json"
+       --max 12 --output "$LEDGERS/sources-001.json"
 
    python scripts/klip_discovery_experiment.py run --sources "$LEDGERS/sources-001.json" \
        --workspace "$WS" --trusted-source-root "$SSD" --allow-mounted-ssd \

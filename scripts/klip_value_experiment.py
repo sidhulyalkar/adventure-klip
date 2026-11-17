@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -29,12 +30,45 @@ from adventure_intelligence import owner_evidence
 from adventure_intelligence import value_pairs as pairs_mod
 
 SPORTS = ("ski", "snorkeling", "bike")
+DEFAULT_WORKSPACE = Path(os.environ.get("ADVENTURE_HOME") or Path.home() / "AdventureAI")
 
 
 def _json(path: Path):
     if path.is_symlink() or not path.is_file():
-        raise ValueError(f"Missing or symlinked input: {path.name}")
-    return json.loads(path.read_text(encoding="utf-8"))
+        raise ValueError(f"Missing or symlinked input: {path}")
+    text = path.read_text(encoding="utf-8")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        raise ValueError(f"{path} is empty or not JSON; rerun the step that writes it") from None
+
+
+def _workspace(path: Path) -> Path:
+    """The Klip data folder (holds catalog.sqlite3), not the code checkout."""
+    path = path.expanduser()
+    if not (path / "catalog.sqlite3").is_file():
+        hint = (" This looks like the code checkout." if (path / "pyproject.toml").is_file() else "")
+        raise ValueError(
+            f"No catalog.sqlite3 in {path}.{hint} Use the folder you pass to "
+            f"`klip --workspace` (default {DEFAULT_WORKSPACE}). To find it: "
+            "find ~ /Volumes -maxdepth 5 -name catalog.sqlite3 2>/dev/null")
+    return path
+
+
+def _emit(doc, output: Path | None) -> None:
+    """Print, or write the file only once the result exists, so a failure leaves nothing."""
+    text = json.dumps(doc, indent=2) + "\n"
+    if output is None:
+        sys.stdout.write(text)
+        return
+    output = output.expanduser()
+    if output.exists() and not getattr(_emit, "overwrite", False):
+        raise ValueError(f"{output} exists; pass --force to replace it")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = output.with_suffix(output.suffix + ".partial")
+    temp.write_text(text, encoding="utf-8")
+    temp.replace(output)
+    print(f"wrote {output}", file=sys.stderr)
 
 
 def _mapping(args):
@@ -192,12 +226,15 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     ros = sub.add_parser("roster", help="propose outings from catalog capture times")
-    ros.add_argument("--workspace", type=Path, required=True)
+    ros.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
     ros.add_argument("--gap-hours", type=float, default=6.0)
+    ros.add_argument("--output", type=Path)
+    ros.add_argument("--force", action="store_true", help="replace an existing --output")
 
     def owner_inputs(p, *, workspace_required=False):
-        p.add_argument("--workspace", type=Path, required=workspace_required,
-                       help="reads catalog reviews, cached embeddings and review files")
+        p.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE,
+                       help="Klip data folder with catalog.sqlite3 "
+                            f"(default: $ADVENTURE_HOME or {DEFAULT_WORKSPACE})")
         p.add_argument("--ledger", type=Path)
         p.add_argument("--pairs-ledger", type=Path)
         p.add_argument("--roster", type=Path)
@@ -210,6 +247,8 @@ def main(argv=None) -> int:
     pl.add_argument("--max", type=int, default=12)
     pl.add_argument("--sport", choices=SPORTS)
     pl.add_argument("--exclude-experiment", type=Path, nargs="*", default=[])
+    pl.add_argument("--output", type=Path)
+    pl.add_argument("--force", action="store_true", help="replace an existing --output")
     deck = sub.add_parser("deck", help="write a blind review page")
     ev = sub.add_parser("evaluate", help="held-out ladder and ranked review queue")
     for p in (deck, ev):
@@ -230,9 +269,20 @@ def main(argv=None) -> int:
     imp.add_argument("--pairs-ledger", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        _emit.overwrite = getattr(args, "force", False)
+        if getattr(args, "workspace", None) is not None:
+            explicit = "--workspace" in (argv if argv is not None else sys.argv)
+            if (args.command in ("deck", "evaluate") and not explicit
+                    and not (args.workspace / "catalog.sqlite3").is_file()):
+                print(f"warning: no catalog at {args.workspace}; Studio and benchmark labels, "
+                      "review files and embeddings are not used. Pass --workspace.",
+                      file=sys.stderr)
+                args.workspace = None
+            else:
+                args.workspace = _workspace(args.workspace)
         if args.command == "roster":
-            print(json.dumps(roster.propose(roster.catalog_rows(args.workspace),
-                                            gap_hours=args.gap_hours), indent=2))
+            _emit(roster.propose(roster.catalog_rows(args.workspace),
+                                 gap_hours=args.gap_hours), args.output)
         elif args.command == "harvest":
             print(json.dumps(harvest(args), indent=2))
         elif args.command == "plan":
@@ -241,7 +291,7 @@ def main(argv=None) -> int:
             rows = plan(args)
             if not rows:
                 raise ValueError("No labelled recordings left to scan")
-            print(json.dumps(rows, indent=2))
+            _emit(rows, args.output)
         elif args.command in ("import-answers", "import-taps"):
             before = ledger.file_digest(args.answers)
             frozen = _json(args.deck)
