@@ -123,6 +123,17 @@ def test_end_to_end_one_epoch_train_and_held_out_evaluate(tmp_path):
     assert len(encoded["results"][0]["temporalChangeEmbedding"]) == 16
     assert encoded["randomControlSeed"] == 1337
     assert encoded["humanPreferenceRankingQualified"] is False
+    assert encoded["datasetManifestSha256"] == sha256(manifest.read_bytes()).hexdigest()
+    assert encoded["trainingObjectiveVersion"] == ORDER_OBJECTIVE_VERSION
+    assert result["contrastiveAudit"]["trainingBatches"] >= 1
+    assert result["contrastiveAudit"]["samplesSeenWithCrossTripNegatives"] <= result["contrastiveAudit"]["trainingSamplesSeen"]
+    # A checkpoint from one exact dataset MUST NOT encode a different
+    # manifest even when the source and teacher revision appear compatible.
+    replaced = json.loads(manifest.read_text())
+    replaced["samples"][0]["sampleId"] = "synthetic-reidentified-0"
+    manifest.write_text(json.dumps(replaced))
+    with pytest.raises(ValueError, match="Model version or frozen teacher mismatch"):
+        encode_dataset(manifest, checkpoint, batch_size=2, device="cpu")
     with pytest.raises(ValueError, match="overwrite"):
         train_local(
             manifest, workspace=tmp_path, run_name="ktide-run-synthetic",
@@ -246,3 +257,23 @@ def test_temporal_audit_finds_disconnected_samples_and_fails_closed_on_tamper(tm
         file.write(b"tamper")
     with pytest.raises(ValueError,match="changed|SHA"):
         temporal_observability(manifest,workspace=tmp_path,max_gap_ms=7000)
+
+
+
+def test_three_group_smoke_explicitly_reports_inactive_contrastive(tmp_path):
+    manifest = _dataset(tmp_path)
+    data = json.loads(manifest.read_text())
+    for index, row in enumerate(data["samples"]):
+        row["groupId"] = f"synthetic-trip-{index // 2}"
+    manifest.write_text(json.dumps(data))
+    run = train_local(
+        manifest, workspace=tmp_path, run_name="ktide-run-single-training-trip",
+        epochs=1, batch_size=2, learning_rate=.0003,
+        seed=13, hidden=32, layers=1, device="cpu")
+    audit = run["contrastiveAudit"]
+    assert run["trainGroups"] == 1
+    assert audit["eligibleTrainTripGroups"] == 1
+    assert audit["trainingBatches"] >= 1
+    assert audit["batchesWithCrossTripNegatives"] == 0
+    assert audit["activeSampleFraction"] == 0.0
+    assert "inactive" in audit["warning"]

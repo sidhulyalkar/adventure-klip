@@ -176,6 +176,8 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate,
                                   weight_decay=.01)
     history, best, best_state, best_epoch, stale = [], float("inf"), None, 0, 0
+    contrastive_batches = contrastive_active_batches = 0
+    contrastive_seen_samples = contrastive_active_samples = 0
     for epoch in range(1, epochs + 1):
         model.train()
         # Reproducible sampling, fixed by epoch. Not scientific determinism
@@ -191,6 +193,14 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
                 model, x, times, valid, groups, mask_ratio=mask_ratio)
             if not bool(torch.isfinite(loss)):
                 raise ValueError("Nonfinite training objective")
+            # A single-trip batch has NO cross-trip negatives: contrastive
+            # loss is exactly zero. Record actual optimization exposure,
+            # rather than claiming the loss coefficient was always active.
+            contrastive_batches += 1
+            contrastive_seen_samples += len(groups)
+            if len(set(groups)) >= 2:
+                contrastive_active_batches += 1
+                contrastive_active_samples += len(groups)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -242,6 +252,24 @@ def train_local(manifest_path: Path, *, workspace: Path, run_name: str,
         "testGroups": sum(1 for v in splits.values() if v == "test"),
         "sampleCounts": {k: len(v) for k, v in assigned.items()},
         "splitAssignments": dict(sorted(splits.items())),
+        "contrastiveAudit": {
+            "eligibleTrainTripGroups": len({r["groupId"] for r in assigned["train"]}),
+            "trainingBatches": contrastive_batches,
+            "batchesWithCrossTripNegatives": contrastive_active_batches,
+            "trainingSamplesSeen": contrastive_seen_samples,
+            "samplesSeenWithCrossTripNegatives": contrastive_active_samples,
+            "activeSampleFraction": round(
+                contrastive_active_samples / contrastive_seen_samples, 6)
+                if contrastive_seen_samples else 0.0,
+            "sameActionCrossTripPairsNotVerified": True,
+            "warning": (
+                "Contrastive loss was inactive on every training batch: "
+                "no independent trip negatives were present."
+                if contrastive_active_batches == 0 else
+                "Different trips can still contain the same action; "
+                "unlabeled cross-trip negatives may be false negatives."
+            ),
+        },
         "provisionalGroupIds": provisional_groups,
         "scientificHeldoutEligible": not provisional_groups,
         "groupingWarning": ("Capture-based provisional groups are NOT verified independent trips"
