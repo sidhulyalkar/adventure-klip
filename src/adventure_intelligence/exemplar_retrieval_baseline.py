@@ -120,7 +120,7 @@ def compare_to_examples(candidates: list[dict], examples: list[dict],
         rankings[label] = selected
     return {
         "version": VERSION,
-        "method": "frozen_siglip2_cross_source_nearest_positive",
+        "method": "frozen_matching_model_cross_source_nearest_positive",
         "candidateCount": len(candidates),
         "candidatesWithCompatibleVector": sum(_valid_feature(x) for x in candidates),
         "candidatesWithoutVector": without_features,
