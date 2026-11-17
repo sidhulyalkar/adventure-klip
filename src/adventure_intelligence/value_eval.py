@@ -125,6 +125,7 @@ def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *
              pool_ids: set[str], roster_confirmed: bool, seed: int = 0,
              self_consistency: dict | None = None) -> dict:
     """Leave-one-outing-out comparison of the baseline ladder and the learned head."""
+    offered = len(pairs)
     pairs = head.usable(pairs, items)
     scored = [p for p in pairs if p["outcome"] != 0.5 and p["evalEligible"]]
     groups = sorted({p["group"] for p in scored})
@@ -230,7 +231,9 @@ def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *
         "version": VERSION,
         "coverage": {
             "outingsWithScoredPairs": len(groups),
-            "pairsUsable": len(pairs), "pairsScored": len(scored),
+            "pairsOffered": offered, "pairsUsable": len(pairs), "pairsScored": len(scored),
+            # A pair is usable only when both recordings were scanned.
+            "pairsMissingAScannedRecording": offered - len(pairs),
             "pairsByTier": _count(p["tier"] for p in pairs),
             "pairsByGoal": _count(p["goal"] for p in scored),
             "trainOnlyPairs": sum(not p["evalEligible"] for p in pairs),

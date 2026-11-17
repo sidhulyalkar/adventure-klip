@@ -507,3 +507,58 @@ def test_roster_sport_tags_reach_plan_and_untagged_recordings_stay_eligible(work
     doc["outings"][0]["sport"] = "kayak"
     with pytest.raises(ValueError, match="sport must be"):
         roster.validate(doc)
+
+
+def test_plan_scans_both_recordings_of_a_pair_rather_than_one_per_outing(tmp_path):
+    from adventure_intelligence import evidence_ledger as ledger
+    ws = tmp_path / "ws"
+    D = sha("d")
+    with catalog.connect(ws) as db:
+        for i, (s, when) in enumerate(((A, "2026-01-02T09:00:00"), (B, "2026-01-02T10:00:00"),
+                                       (C, "2026-03-02T09:00:00"), (D, "2026-03-02T10:00:00"))):
+            db.execute("INSERT INTO assets (id,sha256,stored_path,size_bytes,suffix,duration,"
+                       "capture_time,activity) VALUES (?,?,?,?,?,?,?,?)",
+                       (s, s, f"/media/{i}.mp4", 1, ".mp4", 600.0, when, "unknown"))
+    rows = [ledger.record(source_sha=s, start_ms=0, end_ms=5000, decision=d,
+                          selection="pipeline_selected_window", schema="t",
+                          export_digest=sha("e"), record_id=str(i))
+            for i, (s, d) in enumerate(((A, "keep"), (B, "skip"), (C, "keep"), (D, "skip")))]
+    rows.append(ledger.record(source_sha=A, start_ms=9000, end_ms=12000, decision="skip",
+                              selection="pipeline_selected_window", schema="t",
+                              export_digest=sha("e"), record_id="extra"))
+    ledger.append(tmp_path / "ev.jsonl", rows)
+    (tmp_path / "roster.json").write_text(json.dumps(roster.propose(roster.catalog_rows(ws))))
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    base = ["plan", "--workspace", str(ws), "--ledger", str(tmp_path / "ev.jsonl"),
+            "--roster", str(tmp_path / "roster.json"), "--no-fill"]
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        assert _cli().main(base + ["--max", "2"]) == 0
+    assert {r["sourceSha256"] for r in json.loads(out.getvalue())} == {A, B}
+    diagnostics = json.loads(err.getvalue().split("\n}\n")[0] + "\n}")
+    assert diagnostics["pairsUsableAfterThisBatch"]["scoreable"] == 2  # one keep, two skips
+    assert diagnostics["pairsUsableBeforeThisBatch"]["scoreable"] == 0
+    # A second batch, with the first already scanned, completes the other outing.
+    exp = tmp_path / "discovery-001"
+    exp.mkdir()
+    (exp / "experiment.json").write_text(json.dumps({"sources": [A, B]}))
+    out = io.StringIO()
+    with redirect_stdout(out), redirect_stderr(io.StringIO()):
+        assert _cli().main(base + ["--max", "2", "--exclude-experiment", str(exp)]) == 0
+    assert {r["sourceSha256"] for r in json.loads(out.getvalue())} == {C, D}
+
+
+def test_evaluation_reports_pairs_lost_to_unscanned_recordings(tmp_path):
+    made = write_experiment(tmp_path / "exp", outings=2)
+    _, items, pool_ids, group_of = build(tmp_path / "exp", made)
+    rows = owner_ledger(made["truth"])
+    pairs = pairs_mod.from_ledger(rows, group_of)
+    ghost = {"left": {"sourceSha256": sha("ghost"), "startMs": 0, "endMs": 1000},
+             "right": pairs[0]["right"], "outcome": 1.0, "tier": "t", "group": pairs[0]["group"],
+             "groups": pairs[0]["groups"], "goal": "g", "weight": 1.0, "evalEligible": True,
+             "evidenceIds": ["x"]}
+    report = value_eval.evaluate(items, pairs + [ghost], rows, pool_ids=pool_ids,
+                                 roster_confirmed=True)
+    assert report["coverage"]["pairsMissingAScannedRecording"] == 1
+    assert report["coverage"]["pairsOffered"] == len(pairs) + 1

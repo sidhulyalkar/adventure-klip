@@ -228,28 +228,48 @@ def plan(args) -> list[dict]:
     weight: dict[str, float] = {}
     for j in owner["judgments"]:
         weight[j["sourceSha256"]] = weight.get(j["sourceSha256"], 0) + 1
+    # A pair can only be used once both of its recordings are scanned, so
+    # recordings are chosen greedily by the pairs they complete, counting what
+    # earlier experiments already scanned. Scoreable pairs count most.
+    pairs = []
     for p in owner["pairs"]:
-        for side in (p["left"], p["right"]):
-            weight[side["sourceSha256"]] = weight.get(side["sourceSha256"], 0) + 0.5
-    queues: dict[str, list[str]] = {}
-    for sha, _ in sorted(weight.items(), key=lambda kv: (-kv[1], kv[0])):
-        asset = assets.get(sha)
-        if sha in done or asset is None:
-            continue
-        if args.sport and asset["sport"] != args.sport:
-            continue
-        queues.setdefault(group_of(sha), []).append(sha)
-    # Outings with the most labels first; one recording per outing per round,
-    # so the batch spreads across as many outings as possible.
-    order = sorted(queues, key=lambda g: (-sum(weight[s] for s in queues[g]), g))
-    picked = []
-    while len(picked) < args.max and any(queues[g] for g in order):
-        for g in order:
-            if queues[g] and len(picked) < args.max:
-                picked.append(queues[g].pop(0))
+        sides = frozenset((p["left"]["sourceSha256"], p["right"]["sourceSha256"]))
+        pairs.append((sides, 1.0 if p["evalEligible"] else 0.3, p["evalEligible"]))
+        for sha in sides:
+            weight[sha] = weight.get(sha, 0) + 0.5
+    reachable = [(sides, w, ok) for sides, w, ok in pairs
+                 if all(sha in done or sha in assets for sha in sides)]
+    candidates = {sha for sha in weight if sha in assets and sha not in done
+                  and not (args.sport and assets[sha]["sport"] != args.sport)}
+    covered, picked = set(done), []
+
+    def usable(scope, scoreable_only=False):
+        return sum(1 for sides, _, ok in pairs
+                   if sides <= scope and (ok or not scoreable_only))
+
+    before = {"all": usable(covered), "scoreable": usable(covered, True)}
+    while len(picked) < args.max and candidates:
+        def gain(sha):
+            scope = covered | {sha}
+            complete = sum(w for sides, w, _ in reachable
+                           if sha in sides and sides <= scope)
+            touch = sum(w for sides, w, _ in reachable
+                        if sha in sides and not sides <= scope)
+            return (complete, touch, weight[sha], sha)
+        best = max(candidates, key=gain)
+        candidates.discard(best)
+        picked.append(best)
+        covered.add(best)
+    plan.diagnostics.update({
+        "pairsTotal": len(pairs),
+        "pairsWithARecordingOutsideSourceRoot": len(pairs) - len(reachable),
+        "pairsUsableBeforeThisBatch": before,
+        "pairsUsableAfterThisBatch": {"all": usable(covered), "scoreable": usable(covered, True)},
+        "labelledRecordingsLeftAfterThisBatch": len(candidates),
+    })
     if args.fill and len(picked) < args.max:
-        # Unlabelled recordings, one per outing per round, outings not yet
-        # covered first, a seeded shuffle within each outing.
+        # Spare slots: unlabelled recordings, one per outing per round, outings
+        # not yet covered first, a seeded shuffle within each outing.
         import random
         rng = random.Random(f"plan:{args.seed}")
         spare: dict[str, list[str]] = {}
