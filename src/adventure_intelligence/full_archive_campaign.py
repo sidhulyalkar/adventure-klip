@@ -33,6 +33,7 @@ from .media import motion_series, probe
 
 AUDIT_VERSION="klip-full-archive-campaign-audit-v1"
 SCAN_VERSION="klip-full-archive-coarse-scan-v1"
+MOTION_VERSION="klip-coarse-motion-timeline-v1"
 _SHA="0123456789abcdef"
 
 
@@ -537,6 +538,13 @@ def scan_campaign(workspace:Path,campaign_audit:Path,output_dir:Path,*,
                     if proof(before)!=proof(after):
                         raise ValueError("Local source changed during scan; results must not be accepted")
                     proposals=_proposals(samples,item["durationMsFromCatalog"])
+                    # Keep the decoded timeline. Discarding it meant every new
+                    # segmentation idea needed another full read of the source.
+                    _atomic_json(dest/"per-source"/(aid+".motion.json"),{
+                        "version":MOTION_VERSION,"sourceAssetSha256":aid,
+                        "sourceDurationMs":item["durationMsFromCatalog"],
+                        "sampleFps":fps,"series":samples,
+                    })
                     result={
                         "version":SCAN_VERSION,
                         "sourceAssetSha256":aid,
