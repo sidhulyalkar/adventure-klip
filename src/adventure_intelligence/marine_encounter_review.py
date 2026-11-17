@@ -172,7 +172,7 @@ def merge_owner(candidates:list[dict],m:dict,labels:dict)->tuple[list[dict],dict
 
 
 def blind_review_html(m:dict)->str:
-    """Client-side no-storage blind labeling; browser exports JSON."""
+    """Client-side blind labeling; drafts stay in this browser, JSON export is the record."""
     payload=[{
         "id":x["recordId"],"source":x["sourceSha256"],
         "start":x["sourceStartMs"],"end":x["sourceEndMs"],
@@ -288,7 +288,7 @@ unclear if the scene is interesting for another reason.</p>
 <button id="import">Import saved JSON</button>
 <button id="export">Export reviewed labels</button>
 <input id="file" type="file" accept=".json,application/json" hidden></div></div>
-<p id="status" class="muted">Review data remains in this page until exported.</p>
+<p id="status" class="muted" role="status" aria-live="polite">Drafts are kept in this browser only. Export JSON to keep a durable record.</p>
 <strong id="count"></strong></div>
 <script>
 'use strict';
@@ -302,7 +302,28 @@ const emptyScene={
   personalImportance:'unsure',sceneInterest:null
 };
 const map=new Map(),$=s=>document.getElementById(s);
-let index=0,dirty=false;
+let index=0,dirty=false,unexported=false;
+// Draft safety net only: the exported JSON remains the durable owner record.
+const draftKey='klip-marine-draft:'+sampleId;
+function persist(){
+  unexported=true;
+  try{localStorage.setItem(draftKey,JSON.stringify([...map.values()]));}catch(e){}
+}
+function restore(){
+  let rows;
+  try{rows=JSON.parse(localStorage.getItem(draftKey)||'[]');}catch(e){return 0;}
+  if(!Array.isArray(rows))return 0;
+  const known=new Map(clips.map(x=>[x.id,x]));
+  for(const r of rows){
+    const clip=r&&typeof r==='object'?known.get(r.recordId):null;
+    if(clip&&r.sourceSha256===clip.source&&
+       ['keep','skip','unsure'].includes(r.decision))map.set(r.recordId,r);
+  }
+  return map.size;
+}
+window.addEventListener('beforeunload',e=>{
+  if(dirty||unexported){e.preventDefault();e.returnValue='';}
+});
 for(const key of ratings){
   const line=document.createElement('div'),lab=document.createElement('label');
   lab.htmlFor=key;lab.textContent=key.replace(/([A-Z])/g,' $1');
@@ -375,13 +396,13 @@ function review(){
   return result;
 }
 $('save').onclick=()=>{
-  try{const r=review();map.set(r.recordId,r);dirty=false;
-      $('status').textContent='Saved in memory. Export to keep your progress.';
+  try{const r=review();map.set(r.recordId,r);dirty=false;persist();
+      $('status').textContent='Draft saved in this browser. Export to keep a durable record.';
       $('count').textContent=map.size+' / '+clips.length+' reviewed';
       $('status').className='muted';}
   catch(e){$('status').className='error';$('status').textContent=e.message;}
 };
-$('remove').onclick=()=>{map.delete(clips[index].id);redraw();};
+$('remove').onclick=()=>{map.delete(clips[index].id);persist();redraw();};
 function move(by){
   if(dirty){$('status').className='error';
     $('status').textContent='Save or clear your changes before navigating.';return;}
@@ -398,6 +419,7 @@ $('export').onclick=()=>{
   const a=document.createElement('a');a.href=url;
   a.download='klip-marine-reviewed-'+sampleId.slice(0,12)+'.json';
   document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
+  unexported=false;
   $('status').className='muted';$('status').textContent='Exported private owner review JSON.';
 };
 $('import').onclick=()=>$('file').click();
@@ -442,9 +464,12 @@ $('file').onchange=async()=>{
       next.set(x.recordId,restored);
     }
     map.clear();for(const [k,v] of next)map.set(k,v);
-    dirty=false;redraw();$('status').textContent='Imported '+map.size+' reviews.';
+    dirty=false;persist();unexported=false;redraw();
+    $('status').textContent='Imported '+map.size+' reviews.';
   }catch(e){$('status').className='error';$('status').textContent=e.message;}
 };
-redraw();
+const restored=restore();redraw();
+if(restored){unexported=true;
+  $('status').textContent='Restored '+restored+' draft reviews from this browser. Export to keep them.';}
 </script></body></html>""".replace("__CLIPS__",values).replace("__SAMPLE__",ident).replace(
         "__VERSION__",LABEL_VERSION).replace("__LEGACY__",LEGACY_LABEL_VERSION)
