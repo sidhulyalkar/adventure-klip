@@ -27,7 +27,7 @@
 - Controls: chance (analytic for pairs, 200 shuffles for recall), each single measurement,
   rank fusion of audio surprise and outing novelty, head without and with embedding/facts.
 - Tests: `python -m pytest -q tests/test_value_learning.py tests/test_discovery_experiment.py`
-  (33 tests); full suite 815 passed. Tap page driven in headless Chrome with real clips:
+  (33 tests); full suite 813 passed. Tap page driven in headless Chrome with real clips:
   load, sound toggle, keys, undo, draft survives reload, export validates against deck.
 - Safety: no new original reads beyond the existing bounded discovery run; evaluations
   refuse to overwrite; ledgers append-only.
