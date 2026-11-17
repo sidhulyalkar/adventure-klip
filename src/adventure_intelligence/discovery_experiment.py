@@ -28,6 +28,9 @@ VERSION = "klip-discovery-experiment-v1"
 MAX_SOURCES = 12
 STAGES = ("verify", "motion", "audio", "segments", "proxies", "judge")
 AUDIO_VERSION = "klip-discovery-audio-timeline-v1"
+# Motion, audio, segments and proxies do not depend on sport; only the judge
+# panel's questions do, so an untagged recording skips the judge stage.
+UNKNOWN_SPORT = "unknown"
 DEFAULTS = {"fps": 2, "budgetFraction": 0.25, "controls": 2, "minSegmentMs": 4000,
             "sensitivity": 3.0, "maxFrames": 16, "proxyWidth": 960, "proxyAudio": True,
             "models": ["qwen3-vl:32b", "gemma3:27b"]}
@@ -42,8 +45,10 @@ def load_sources(path: Path) -> list[dict]:
     for row in rows:
         if (not isinstance(row, dict) or set(row) != {"sourceSha256", "path", "sport"}
                 or not ledger._is_sha(row["sourceSha256"]) or row["sourceSha256"] in seen
-                or not isinstance(row["path"], str) or row["sport"] not in panel.RUBRICS):
-            raise ValueError("Each source needs a unique sourceSha256, a path and a known sport")
+                or not isinstance(row["path"], str)
+                or row["sport"] not in (*panel.RUBRICS, UNKNOWN_SPORT)):
+            raise ValueError("Each source needs a unique sourceSha256, a path and a sport "
+                             f"({', '.join(sorted(panel.RUBRICS))} or {UNKNOWN_SPORT})")
         seen.add(row["sourceSha256"])
     return rows
 
@@ -160,7 +165,9 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
                     audio=config["proxyAudio"])
         timing["proxies"] = round(time.monotonic() - began, 2)
 
-    if "judge" in stages and chosen:
+    if "judge" in stages and chosen and row["sport"] == UNKNOWN_SPORT:
+        log(f"{sha[:12]} has no sport; judge stage skipped")
+    elif "judge" in stages and chosen:
         (folder / "judgments").mkdir(exist_ok=True)
         began = time.monotonic()
         for s in chosen:

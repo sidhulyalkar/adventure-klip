@@ -34,7 +34,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     listing = sub.add_parser("list", help="hash files and print a source list")
-    listing.add_argument("--sport", choices=sorted(panel.RUBRICS), required=True)
+    listing.add_argument("--sport", choices=sorted((*panel.RUBRICS, experiment.UNKNOWN_SPORT)),
+                         required=True)
     listing.add_argument("files", nargs="+", type=Path)
     run = sub.add_parser("run")
     run.add_argument("--sources", type=Path, required=True)

@@ -485,3 +485,25 @@ def test_ski_run_annotation_found_in_reports_is_used(workspace):
     (j,) = found["judgments"]
     assert (j["startMs"], j["endMs"], j["selection"]) == (2000, 40000, "owner_marked_span")
     assert found["files"][0]["planFound"] is False
+
+
+def test_roster_sport_tags_reach_plan_and_untagged_recordings_stay_eligible(workspace, tmp_path):
+    with sqlite3.connect(workspace / "catalog.sqlite3") as db:
+        db.execute("UPDATE assets SET activity='unknown'")
+    doc = roster.propose(roster.catalog_rows(workspace))
+    assert all(o["sport"] is None for o in doc["outings"])
+    for outing in doc["outings"]:
+        if any(r["sourceSha256"] == A for r in outing["sources"]):
+            outing["sport"] = "ski"
+    (tmp_path / "roster.json").write_text(json.dumps(doc))
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    out = io.StringIO()
+    with redirect_stdout(out), redirect_stderr(io.StringIO()):
+        assert _cli().main(["plan", "--workspace", str(workspace), "--roster",
+                            str(tmp_path / "roster.json"), "--max", "3"]) == 0
+    sports = {r["sourceSha256"]: r["sport"] for r in json.loads(out.getvalue())}
+    assert sports == {A: "ski", B: "ski", C: "unknown"}
+    doc["outings"][0]["sport"] = "kayak"
+    with pytest.raises(ValueError, match="sport must be"):
+        roster.validate(doc)

@@ -14,6 +14,7 @@ import sqlite3
 
 VERSION = "klip-outing-roster-v1"
 STATUSES = ("provisional", "owner_confirmed")
+SPORTS = ("ski", "snorkeling", "bike", "mixed")
 _HEX = set("0123456789abcdef")
 
 
@@ -63,20 +64,25 @@ def propose(rows: list[dict], *, gap_hours: float = 6.0) -> dict:
         if previous_end is None or (when - previous_end).total_seconds() > gap_hours * 3600:
             day = when.date().isoformat()
             per_day[day] = per_day.get(day, 0) + 1
-            outings.append({"outing": f"{day}-{per_day[day]}", "sources": []})
+            outings.append({"outing": f"{day}-{per_day[day]}", "sport": None, "sources": []})
         outings[-1]["sources"].append(row)
         previous_end = when
     # An undated recording gets its own outing: grouping it would be a guess,
     # and leaving it alone can only make a held-out split look harder, not easier.
-    outings += [{"outing": f"undated-{row['sourceSha256'][:8]}", "sources": [row]}
+    outings += [{"outing": f"undated-{row['sourceSha256'][:8]}", "sport": None, "sources": [row]}
                 for row in sorted(undated, key=lambda r: r["sourceSha256"])]
+    for outing in outings:
+        # The catalog's tag when every tagged recording agrees; otherwise left for the owner.
+        tags = {r.get("activity") for r in outing["sources"]} & {"ski", "snorkeling", "bike"}
+        outing["sport"] = next(iter(tags)) if len(tags) == 1 else None
+        outing["recordings"] = len(outing["sources"])
     return {
         "version": VERSION, "status": "provisional", "gapHours": gap_hours,
         "outings": outings,
         "undatedSources": len(undated),
         "mixedClockBases": len(zones) > 1,
-        "ownerAction": "Check every outing, merge or split as needed, then set "
-                       "status to owner_confirmed.",
+        "ownerAction": "Check every outing, merge or split as needed, set each sport "
+                       "(ski, snorkeling, bike or mixed), then set status to owner_confirmed.",
     }
 
 
@@ -92,6 +98,8 @@ def validate(doc: dict) -> dict:
                 or not outing["sources"]):
             raise ValueError("Each outing needs a unique name and at least one source")
         seen_names.add(name)
+        if outing.get("sport") not in (None, *SPORTS):
+            raise ValueError(f"Outing {name}: sport must be one of {', '.join(SPORTS)} or null")
         for row in outing["sources"]:
             sha = row.get("sourceSha256") if isinstance(row, dict) else None
             if not isinstance(sha, str) or len(sha) != 64 or not set(sha) <= _HEX:
@@ -106,6 +114,13 @@ def outing_by_source(doc: dict) -> dict[str, str]:
     """{source SHA: outing}, the mapping evidence_ledger.with_outings expects."""
     return {row["sourceSha256"]: outing["outing"]
             for outing in validate(doc)["outings"] for row in outing["sources"]}
+
+
+def sport_by_source(doc: dict) -> dict[str, str]:
+    """{source SHA: sport} from outings the owner tagged with one sport ('mixed' gives none)."""
+    return {row["sourceSha256"]: outing["sport"]
+            for outing in validate(doc)["outings"] if outing.get("sport") in SPORTS[:3]
+            for row in outing["sources"]}
 
 
 def group_of(mapping: dict[str, str], source_sha: str) -> str:

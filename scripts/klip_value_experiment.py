@@ -196,6 +196,11 @@ def plan(args) -> list[dict]:
 
     owner = _owner(args, group_of)
     everything = _catalog_assets(args.workspace)
+    tagged = roster.sport_by_source(roster.validate(_json(args.roster))) if args.roster else {}
+    for sha, a in everything.items():
+        # Catalog tag, else the owner's outing tag, else unknown (no judge questions).
+        a["sport"] = (a["activity"] if a["activity"] in SPORTS
+                      else tagged.get(sha, "unknown"))
     root = args.source_root.expanduser().absolute() if args.source_root else None
     where: dict[str, int] = {}
     activity: dict[str, int] = {}
@@ -215,7 +220,10 @@ def plan(args) -> list[dict]:
                         "underSourceRoot": len(assets) + len(missing),
                         "missingOnDisk": len(missing),
                         "catalogPathsByFolder": dict(sorted(where.items(), key=lambda kv: -kv[1])[:8]),
-                        "catalogActivity": dict(sorted(activity.items(), key=lambda kv: -kv[1]))}
+                        "catalogActivity": dict(sorted(activity.items(), key=lambda kv: -kv[1])),
+                        "sportFromRosterTags": sum(a["activity"] not in SPORTS
+                                                   and a["sport"] != "unknown"
+                                                   for a in everything.values())}
     done = _done(args.exclude_experiment)
     weight: dict[str, float] = {}
     for j in owner["judgments"]:
@@ -226,9 +234,9 @@ def plan(args) -> list[dict]:
     queues: dict[str, list[str]] = {}
     for sha, _ in sorted(weight.items(), key=lambda kv: (-kv[1], kv[0])):
         asset = assets.get(sha)
-        if sha in done or asset is None or asset["activity"] not in SPORTS:
+        if sha in done or asset is None:
             continue
-        if args.sport and asset["activity"] != args.sport:
+        if args.sport and asset["sport"] != args.sport:
             continue
         queues.setdefault(group_of(sha), []).append(sha)
     # Outings with the most labels first; one recording per outing per round,
@@ -246,8 +254,7 @@ def plan(args) -> list[dict]:
         rng = random.Random(f"plan:{args.seed}")
         spare: dict[str, list[str]] = {}
         for sha in sorted(assets):
-            if (sha in done or sha in picked or assets[sha]["activity"] not in SPORTS
-                    or (args.sport and assets[sha]["activity"] != args.sport)):
+            if sha in done or sha in picked or (args.sport and assets[sha]["sport"] != args.sport):
                 continue
             spare.setdefault(group_of(sha), []).append(sha)
         for shas in spare.values():
@@ -262,9 +269,9 @@ def plan(args) -> list[dict]:
     print(json.dumps({"labelled": sum(s in weight for s in picked),
                       "unlabelled": sum(s not in weight for s in picked),
                       "outings": len({group_of(s) for s in picked}),
-                      "sports": sorted({assets[s]["activity"] for s in picked})}),
+                      "sports": sorted({assets[s]["sport"] for s in picked})}),
           file=sys.stderr)
-    return [{"sourceSha256": s, "path": assets[s]["path"], "sport": assets[s]["activity"]}
+    return [{"sourceSha256": s, "path": assets[s]["path"], "sport": assets[s]["sport"]}
             for s in picked]
 
 

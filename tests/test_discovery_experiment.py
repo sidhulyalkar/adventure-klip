@@ -202,3 +202,17 @@ def test_proxy_keeps_sound_when_the_source_has_it(tmp_path):
                               "stream=codec_type", "-of", "csv=p=0", str(tmp_path / "q.mp4")],
                              capture_output=True, text=True, check=True).stdout.split()
     assert streams == ["video"]
+
+
+def test_untagged_recording_runs_every_stage_but_the_judge(setup):
+    rows = json.loads(setup["sources"].read_text())
+    rows[0]["sport"] = "unknown"
+    setup["sources"].write_text(json.dumps(rows))
+
+    def never(body):
+        raise AssertionError("no judge call for an untagged recording")
+
+    report = go(setup, transport=never)
+    (source,) = report["sources"]
+    assert source["failure"] is None and source["segments"] >= 2 and source["judgedSegments"] == 0
+    assert list((setup["out"] / setup["sha"] / "proxies").glob("*.mp4"))
