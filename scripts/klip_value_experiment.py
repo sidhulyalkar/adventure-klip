@@ -237,7 +237,7 @@ def main(argv=None) -> int:
                        help="Klip data folder with catalog.sqlite3 "
                             f"(default: $ADVENTURE_HOME or {DEFAULT_WORKSPACE})")
         p.add_argument("--reports", type=Path, nargs="*", default=[],
-                       help="extra folders holding review exports (workspace/reports is always read)")
+                       help="extra folders holding review exports (workspace reports/ and exports/ are always read)")
         p.add_argument("--ledger", type=Path)
         p.add_argument("--pairs-ledger", type=Path)
         p.add_argument("--roster", type=Path)

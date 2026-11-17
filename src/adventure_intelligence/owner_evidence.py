@@ -182,7 +182,7 @@ def from_catalog(workspace: Path) -> dict:
 
 def _scan(workspace: Path, extra: list[Path] | None = None) -> list[tuple[Path, dict, str]]:
     found, seen = [], set()
-    for root in [Path(workspace) / "reports", *(extra or [])]:
+    for root in [Path(workspace) / "reports", Path(workspace) / "exports", *(extra or [])]:
         if root.is_dir():
             found += [f for f in _scan_root(root) if f[2] not in seen and not seen.add(f[2])]
     return found
