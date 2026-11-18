@@ -137,11 +137,16 @@ def _catalog_assets(workspace: Path) -> dict[str, dict]:
             "SELECT sha256,stored_path,activity,duration FROM assets WHERE duration>0")}
 
 
-def _done(folders: list[Path]) -> set[str]:
-    done = set()
+def _done(folders: list[Path]) -> tuple[set[str], set[str]]:
+    """(scanned, attempted). Scanned means the motion timeline exists; a recording
+    that failed was attempted but gives no evidence, so its pairs stay unusable."""
+    scanned, attempted = set(), set()
     for folder in folders or []:
-        done |= set(_json(folder / "experiment.json")["sources"])
-    return done
+        for sha in _json(folder / "experiment.json")["sources"]:
+            attempted.add(sha)
+            if (folder / sha / "motion.json").is_file():
+                scanned.add(sha)
+    return scanned, attempted
 
 
 def harvest(args) -> dict:
@@ -224,7 +229,8 @@ def plan(args) -> list[dict]:
                         "sportFromRosterTags": sum(a["activity"] not in SPORTS
                                                    and a["sport"] != "unknown"
                                                    for a in everything.values())}
-    done = _done(args.exclude_experiment)
+    done, attempted = _done(args.exclude_experiment)
+    plan.diagnostics["attemptedButFailed"] = len(attempted - done)
     weight: dict[str, float] = {}
     for j in owner["judgments"]:
         weight[j["sourceSha256"]] = weight.get(j["sourceSha256"], 0) + 1
@@ -239,7 +245,7 @@ def plan(args) -> list[dict]:
             weight[sha] = weight.get(sha, 0) + 0.5
     reachable = [(sides, w, ok) for sides, w, ok in pairs
                  if all(sha in done or sha in assets for sha in sides)]
-    candidates = {sha for sha in weight if sha in assets and sha not in done
+    candidates = {sha for sha in weight if sha in assets and sha not in attempted
                   and not (args.sport and assets[sha]["sport"] != args.sport)}
     covered, picked = set(done), []
 
@@ -274,7 +280,7 @@ def plan(args) -> list[dict]:
         rng = random.Random(f"plan:{args.seed}")
         spare: dict[str, list[str]] = {}
         for sha in sorted(assets):
-            if sha in done or sha in picked or (args.sport and assets[sha]["sport"] != args.sport):
+            if sha in attempted or sha in picked or (args.sport and assets[sha]["sport"] != args.sport):
                 continue
             spare.setdefault(group_of(sha), []).append(sha)
         for shas in spare.values():

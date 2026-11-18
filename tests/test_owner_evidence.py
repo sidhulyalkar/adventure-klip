@@ -562,3 +562,30 @@ def test_evaluation_reports_pairs_lost_to_unscanned_recordings(tmp_path):
                                  roster_confirmed=True)
     assert report["coverage"]["pairsMissingAScannedRecording"] == 1
     assert report["coverage"]["pairsOffered"] == len(pairs) + 1
+
+
+def test_failed_recordings_are_not_counted_as_scanned_or_picked_again(tmp_path):
+    from adventure_intelligence import evidence_ledger as ledger
+    ws = tmp_path / "ws"
+    with catalog.connect(ws) as db:
+        for i, s in enumerate((A, B)):
+            db.execute("INSERT INTO assets (id,sha256,stored_path,size_bytes,suffix,duration,"
+                       "capture_time,activity) VALUES (?,?,?,?,?,?,?,?)",
+                       (s, s, f"/m/{i}.mp4", 1, ".mp4", 60.0, "2026-01-02T09:00:00", "ski"))
+    ledger.append(tmp_path / "ev.jsonl", [ledger.record(
+        source_sha=s, start_ms=0, end_ms=1000, decision=d, selection="pipeline_selected_window",
+        schema="t", export_digest=sha("e"), record_id=str(i))
+        for i, (s, d) in enumerate(((A, "keep"), (B, "skip")))])
+    exp = tmp_path / "discovery-001"
+    (exp / A).mkdir(parents=True)
+    (exp / A / "motion.json").write_text("{}")  # A scanned; B listed but failed
+    (exp / "experiment.json").write_text(json.dumps({"sources": [A, B]}))
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    err = io.StringIO()
+    with redirect_stdout(io.StringIO()), redirect_stderr(err):
+        assert _cli().main(["plan", "--workspace", str(ws), "--ledger", str(tmp_path / "ev.jsonl"),
+                            "--no-fill", "--exclude-experiment", str(exp)]) == 2
+    assert "No recordings left" in err.getvalue()
+    diagnostics = json.loads(err.getvalue().split("\n}\n")[0] + "\n}")
+    assert diagnostics["attemptedButFailed"] == 1

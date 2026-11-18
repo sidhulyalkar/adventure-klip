@@ -289,7 +289,9 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
             timings[sha] = _source_stages(
                 row, output / sha, config, stages, resolve=resolve, decode=decode,
                 audio=audio, cut=cut, trusted_root=trusted, frames=frames, transport=transport, log=log)["timingSeconds"]
-        except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+            # SubprocessError covers ffprobe/ffmpeg failures (an unreadable or
+            # truncated file, a drive that went away) as well as timeouts.
             # One bad recording must not stop the others, and is never a negative.
             failures[sha] = f"{type(error).__name__}: {error}"
             log(f"{sha[:12]} failed: {error}")

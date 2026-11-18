@@ -216,3 +216,14 @@ def test_untagged_recording_runs_every_stage_but_the_judge(setup):
     (source,) = report["sources"]
     assert source["failure"] is None and source["segments"] >= 2 and source["judgedSegments"] == 0
     assert list((setup["out"] / setup["sha"] / "proxies").glob("*.mp4"))
+
+
+def test_unreadable_recording_fails_alone_and_the_run_continues(setup):
+    def broken(path):
+        raise subprocess.CalledProcessError(1, ["ffprobe", str(path)])
+
+    report = go(setup, stages=("verify", "motion", "audio", "segments"), audio=broken)
+    (source,) = report["sources"]
+    assert source["failure"].startswith("CalledProcessError")
+    assert report["totals"]["failedSources"] == 1
+    assert (setup["out"] / "report.json").is_file()
