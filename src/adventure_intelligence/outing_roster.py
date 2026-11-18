@@ -157,6 +157,8 @@ def validate(doc: dict) -> dict:
             raise ValueError(f"Outing {name}: trip must be a short name")
         if place is not None and (not isinstance(place, str) or len(place) > 120):
             raise ValueError(f"Outing {name}: place must be text up to 120 characters")
+        _text(outing.get("title"), 120, f"Outing {name}: title")
+        _text(outing.get("note"), 2000, f"Outing {name}: note")
         for row in outing["sources"]:
             sha = row.get("sourceSha256") if isinstance(row, dict) else None
             if not isinstance(sha, str) or len(sha) != 64 or not set(sha) <= _HEX:
@@ -165,8 +167,33 @@ def validate(doc: dict) -> dict:
                 raise ValueError("A recording appears in two outings")
             if row.get("activity", UNLABELLED) not in (*ACTIVITIES, UNLABELLED):
                 raise ValueError(f"Activity must be one of {', '.join(ACTIVITIES)} or unknown")
+            _text(row.get("note"), 2000, "Recording note")
+            _tags(row.get("tags"))
             seen_sources.add(sha)
+    trips = doc.get("trips", {})
+    if not isinstance(trips, dict) or len(trips) > 500:
+        raise ValueError("Trip details must be a mapping")
+    for key, info in trips.items():
+        if not isinstance(key, str) or not isinstance(info, dict):
+            raise ValueError("Trip details must be a mapping")
+        _text(info.get("title"), 120, "Trip title")
+        _text(info.get("place"), 120, "Trip place")
+        _text(info.get("note"), 2000, "Trip note")
     return doc
+
+
+def _text(value, limit: int, what: str) -> None:
+    if value is not None and (not isinstance(value, str) or len(value) > limit):
+        raise ValueError(f"{what} must be text up to {limit} characters")
+
+
+def _tags(value) -> None:
+    """Owner tags on a recording: people, animals, places, anything. Short free text."""
+    if value is None:
+        return
+    if (not isinstance(value, list) or len(value) > 30
+            or any(not isinstance(t, str) or not 1 <= len(t) <= 40 for t in value)):
+        raise ValueError("Tags must be up to 30 short labels")
 
 
 def outing_by_source(doc: dict) -> dict[str, str]:

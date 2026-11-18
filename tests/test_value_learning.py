@@ -58,13 +58,15 @@ def write_experiment(folder, *, outings=6, per_outing=2, seed=0, value_in="audio
                 start, level = k * SEG_MS, rng.uniform(0.5, 2.0)
                 for t in range(start, start + SEG_MS, 500):
                     motion.append({"t_ms": t, "change": float(level + rng.normal(0, 0.05))})
-                loud = start + 7000 if (valuable[k] and value_in == "audio") else None
+                loud = start + 7000 if (valuable[k] and value_in == "audio") else None  # "none": no signal
                 for t in range(start, start + SEG_MS, 1000):
                     rms = 0.6 if t == loud else 0.05 + abs(rng.normal(0, 0.01))
                     audio.append({"t_ms": t, "rms": rms, "spectralFlux": rms / 2})
                 for t in range(start, start + SEG_MS, 4000):
                     v = rng.normal(0, 1, DIM)
-                    if value_in == "embedding":
+                    if value_in == "none":
+                        v[0] = rng.normal(0, 0.3)
+                    elif value_in == "embedding":
                         # Two equally common looks: valuable footage is not rarer,
                         # so novelty cannot find it and only the content can.
                         v[0] = 4.0 if valuable[k] else -4.0

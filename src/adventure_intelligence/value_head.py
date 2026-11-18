@@ -40,7 +40,14 @@ def _spec(train_items: list[dict], variant: str, embedding_dims: int) -> dict:
         if len(values) >= 2 and values.std() > 1e-9:
             spec["signals"].append({"name": name, "mean": float(values.mean()),
                                     "std": float(values.std())})
+    spec["concepts"] = []
     if variant == "full":
+        for name in sorted({k for i in train_items if i.get("concepts") for k in i["concepts"]}):
+            values = np.array([i["concepts"][name] for i in train_items
+                               if i.get("concepts") and name in i["concepts"]], dtype=float)
+            if len(values) >= 2 and values.std() > 1e-9:
+                spec["concepts"].append({"name": name, "mean": float(values.mean()),
+                                         "std": float(values.std())})
         spec["facts"] = sorted({k for i in train_items if i["facts"] for k in i["facts"]})
         vectors = [i["embedding"] for i in train_items if i["embedding"] is not None]
         dims = min(embedding_dims, len(vectors) - 1)
@@ -58,6 +65,7 @@ def _spec(train_items: list[dict], variant: str, embedding_dims: int) -> dict:
 def columns(spec: dict) -> list[str]:
     names = [s["name"] for s in spec["signals"]]
     names += ["has:" + g for g in ("motion", "audio", "embedding", "facts")]
+    names += [c["name"] for c in spec.get("concepts", [])]
     names += ["fact:" + k for k in spec["facts"]]
     if spec["embedding"] is not None:
         names += [f"embedding_pc{k + 1}" for k in range(len(spec["embedding"]["axes"]))]
@@ -72,6 +80,9 @@ def _row(item: dict, spec: dict) -> np.ndarray:
     # learn that "no audio" differs from "average audio".
     row += [float(signals["motion_mean"] is not None), float(signals["audio_mean"] is not None),
             float(item["embedding"] is not None), float(bool(item["facts"]))]
+    concepts = item.get("concepts") or {}
+    row += [0.0 if c["name"] not in concepts else (concepts[c["name"]] - c["mean"]) / c["std"]
+            for c in spec.get("concepts", [])]
     row += [_FACT.get((item["facts"] or {}).get(k), 0.0) for k in spec["facts"]]
     if spec["embedding"] is not None:
         e = spec["embedding"]

@@ -73,3 +73,20 @@
 - Evaluation holds out whole trips by default; the day-level result is reported as
   optimistic.
 - Trip gap of 4 days: the Polynesia trip has a 58-hour gap with no filming.
+
+## Revision 4 (2026-11-18): description pass with pretrained models
+
+- `moment_evidence`: keyframe-only decode about every 2 s, giving SigLIP2 image embeddings
+  and CLAP audio embeddings per 2 s window. Stored per recording, resumable.
+- Concepts are scored from the stored embeddings against an encoded vocabulary, so
+  owner terms need no second pass over the footage.
+- Each segment gets each concept's peak score and peak time, and per-recording activity
+  proposals.
+- The full head takes the concepts as readable columns. Novelty uses description
+  embeddings.
+- Checked:
+  - keyframe timestamps match decoded frames exactly on a generated video;
+  - encoder calls run against random-weight SigLIP and CLAP models on Transformers 5.23;
+  - in synthetic data, a value visible only as a concept is learned by the full head
+    (above 0.9), while energy signals stay below 0.7.
+- Not yet run with the real weights. That first happens on the owner's Mac.

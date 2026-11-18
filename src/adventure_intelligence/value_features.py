@@ -139,8 +139,21 @@ def _facts(source: dict, start: int, end: int) -> dict[str, str] | None:
     return best if best_share >= 0.5 else None
 
 
+def attach_described(sources: dict[str, dict], store) -> int:
+    """Use description-pass embeddings (one model for every recording) where they exist."""
+    count = 0
+    for sha, source in sources.items():
+        entry = store.recording(sha)
+        if entry is not None and len(entry["times"]) >= 2:
+            source.update(frameTimes=np.asarray(entry["times"]), frames=entry["embeddings"],
+                          embeddingKey="described:" + store.doc["imageModel"])
+            count += 1
+    return count
+
+
 def build_items(sources: dict[str, dict], intervals: list[tuple[str, int, int]],
-                group_of, *, seed: int = 0, archive_cap: int = 4000) -> dict[str, dict]:
+                group_of, *, seed: int = 0, archive_cap: int = 4000,
+                evidence=None) -> dict[str, dict]:
     """One item per distinct (source, start, end) that has any evidence.
 
     Novelty compares an interval with the rest of its own outing (is this
@@ -210,11 +223,15 @@ def build_items(sources: dict[str, dict], intervals: list[tuple[str, int, int]],
         facts = _facts(source, start, end)
         role = next((s["role"] for s in source["segments"]
                      if s["startMs"] == start and s["endMs"] == end), "owner_interval")
+        described = evidence.interval(sha, start, end) if evidence is not None else None
         items[item_id(sha, start, end)] = {
             "itemId": item_id(sha, start, end), "sourceSha256": sha,
             "startMs": start, "endMs": end, "group": group, "sport": source["sport"],
             "role": role, "signals": signals, "facts": facts, "embedding": vector,
             "hasProxy": (start, end) in source["proxies"],
+            # Zero-shot concept peaks and when they peak: evidence, not judgments.
+            "concepts": described["concepts"] if described else None,
+            "peaksMs": described["peaksMs"] if described else None,
         }
     return items
 

@@ -127,19 +127,83 @@ def _load(args):
     owner["judgments"] = [j for j in owner["judgments"] if j["sourceSha256"] not in excluded]
     embeddings = (features.attach_embeddings(sources, args.workspace)
                   if args.workspace and (args.workspace / "catalog.sqlite3").is_file() else None)
+    store = _evidence(args)
+    described = features.attach_described(sources, store) if store else 0
     pool = features.segment_intervals(sources)
     taps = [r for r in owner["answers"] if "left" in r]
     items = features.build_items(
         sources, pool + value_eval.judgment_intervals(owner["judgments"])
         + value_eval.pair_intervals(owner["collected"]["pairs"] + taps)
-        + value_eval.grid_intervals(owner["answers"]), group_of, seed=args.seed)
+        + value_eval.grid_intervals(owner["answers"]), group_of, seed=args.seed, evidence=store)
     pool_ids = {features.item_id(*interval) for interval in pool} & set(items)
     labelled = {j["sourceSha256"] for j in owner["judgments"]}
     return {**owner, "sources": sources, "items": items, "pool_ids": pool_ids,
             "confirmed": confirmed, "embeddings": embeddings, "duplicates": duplicates,
             "group_of": group_of, "trip_of": lambda outing: trips.get(outing, outing),
-            "excluded": len(excluded),
+            "excluded": len(excluded), "described": described,
+            "vocabulary": store.doc["digest"] if store else None,
             "labelledSourcesWithoutEvidence": len(labelled - set(sources))}
+
+
+def _evidence(args):
+    """The description store, if one exists (explicit --evidence, else WORKSPACE/reports/evidence)."""
+    folder = getattr(args, "evidence", None)
+    if folder is None and getattr(args, "workspace", None):
+        folder = args.workspace / "reports" / "evidence"
+    if folder is None or not (Path(folder) / "vocabulary.json").is_file():
+        return None
+    from adventure_intelligence import moment_evidence
+    return moment_evidence.Store(folder)
+
+
+def describe(args) -> dict:
+    """Run the pretrained description pass over recordings; resumable and read-only on footage."""
+    from adventure_intelligence import moment_evidence as me
+    store = (args.store or args.workspace / "reports" / "evidence").expanduser()
+    terms = []
+    if args.terms:
+        terms = [t.strip() for t in args.terms.read_text(encoding="utf-8").splitlines() if t.strip()]
+    vocab = me.vocabulary(terms)
+    image = me.ImageEncoder(args.image_model)
+    audio = None if args.no_audio else me.AudioEncoder(args.audio_model)
+    doc = me.encode_vocabulary(store, vocab, image=image, audio=audio)
+    print(f"[describe] vocabulary {doc['digest']}: {len(vocab['see'])} things to see, "
+          f"{len(vocab['hear'])} sounds", file=sys.stderr)
+    if args.vocabulary_only:
+        return {"vocabulary": doc["digest"], "store": str(store)}
+    assets = _catalog_assets(args.workspace)
+    root = args.source_root.expanduser().absolute()
+    doc_roster = roster.validate(_json(args.roster)) if args.roster else None
+    skip = roster.excluded_sources(doc_roster) if doc_roster else set()
+    scanned = set()
+    for folder in sorted((args.workspace / "reports").glob("discovery-*")):
+        if (folder / "experiment.json").is_file():
+            scanned |= {sha for sha in _json(folder / "experiment.json")["sources"]
+                        if (folder / sha / "motion.json").is_file()}
+    order = sorted((sha for sha, a in assets.items() if sha not in skip
+                    and Path(a["path"]).is_relative_to(root)),
+                   key=lambda sha: (sha not in scanned, assets[sha]["path"]))
+    if args.max:
+        order = order[:args.max]
+    done = failed = 0
+    started = __import__("time").monotonic()
+    for k, sha in enumerate(order, 1):
+        path = Path(assets[sha]["path"])
+        try:
+            if not path.is_file():
+                raise ValueError("file missing")
+            meta = me.describe(sha, path, store, image=image, audio=audio, step_s=args.step)
+            done += 1
+            note = "already done" if meta.get("skipped") else (
+                f"{meta['frames']} frames, {meta['seconds']}")
+        except Exception as error:  # one bad recording never stops the pass
+            failed += 1
+            note = f"failed: {type(error).__name__}: {str(error)[:120]}"
+        spent = __import__("time").monotonic() - started
+        eta = spent / k * (len(order) - k) / 60
+        print(f"[describe] {k}/{len(order)} {path.name}: {note} (about {eta:.0f} min left)",
+              file=sys.stderr, flush=True)
+    return {"described": done, "failed": failed, "store": str(store), "vocabulary": doc["digest"]}
 
 
 def _catalog_assets(workspace: Path) -> dict[str, dict]:
@@ -331,6 +395,8 @@ def main(argv=None) -> int:
         p.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE,
                        help="Klip data folder with catalog.sqlite3 "
                             f"(default: $ADVENTURE_HOME or {DEFAULT_WORKSPACE})")
+        p.add_argument("--evidence", type=Path,
+                       help="description store (default: WORKSPACE/reports/evidence when present)")
         p.add_argument("--reports", type=Path, nargs="*", default=[],
                        help="extra folders holding review exports (workspace reports/ and exports/ are always read)")
         p.add_argument("--ledger", type=Path)
@@ -347,6 +413,19 @@ def main(argv=None) -> int:
                      help="discovery folders (default: every WORKSPACE/reports/discovery-*)")
     rev.add_argument("--port", type=int, default=0)
     rev.add_argument("--no-browser", action="store_true")
+    des = sub.add_parser("describe", help="describe recordings with pretrained models (resumable)")
+    des.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
+    des.add_argument("--source-root", type=Path, required=True)
+    des.add_argument("--roster", type=Path, help="recordings marked accidental are skipped")
+    des.add_argument("--store", type=Path, help="default: WORKSPACE/reports/evidence")
+    des.add_argument("--terms", type=Path, help="extra things to look for, one per line")
+    des.add_argument("--image-model", default="google/siglip2-so400m-patch14-384")
+    des.add_argument("--audio-model", default="laion/clap-htsat-unfused")
+    des.add_argument("--no-audio", action="store_true")
+    des.add_argument("--step", type=float, default=2.0, help="seconds between frames")
+    des.add_argument("--max", type=int, help="describe at most this many recordings")
+    des.add_argument("--vocabulary-only", action="store_true",
+                     help="re-encode the concept list only (after editing --terms)")
     loc = sub.add_parser("locate", help="find every Klip catalog and review export under folders")
     loc.add_argument("roots", type=Path, nargs="+")
     har = sub.add_parser("harvest", help="report every owner label and whether it is used")
@@ -397,7 +476,11 @@ def main(argv=None) -> int:
                 args.workspace = None
             else:
                 args.workspace = _workspace(args.workspace)
-        if args.command == "review":
+        if args.command == "describe":
+            if not 0.5 <= args.step <= 30:
+                raise ValueError("--step must be 0.5..30 seconds")
+            print(json.dumps(describe(args), indent=2))
+        elif args.command == "review":
             from adventure_intelligence import value_review_server as app
             folder = (args.ledgers or args.workspace / "reports" / "owner-ledgers").expanduser()
             folder.mkdir(parents=True, exist_ok=True)
@@ -513,6 +596,7 @@ def main(argv=None) -> int:
                 "ownerEvidence": state["collected"]["counts"],
                 "rosterConfirmed": state["confirmed"], "embeddings": state["embeddings"],
                 "accidentalRecordingsExcluded": state["excluded"],
+                "describedRecordings": state["described"], "vocabulary": state["vocabulary"],
                 "seed": args.seed, "sourcesWithEvidence": len(state["sources"]),
                 "sourcesListedInTwoExperiments": state["duplicates"],
                 "labelledRecordingsNotInTheseExperiments": state["labelledSourcesWithoutEvidence"],

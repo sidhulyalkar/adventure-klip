@@ -198,6 +198,34 @@ This opens a local page (127.0.0.1 only, with a session token) with two tabs:
 Footage, catalog and discovery output are only read. Thumbnails are cached in
 `$L/thumbs/`.
 
+## Describing every recording with pretrained models
+
+```bash
+python scripts/klip_value_experiment.py describe --workspace "$WS" --source-root "$SSD" \
+    --roster "$L/roster.json" --max 3        # measure speed first, then drop --max
+```
+
+Reads each original once, decoding keyframes only, and writes nothing next to it. The
+results go to `$WS/reports/evidence/<sha>/` for each recording:
+
+- SigLIP2 image embeddings, about one frame every 2 s;
+- CLAP audio embeddings, one per 2-second window;
+- the models and settings used.
+
+Concepts are scored from the stored embeddings against a vocabulary encoded by the same
+models. The built-in vocabulary covers people, animals, water, snow, land, sounds and
+image quality. Add your own terms in a text file, one per line, then run:
+
+```bash
+python scripts/klip_value_experiment.py describe --workspace "$WS" --source-root "$SSD" \
+    --terms "$L/terms.txt" --vocabulary-only
+```
+
+This takes seconds and does not decode footage again. Every segment then carries each
+concept's peak score and the time of that peak. `evaluate`, `deck` and the review app use
+them automatically. Recordings marked accidental are skipped, and the pass resumes where
+it stopped.
+
 ## Days are sorted; trips are held out
 
 Ranking, review screens and pairs stay within one day. `evaluate` tests each model on a
