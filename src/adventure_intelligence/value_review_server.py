@@ -177,6 +177,7 @@ class ReviewState:
                                     lambda s: roster.group_of(mapping, s), seed=self.seed)
 
     def deck_list(self) -> dict:
+        self.refresh()  # pick up batches the scan finished since the app opened
         answered = self._answers()
         out = []
         for path in sorted(self.decks.glob("grid-*.deck.json")) if self.decks.is_dir() else []:
@@ -194,6 +195,7 @@ class ReviewState:
         screens = body.get("screens", 30)
         if type(screens) is not int or not 4 <= screens <= 120:
             raise ValueError("Screens must be 4..120")
+        self.refresh()
         items = {i: it for i, it in self._items().items() if sport in (None, it["sport"])}
         deck = pairs_mod.build_grid(items, experiment="review-app", screens=screens,
                                     per_screen=4, repeats=max(1, screens // 8),
