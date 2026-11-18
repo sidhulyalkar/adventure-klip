@@ -589,3 +589,48 @@ def test_failed_recordings_are_not_counted_as_scanned_or_picked_again(tmp_path):
     assert "No recordings left" in err.getvalue()
     diagnostics = json.loads(err.getvalue().split("\n}\n")[0] + "\n}")
     assert diagnostics["attemptedButFailed"] == 1
+
+
+def test_trips_follow_two_day_gaps_and_a_wrong_clock_does_not_split_a_day():
+    rows = [{"sourceSha256": sha(n), "captureTime": t, "activity": "unknown"} for n, t in (
+        ("a", "2024-12-20T23:42:00"), ("b", "2024-12-21T02:46:00"),   # one day across midnight
+        ("c", "2024-12-23T12:40:00"), ("d", "2024-12-25T11:12:00"),   # same trip, later days
+        ("e", "2025-12-23T09:00:00"))]                                # a new trip a year later
+    doc = roster.propose(rows)
+    days = [[r["sourceSha256"] for r in o["sources"]] for o in doc["outings"]]
+    assert days[0] == [sha("a"), sha("b")]
+    trips = roster.trip_by_outing(doc)
+    names = [o["outing"] for o in doc["outings"]]
+    assert trips[names[0]] == trips[names[1]] == trips[names[2]] != trips[names[3]]
+    doc["outings"][0]["sources"][0]["activity"] = "accidental"
+    assert roster.excluded_sources(doc) == {sha("a")}
+    assert roster.activity_by_source(doc)[sha("b")] == "unknown"
+
+
+def test_trip_holdout_never_trains_on_another_day_of_the_same_trip(tmp_path, monkeypatch):
+    made = write_experiment(tmp_path / "exp", outings=6)
+    _, items, pool_ids, group_of = build(tmp_path / "exp", made)
+    rows = owner_ledger(made["truth"])
+    pairs = pairs_mod.from_ledger(rows, group_of)
+    trip = {f"outing-{k}": f"trip-{k // 2}" for k in range(6)}  # two days per trip
+    from adventure_intelligence import value_head as head
+    real_fit, real_score = head.fit, head.score
+
+    def fit(train, items_, **kwargs):
+        model = real_fit(train, items_, **kwargs)
+        if model is not None:
+            model["_trips"] = {trip[g] for p in train for g in p["groups"]}
+        return model
+
+    def score(model, item):
+        assert trip[item["group"]] not in model["_trips"], "a day of the held-out trip was in training"
+        return real_score(model, item)
+
+    monkeypatch.setattr(head, "fit", fit)
+    monkeypatch.setattr(head, "score", score)
+    report = value_eval.evaluate(items, pairs, rows, pool_ids=pool_ids, roster_confirmed=True,
+                                 holdout_of=trip.get, holdout_level="trip")
+    assert report["coverage"]["holdoutUnitsWithScoredPairs"] == 3
+    assert report["coverage"]["outingsWithScoredPairs"] == 6
+    assert set(report["pairAccuracy"]["audio_peak_rel"]["perOuting"]) == {"trip-0", "trip-1", "trip-2"}
+    assert any("trips with scored pairs" in r for r in report["gate"]["reasons"])

@@ -56,3 +56,20 @@
   per round; `harvest` reports coverage.
 - Tests: 825 passed. Grid page checked in headless Chrome at a 1512×860 viewport: clips
   play, keys, star, sound, back, reload, export, import validation.
+
+## Revision 3 (2026-11-18): first real numbers, trips, review app
+
+- First real evaluation, 85 owner pairs over 4 days (84 from "athletic skill" curation):
+  - audio mean 0.87, motion mean 0.77, learned head 0.44, chance 0.5. Pilot, no claim.
+  - Read as Stage A ("something is happening"), not as value among active moments.
+  - The head below chance is unexplained. Candidates are noise from tiny days and
+    sports pooled in one model; a training-data sanity check is still to add.
+- plan now picks recordings by the pairs they complete. One per outing completed 1
+  of 258.
+- Discovery survives unreadable recordings, such as an ffprobe failure on a
+  truncated file.
+- Review app (`klip_value_experiment.py review`): trips, days, per-recording activity
+  ("accidental" excluded everywhere), and grid rounds saved per answer.
+- Evaluation holds out whole trips by default; the day-level result is reported as
+  optimistic.
+- Trip gap of 4 days: the Polynesia trip has a 58-hour gap with no filming.

@@ -90,46 +90,63 @@ class ReviewState:
         return roster.validate(json.loads(self.roster_file.read_text(encoding="utf-8")))
 
     def roster_view(self) -> dict:
-        doc, cat, scanned = self.roster_doc(), self.catalog(), self.sources()
-        outings = []
+        doc = roster.with_trips(self.roster_doc())
+        cat, scanned = self.catalog(), self.sources()
+        trips: dict[str, dict] = {}
         for outing in doc["outings"]:
             recs = []
             for row in outing["sources"]:
                 sha = row["sourceSha256"]
                 info = cat.get(sha, {})
                 recs.append({"sha": sha, "file": Path(info.get("path") or "?").name,
-                             "captureTime": info.get("captureTime"),
+                             "captureTime": info.get("captureTime") or row.get("captureTime"),
                              "minutes": round((info.get("duration") or 0) / 60, 1),
-                             "scanned": sha in scanned})
-            times = [r["captureTime"] for r in recs if r["captureTime"]]
-            outings.append({"outing": outing["outing"], "sport": outing.get("sport"),
-                            "start": min(times) if times else None,
-                            "end": max(times) if times else None,
-                            "minutes": round(sum(r["minutes"] for r in recs), 1),
-                            "recordings": recs})
-        return {"status": doc["status"], "sports": list(roster.SPORTS), "outings": outings}
+                             "scanned": sha in scanned,
+                             "activity": row.get("activity", roster.UNLABELLED)})
+            recs.sort(key=lambda r: (r["captureTime"] is None, r["captureTime"] or "", r["sha"]))
+            trip = trips.setdefault(outing["trip"], {"trip": outing["trip"],
+                                                     "place": outing.get("place"), "outings": []})
+            trip["outings"].append({"outing": outing["outing"], "place": outing.get("place"),
+                                    "recordings": recs})
+        ordered = sorted(trips.values(), key=lambda t: min(
+            (r["captureTime"] or "~") for o in t["outings"] for r in o["recordings"]))
+        for t in ordered:
+            t["outings"].sort(key=lambda o: min((r["captureTime"] or "~") for r in o["recordings"]))
+        return {"status": doc["status"], "activities": list(roster.ACTIVITIES),
+                "unlabelled": roster.UNLABELLED, "trips": ordered}
 
     def save_roster(self, body: dict) -> dict:
-        """Apply the owner's outings. Every recording must still be in exactly one outing."""
+        """Apply the owner's trips, days and activities. Every recording stays in one day."""
         current = self.roster_doc()
         rows = {r["sourceSha256"]: r for o in current["outings"] for r in o["sources"]}
-        if body.get("status") not in roster.STATUSES or not isinstance(body.get("outings"), list):
-            raise ValueError("Roster needs a status and a list of outings")
+        if body.get("status") not in roster.STATUSES or not isinstance(body.get("trips"), list):
+            raise ValueError("Roster needs a status and a list of trips")
         outings = []
-        for o in body["outings"]:
-            shas = o.get("sources") if isinstance(o, dict) else None
-            if not isinstance(shas, list) or not shas:
-                raise ValueError("Each outing needs recordings")
-            if any(sha not in rows for sha in shas):
-                raise ValueError("Unknown recording in roster")
-            outings.append({"outing": o.get("outing"), "sport": o.get("sport"),
-                            "sources": [rows[sha] for sha in shas], "recordings": len(shas)})
-        placed = [r["sourceSha256"] for o in outings for r in o["sources"]]
-        if sorted(placed) != sorted(rows):
-            raise ValueError("Every recording must stay in exactly one outing")
-        if body["status"] == "owner_confirmed" and any(o["sport"] is None for o in outings):
-            raise ValueError("Set a sport for every outing before confirming "
-                             "(use mixed when an outing has more than one)")
+        for t in body["trips"]:
+            if not isinstance(t, dict) or not isinstance(t.get("outings"), list) or not t["outings"]:
+                raise ValueError("Each trip needs days")
+            for o in t["outings"]:
+                sources = o.get("sources") if isinstance(o, dict) else None
+                if not isinstance(sources, list) or not sources:
+                    raise ValueError("Each day needs recordings")
+                placed = []
+                for item in sources:
+                    sha = item.get("sha") if isinstance(item, dict) else None
+                    if sha not in rows:
+                        raise ValueError("Unknown recording in roster")
+                    activity = item.get("activity", roster.UNLABELLED)
+                    if activity not in (*roster.ACTIVITIES, roster.UNLABELLED):
+                        raise ValueError("Unknown activity")
+                    placed.append({**rows[sha], "activity": activity})
+                acts = {r["activity"] for r in placed} - {roster.UNLABELLED, roster.EXCLUDED}
+                sport = (next(iter(acts)) if len(acts) == 1 and acts <= set(roster.JUDGED_SPORTS)
+                         else "mixed" if len(acts) > 1 else None)
+                outings.append({"outing": o.get("outing"), "trip": t.get("trip"),
+                                "place": (o.get("place") or t.get("place") or None),
+                                "sport": sport, "sources": placed, "recordings": len(placed)})
+        placed_all = [r["sourceSha256"] for o in outings for r in o["sources"]]
+        if sorted(placed_all) != sorted(rows):
+            raise ValueError("Every recording must stay in exactly one day")
         doc = {**current, "status": body["status"], "outings": outings}
         roster.validate(doc)
         with self.lock:
@@ -139,7 +156,9 @@ class ReviewState:
             temp = self.roster_file.with_suffix(".json.partial")
             temp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
             temp.replace(self.roster_file)
-        return {"saved": True, "status": doc["status"], "outings": len(outings)}
+        unlabelled = sum(r["activity"] == roster.UNLABELLED for o in outings for r in o["sources"])
+        return {"saved": True, "status": doc["status"], "outings": len(outings),
+                "trips": len({o["trip"] for o in outings}), "unlabelled": unlabelled}
 
     def thumbnail(self, sha: str) -> bytes:
         """One frame from 40% into the recording, cached. Originals are only read."""
@@ -168,11 +187,12 @@ class ReviewState:
     # ---- grid ---------------------------------------------------------------------------
 
     def _items(self) -> dict[str, dict]:
+        """Scanned segments, with the owner's activity as their sport; accidental left out."""
         doc = self.roster_doc()
-        mapping, sports = roster.outing_by_source(doc), roster.sport_by_source(doc)
-        sources = self.sources()
-        for sha, source in sources.items():
-            source["sport"] = sports.get(sha, source["sport"])
+        mapping, activity = roster.outing_by_source(doc), roster.activity_by_source(doc)
+        sources = {sha: dict(src, sport=activity.get(sha, roster.UNLABELLED))
+                   for sha, src in self.sources().items()
+                   if activity.get(sha) != roster.EXCLUDED}
         return features.build_items(sources, features.segment_intervals(sources),
                                     lambda s: roster.group_of(mapping, s), seed=self.seed)
 
@@ -187,7 +207,9 @@ class ReviewState:
                         "screens": len(deck["screens"]),
                         "answered": sum(1 for (d, _) in answered if d == digest),
                         "created": deck.get("created")})
-        sports = sorted({s["sport"] for s in self.sources().values()})
+        activity = roster.activity_by_source(self.roster_doc())
+        present = {activity.get(sha, roster.UNLABELLED) for sha in self.sources()}
+        sports = sorted(present - {roster.EXCLUDED})
         return {"decks": out, "scannedRecordings": len(self.sources()), "sports": sports}
 
     def new_deck(self, body: dict) -> dict:
@@ -199,7 +221,7 @@ class ReviewState:
         items = {i: it for i, it in self._items().items() if sport in (None, it["sport"])}
         deck = pairs_mod.build_grid(items, experiment="review-app", screens=screens,
                                     per_screen=4, repeats=max(1, screens // 8),
-                                    seed=int(time.time()))
+                                    seed=int(time.time()), by_sport=sport is not None)
         deck.update(sport=sport, created=datetime.now().isoformat(timespec="seconds"))
         name = f"grid-{pairs_mod.deck_digest(deck)[:12]}"
         self.decks.mkdir(parents=True, exist_ok=True)

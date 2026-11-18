@@ -37,3 +37,8 @@ select,input{background:#232a31;border:1px solid #4a5560;border-radius:6px;paddi
 table{border-collapse:collapse;width:100%}
 td,th{padding:6px 8px;border-bottom:1px solid #2c333b;text-align:left}
 progress{width:220px}
+.trip{border-left:3px solid #4a6fa5;padding-left:12px;margin:0 0 22px}
+.trip>.card-head h2{margin:0;font-size:18px;flex:1 1 260px}
+.trip>.card-head{margin:0 0 10px}
+.trip input[type=text]{min-width:220px}
+img.mini{width:128px;aspect-ratio:16/9;object-fit:cover;border-radius:3px;background:#000}

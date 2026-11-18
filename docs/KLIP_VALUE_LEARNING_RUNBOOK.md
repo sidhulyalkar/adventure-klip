@@ -178,18 +178,34 @@ python scripts/klip_value_experiment.py review --workspace "$WS" --source-root "
 
 This opens a local page (127.0.0.1 only, with a session token) with two tabs:
 
-- **Outings:** each outing as a card with frames from its first, middle and last
-  recording. Set the sport, merge days of the same trip, split one that mixes two
-  days, then confirm. Writes `$L/roster.json` and keeps the previous version as
-  `roster.json.bak-<time>`. It refuses any edit that would drop a recording, and
-  refuses to confirm while an outing has no sport.
-- **Review clips:** start a round (optionally one sport), then tick keeps, star the best,
+- **Trips & days:** recordings are grouped by gaps in recording time: a new day
+  after 6 hours, a new trip after 4 days. Gaps are used rather than dates, so a
+  camera clock in the wrong time zone doesn't split a day at midnight. Each day
+  shows frames from its first, middle and last recording. Give every recording an
+  activity: ski, snorkeling, kayak, bike, hike, surf, other, or accidental.
+  - "Fill unlabelled" changes only recordings that are still unlabelled.
+  - Accidental recordings stay in their day but are left out of review rounds,
+    scanning plans, ranking and evaluation.
+  - You can merge or split days and trips, and give each trip a place.
+  - Saving writes `$L/roster.json` and keeps the previous version as
+    `roster.json.bak-<time>`. It refuses any edit that would drop a recording.
+- **Review clips:** start a round (one activity, or all activities mixed within each
+  day), then tick keeps, star the best,
   and press Enter. Each screen is saved to `$L/owner-pairs.jsonl` as you answer. There is
   no export step, and you can stop and continue any time. Rounds draw from every
   `discovery-*` folder.
 
 Footage, catalog and discovery output are only read. Thumbnails are cached in
 `$L/thumbs/`.
+
+## Days are sorted; trips are held out
+
+Ranking, review screens and pairs stay within one day. `evaluate` tests each model on a
+whole trip it never trained on (`--holdout trip`, the default). That includes choosing the
+model's regularization. It also reports the same comparison holding out single days as
+`optimisticDayLevel`: an upper bound, because other days of the same trip, with the same
+places and people, were in training. With only a handful of trips, a claim needs most of
+them labelled.
 
 ## How to read the gate
 

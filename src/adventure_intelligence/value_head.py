@@ -148,13 +148,15 @@ def accuracy(model: dict, pairs: list[dict], items: dict[str, dict]) -> float | 
 
 
 def fit_selecting_l2(pairs: list[dict], items: dict[str, dict], *, variant: str,
-                     default_l2: float = 10.0) -> dict | None:
-    """Pick l2 by leaving out one training outing at a time, then refit on all of them.
+                     default_l2: float = 10.0, holdout_of=None) -> dict | None:
+    """Pick l2 by leaving out one training unit at a time, then refit on all of them.
 
-    The outing being evaluated is never in `pairs`, so this choice cannot see it.
-    With fewer than three training outings there is too little to choose on.
+    A unit is what `holdout_of` maps an outing to (a trip, by default the outing
+    itself). The unit being evaluated is never in `pairs`, so this choice cannot
+    see it. With fewer than three training units there is too little to choose on.
     """
-    groups = sorted({p["group"] for p in usable(pairs, items)
+    unit = holdout_of or (lambda g: g)
+    groups = sorted({unit(p["group"]) for p in usable(pairs, items)
                      if p["outcome"] != 0.5 and p["evalEligible"]})
     chosen = default_l2
     if len(groups) >= 3:
@@ -162,9 +164,10 @@ def fit_selecting_l2(pairs: list[dict], items: dict[str, dict], *, variant: str,
         for l2 in L2_GRID:
             scores = []
             for held in groups:
-                model = fit([p for p in pairs if held not in p["groups"]], items,
-                            variant=variant, l2=l2)
-                value = model and accuracy(model, [p for p in pairs if p["group"] == held], items)
+                model = fit([p for p in pairs if held not in {unit(g) for g in p["groups"]}],
+                            items, variant=variant, l2=l2)
+                value = model and accuracy(
+                    model, [p for p in pairs if unit(p["group"]) == held], items)
                 if value is not None:
                     scores.append(value)
             mean = sum(scores) / len(scores) if scores else 0.0

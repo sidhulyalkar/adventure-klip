@@ -62,9 +62,11 @@ $('tab-review').addEventListener('click', () => {
 });
 window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
-// ---- outings -------------------------------------------------------------------
+// ---- trips, days and recordings -------------------------------------------------
 
 let roster = null;
+const LABEL = { unknown: 'unlabelled', accidental: 'accidental (leave out)' };
+const label = (a) => LABEL[a] || a;
 
 async function loadOutings() {
   try {
@@ -74,87 +76,124 @@ async function loadOutings() {
   } catch (e) { say(e.message, true); }
 }
 
-function uniqueName(base) {
-  const names = new Set(roster.outings.map((o) => o.outing));
+function changed() { dirty = true; renderOutings(); }
+
+function uniqueName(base, taken) {
   let n = 2;
-  while (names.has(`${base}-${n}`)) n += 1;
+  while (taken.has(`${base}-${n}`)) n += 1;
   return `${base}-${n}`;
 }
+const dayNames = () => new Set(roster.trips.flatMap((t) => t.outings.map((o) => o.outing)));
+const tripNames = () => new Set(roster.trips.map((t) => t.trip));
 
-function summarize(o) {
-  const times = o.recordings.map((r) => r.captureTime).filter(Boolean).sort();
-  o.start = times[0] || null;
-  o.end = times[times.length - 1] || null;
-  o.minutes = Math.round(o.recordings.reduce((s, r) => s + r.minutes, 0) * 10) / 10;
+function span(recs) {
+  const times = recs.map((r) => r.captureTime).filter(Boolean).sort();
+  const minutes = Math.round(recs.reduce((s, r) => s + r.minutes, 0) * 10) / 10;
+  return { start: times[0] || null, end: times[times.length - 1] || null, minutes };
+}
+const clock = (iso) => (iso ? new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '');
+const day = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'undated');
+
+function activitySelect(value, onchange, aria) {
+  return el('select', { 'aria-label': aria, onchange },
+    ...[roster.unlabelled, ...roster.activities].map((a) => el('option', { value: a, text: label(a), selected: a === value })));
 }
 
 function renderOutings() {
   const view = $('outings-view');
   view.replaceChildren();
-  const unset = roster.outings.filter((o) => !o.sport).length;
+  const recs = roster.trips.flatMap((t) => t.outings.flatMap((o) => o.recordings));
+  const unlabelled = recs.filter((r) => r.activity === roster.unlabelled).length;
   const confirmed = roster.status === 'owner_confirmed';
   view.append(
     el('p', { class: 'muted', text:
-      'Each card is one outing, grouped by gaps in recording time. Set the sport, merge days ' +
-      'of the same trip into one outing (they share scenery, so testing on one after training ' +
-      'on another would flatter the model), split an outing that mixes two days out, then confirm.' }),
+      'Trips hold days; days hold recordings. Recordings were grouped by gaps in recording time ' +
+      '(a new day after 6 hours, a new trip after 4 days). Sorting happens per day; a model is ' +
+      'always tested on a whole trip it never trained on. Give each recording an activity: ' +
+      'fill a day in one go (only unlabelled recordings change), then fix single recordings. ' +
+      'Mark mistakes as accidental: they stay in their day but are left out of review and ranking.' }),
     el('div', { class: 'bar' },
       el('span', { class: `badge ${confirmed ? 'ok' : ''}`, text: confirmed ? 'Confirmed' : 'Not confirmed' }),
-      el('span', { class: 'muted', text: `${roster.outings.length} outings · ${unset} without a sport` }),
+      el('span', { class: 'muted', text:
+        `${roster.trips.length} trips · ${roster.trips.reduce((n, t) => n + t.outings.length, 0)} days · ` +
+        `${recs.length} recordings · ${unlabelled} unlabelled` }),
       el('button', { text: 'Save draft', onclick: () => saveRoster('provisional') }),
-      el('button', { class: 'primary', text: 'Confirm outings', onclick: () => saveRoster('owner_confirmed') })));
-  roster.outings.forEach((o, i) => view.append(outingCard(o, i)));
+      el('button', { class: 'primary', text: 'Confirm', onclick: () => saveRoster('owner_confirmed') })));
+  roster.trips.forEach((t, ti) => view.append(tripCard(t, ti)));
 }
 
-function outingCard(o, i) {
-  const sport = el('select', { 'aria-label': `Sport for ${o.outing}`,
-    onchange: (e) => { o.sport = e.target.value || null; dirty = true; renderOutings(); } },
-    el('option', { value: '', text: '— sport —' }),
-    ...roster.sports.map((s) => el('option', { value: s, text: s, selected: o.sport === s })));
+function tripCard(t, ti) {
+  const all = t.outings.flatMap((o) => o.recordings);
+  const s = span(all);
+  const place = el('input', { type: 'text', value: t.place || '', placeholder: 'Place (e.g. Moorea)',
+    'aria-label': `Place for trip starting ${day(s.start)}`, maxlength: 120,
+    onchange: (e) => { t.place = e.target.value.trim() || null; dirty = true; } });
+  return el('section', { class: 'trip' },
+    el('div', { class: 'card-head' },
+      el('h2', { text: `Trip · ${day(s.start)} → ${day(s.end)}` }),
+      el('span', { class: 'muted', text: `${t.outings.length} days · ${all.length} recordings · ${s.minutes} min` }),
+      place,
+      el('button', { text: 'Merge into previous trip', disabled: ti === 0, onclick: () => {
+        roster.trips[ti - 1].outings.push(...t.outings);
+        roster.trips.splice(ti, 1);
+        changed();
+      } })),
+    ...t.outings.map((o, oi) => dayCard(t, ti, o, oi)));
+}
+
+function dayCard(t, ti, o, oi) {
+  const s = span(o.recordings);
+  const unlabelled = o.recordings.filter((r) => r.activity === roster.unlabelled).length;
+  const fill = activitySelect(roster.unlabelled, () => {}, `Activity to fill for ${day(s.start)}`);
   const picks = [0, Math.floor(o.recordings.length / 2), o.recordings.length - 1]
     .filter((v, k, a) => a.indexOf(v) === k);
-  const thumbs = el('div', { class: 'thumbs' }, ...picks.map((k) => el('img', {
-    src: withToken(`/thumb/${o.recordings[k].sha}`), loading: 'lazy',
-    alt: `Frame from ${o.recordings[k].file}` })));
-  const list = el('ul', { class: 'recs', hidden: true }, ...o.recordings.map((r, k) => el('li', {},
+  const list = el('ul', { class: 'recs', hidden: !o.open }, ...o.recordings.map((r, k) => el('li', {},
+    o.open ? el('img', { class: 'mini', src: withToken(`/thumb/${r.sha}`), loading: 'lazy', alt: `Frame from ${r.file}` }) : null,
     el('span', { class: 'file', text: r.file }),
-    el('span', { class: 'muted', text: `${when(r.captureTime)} · ${r.minutes} min${r.scanned ? ' · scanned' : ''}` }),
-    k > 0 ? el('button', { text: 'Split here', title: 'Start a new outing at this recording',
-      onclick: () => {
-        const rest = o.recordings.splice(k);
-        const next = { outing: uniqueName(o.outing), sport: o.sport, recordings: rest };
-        summarize(o); summarize(next);
-        roster.outings.splice(i + 1, 0, next);
-        dirty = true; renderOutings();
-      } }) : null)));
-  const scanned = o.recordings.filter((r) => r.scanned).length;
-  return el('div', { class: `card ${o.sport ? '' : 'unset'}` },
+    el('span', { class: 'muted', text: `${clock(r.captureTime)} · ${r.minutes} min${r.scanned ? ' · scanned' : ''}` }),
+    activitySelect(r.activity, (e) => { r.activity = e.target.value; changed(); }, `Activity for ${r.file}`),
+    k > 0 ? el('button', { text: 'New day from here', onclick: () => {
+      const rest = o.recordings.splice(k);
+      t.outings.splice(oi + 1, 0, { outing: uniqueName(o.outing, dayNames()), place: o.place, recordings: rest });
+      changed();
+    } }) : null)));
+  return el('div', { class: `card ${unlabelled ? 'unset' : ''}` },
     el('div', { class: 'card-head' },
-      el('h3', { text: `${when(o.start)} → ${o.end ? new Date(o.end).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : ''}` }),
-      el('span', { class: 'muted', text: `${o.recordings.length} recordings · ${o.minutes} min · ${scanned} scanned` }),
-      sport,
-      el('button', { text: 'Merge into previous', disabled: i === 0,
-        title: 'Same trip as the outing above', onclick: () => {
-          const prev = roster.outings[i - 1];
-          prev.recordings.push(...o.recordings);
-          prev.sport = prev.sport || o.sport;
-          summarize(prev);
-          roster.outings.splice(i, 1);
-          dirty = true; renderOutings();
-        } }),
-      el('button', { text: 'Recordings', 'aria-expanded': 'false', onclick: (e) => {
-        list.hidden = !list.hidden;
-        e.target.setAttribute('aria-expanded', String(!list.hidden));
-      } })),
-    thumbs, list);
+      el('h3', { text: `${day(s.start)} · ${clock(s.start)} → ${clock(s.end)}` }),
+      el('span', { class: 'muted', text: `${o.recordings.length} recordings · ${s.minutes} min · ${unlabelled} unlabelled` }),
+      fill,
+      el('button', { text: 'Fill unlabelled', onclick: () => {
+        if (fill.value === roster.unlabelled) return;
+        o.recordings.forEach((r) => { if (r.activity === roster.unlabelled) r.activity = fill.value; });
+        changed();
+      } }),
+      el('button', { text: 'Merge into previous day', disabled: oi === 0, onclick: () => {
+        t.outings[oi - 1].recordings.push(...o.recordings);
+        t.outings.splice(oi, 1);
+        changed();
+      } }),
+      el('button', { text: 'New trip from here', disabled: oi === 0, onclick: () => {
+        const moved = t.outings.splice(oi);
+        roster.trips.splice(ti + 1, 0, { trip: uniqueName(t.trip, tripNames()), place: null, outings: moved });
+        changed();
+      } }),
+      el('button', { text: o.open ? 'Hide recordings' : 'Recordings', 'aria-expanded': String(!!o.open),
+        onclick: () => { o.open = !o.open; renderOutings(); } })),
+    el('div', { class: 'thumbs' }, ...picks.map((k) => el('img', {
+      src: withToken(`/thumb/${o.recordings[k].sha}`), loading: 'lazy',
+      alt: `Frame from ${o.recordings[k].file}` }))),
+    list);
 }
 
 async function saveRoster(status) {
   try {
-    const result = await api('/api/roster', { status, outings: roster.outings.map((o) => ({
-      outing: o.outing, sport: o.sport, sources: o.recordings.map((r) => r.sha) })) });
+    const result = await api('/api/roster', { status, trips: roster.trips.map((t) => ({
+      trip: t.trip, place: t.place, outings: t.outings.map((o) => ({
+        outing: o.outing, place: o.place, sources: o.recordings.map((r) => ({ sha: r.sha, activity: r.activity })) })) })) });
     dirty = false;
-    say(`Saved ${result.outings} outings (${result.status === 'owner_confirmed' ? 'confirmed' : 'draft'}).`);
+    say(`Saved ${result.trips} trips, ${result.outings} days` +
+        `${result.unlabelled ? `, ${result.unlabelled} recordings still unlabelled` : ''}` +
+        ` (${result.status === 'owner_confirmed' ? 'confirmed' : 'draft'}).`);
     await loadOutings();
   } catch (e) { say(e.message, true); }
 }
@@ -165,8 +204,8 @@ async function loadDecks() {
   const view = $('review-view');
   try {
     const data = await api('/api/decks');
-    const sport = el('select', { 'aria-label': 'Sport for the new round' },
-      el('option', { value: '', text: 'all sports' }),
+    const sport = el('select', { 'aria-label': 'Activity for the new round' },
+      el('option', { value: '', text: 'all activities (mixed per day)' }),
       ...data.sports.map((s) => el('option', { value: s, text: s })));
     const screens = el('input', { type: 'number', min: 4, max: 120, value: 30, 'aria-label': 'Screens' });
     const rows = data.decks.map((d) => el('tr', {},

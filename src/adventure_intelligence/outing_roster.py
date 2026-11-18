@@ -1,10 +1,16 @@
-"""Outing roster: which recordings belong to the same day out.
+"""Outing roster: trips, the days (outings) inside them, and each recording's activity.
 
-Every held-out comparison in Klip splits by outing, so the roster has to be
-right, and only the owner knows it. `propose` groups recordings by gaps in
-capture time as a starting point. The result stays provisional until the owner
-checks it, fixes merges and splits, and sets "status" to "owner_confirmed".
-Camera clocks can be wrong; a proposed roster is never evidence of independence.
+Two levels, two jobs:
+- a day (an "outing") is what gets sorted: the best moments of each day;
+- a trip is what a model is tested on: it is always scored on a whole trip it
+  never trained on, because days of one trip share places and people.
+
+`propose` groups by gaps in capture time: a new day after a gap of more than
+gap_hours, a new trip after more than trip_gap_hours. Gaps, not calendar dates,
+so a camera clock set to the wrong time zone does not split a day at midnight.
+Each recording carries its own activity; "accidental" recordings stay in their
+day but are left out of review, ranking and evaluation. Everything stays
+provisional until the owner confirms it.
 """
 from __future__ import annotations
 
@@ -14,7 +20,11 @@ import sqlite3
 
 VERSION = "klip-outing-roster-v1"
 STATUSES = ("provisional", "owner_confirmed")
-SPORTS = ("ski", "snorkeling", "bike", "mixed")
+SPORTS = ("ski", "snorkeling", "bike", "mixed")  # legacy outing-level tag
+ACTIVITIES = ("ski", "snorkeling", "kayak", "bike", "hike", "surf", "other", "accidental")
+UNLABELLED = "unknown"
+EXCLUDED = "accidental"
+JUDGED_SPORTS = ("ski", "snorkeling", "bike")  # activities the judge panel has questions for
 _HEX = set("0123456789abcdef")
 
 
@@ -44,10 +54,16 @@ def catalog_rows(workspace: Path) -> list[dict]:
                                     "WHERE duration>0 ORDER BY id")]
 
 
-def propose(rows: list[dict], *, gap_hours: float = 6.0) -> dict:
-    """Start a new outing whenever consecutive recordings are more than gap_hours apart."""
-    if not 0 < gap_hours <= 72:
-        raise ValueError("gap_hours must be in (0, 72]")
+def _activity(value) -> str:
+    return value if value in ACTIVITIES else UNLABELLED
+
+
+def propose(rows: list[dict], *, gap_hours: float = 6.0, trip_gap_hours: float = 96.0) -> dict:
+    """New day after gap_hours without a recording; new trip after trip_gap_hours
+    (4 days by default: trips have rest days without filming)."""
+    if not 0 < gap_hours <= 72 or not gap_hours <= trip_gap_hours <= 24 * 60:
+        raise ValueError("Need 0 < gap_hours <= 72 and gap_hours <= trip_gap_hours")
+    rows = [{**r, "activity": _activity(r.get("activity"))} for r in rows]
     dated, undated, zones = [], [], set()
     for row in rows:
         when, zoned = _clock(row.get("captureTime"))
@@ -76,14 +92,50 @@ def propose(rows: list[dict], *, gap_hours: float = 6.0) -> dict:
         tags = {r.get("activity") for r in outing["sources"]} & {"ski", "snorkeling", "bike"}
         outing["sport"] = next(iter(tags)) if len(tags) == 1 else None
         outing["recordings"] = len(outing["sources"])
-    return {
+    doc = {
         "version": VERSION, "status": "provisional", "gapHours": gap_hours,
-        "outings": outings,
+        "tripGapHours": trip_gap_hours, "outings": outings,
         "undatedSources": len(undated),
         "mixedClockBases": len(zones) > 1,
-        "ownerAction": "Check every outing, merge or split as needed, set each sport "
-                       "(ski, snorkeling, bike or mixed), then set status to owner_confirmed.",
+        "ownerAction": "Check trips and days, merge or split as needed, set each "
+                       "recording's activity, then confirm.",
     }
+    return with_trips(doc)
+
+
+def _start(outing: dict) -> datetime | None:
+    times = [t for t in (_clock(r.get("captureTime"))[0] for r in outing["sources"]) if t]
+    return min(times) if times else None
+
+
+def _end(outing: dict) -> datetime | None:
+    times = [t for t in (_clock(r.get("captureTime"))[0] for r in outing["sources"]) if t]
+    return max(times) if times else None
+
+
+def with_trips(doc: dict) -> dict:
+    """Give every outing without a trip one, by the trip gap rule. Owner choices are kept."""
+    gap = float(doc.get("tripGapHours") or 96.0)
+    outings = doc["outings"]
+    order = sorted(range(len(outings)), key=lambda k: (_start(outings[k]) is None,
+                                                       _start(outings[k]) or datetime.min, k))
+    trip, previous_end = None, None
+    for k in order:
+        o = outings[k]
+        start = _start(o)
+        if start is None:
+            o.setdefault("trip", f"trip-{o['outing']}")
+            continue
+        if trip is None or previous_end is None or (start - previous_end).total_seconds() > gap * 3600:
+            trip = f"trip-{start.date().isoformat()}"
+        o.setdefault("trip", trip)
+        if o["trip"] == trip:
+            previous_end = max(previous_end or start, _end(o) or start)
+        o.setdefault("place", None)
+        for row in o["sources"]:
+            row["activity"] = _activity(row.get("activity"))
+    doc.setdefault("tripGapHours", gap)
+    return doc
 
 
 def validate(doc: dict) -> dict:
@@ -100,12 +152,19 @@ def validate(doc: dict) -> dict:
         seen_names.add(name)
         if outing.get("sport") not in (None, *SPORTS):
             raise ValueError(f"Outing {name}: sport must be one of {', '.join(SPORTS)} or null")
+        trip, place = outing.get("trip"), outing.get("place")
+        if trip is not None and (not isinstance(trip, str) or not 1 <= len(trip) <= 80):
+            raise ValueError(f"Outing {name}: trip must be a short name")
+        if place is not None and (not isinstance(place, str) or len(place) > 120):
+            raise ValueError(f"Outing {name}: place must be text up to 120 characters")
         for row in outing["sources"]:
             sha = row.get("sourceSha256") if isinstance(row, dict) else None
             if not isinstance(sha, str) or len(sha) != 64 or not set(sha) <= _HEX:
                 raise ValueError("Roster sources need a full SHA-256")
             if sha in seen_sources:
                 raise ValueError("A recording appears in two outings")
+            if row.get("activity", UNLABELLED) not in (*ACTIVITIES, UNLABELLED):
+                raise ValueError(f"Activity must be one of {', '.join(ACTIVITIES)} or unknown")
             seen_sources.add(sha)
     return doc
 
@@ -116,11 +175,31 @@ def outing_by_source(doc: dict) -> dict[str, str]:
             for outing in validate(doc)["outings"] for row in outing["sources"]}
 
 
+def activity_by_source(doc: dict) -> dict[str, str]:
+    """{source SHA: activity}. A recording's own tag first, then a legacy one-sport outing tag."""
+    out = {}
+    for outing in validate(doc)["outings"]:
+        for row in outing["sources"]:
+            own = _activity(row.get("activity"))
+            if own == UNLABELLED and outing.get("sport") in JUDGED_SPORTS:
+                own = outing["sport"]
+            out[row["sourceSha256"]] = own
+    return out
+
+
 def sport_by_source(doc: dict) -> dict[str, str]:
-    """{source SHA: sport} from outings the owner tagged with one sport ('mixed' gives none)."""
-    return {row["sourceSha256"]: outing["sport"]
-            for outing in validate(doc)["outings"] if outing.get("sport") in SPORTS[:3]
-            for row in outing["sources"]}
+    """{source SHA: sport} for recordings whose activity has judge questions."""
+    return {sha: a for sha, a in activity_by_source(doc).items() if a in JUDGED_SPORTS}
+
+
+def excluded_sources(doc: dict) -> set[str]:
+    """Recordings the owner marked accidental: kept in the roster, left out of everything else."""
+    return {sha for sha, a in activity_by_source(doc).items() if a == EXCLUDED}
+
+
+def trip_by_outing(doc: dict) -> dict[str, str]:
+    """{outing: trip}; an outing with no trip is its own trip."""
+    return {o["outing"]: o.get("trip") or o["outing"] for o in validate(doc)["outings"]}
 
 
 def group_of(mapping: dict[str, str], source_sha: str) -> str:

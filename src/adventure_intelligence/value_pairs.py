@@ -209,7 +209,7 @@ GRID_GOAL = "outing_highlight"
 
 def build_grid(items: dict[str, dict], *, experiment: str, screens: int = 30,
                per_screen: int = 4, repeats: int = 4, seed: int = 0,
-               max_seconds: float = 60.0) -> dict:
+               max_seconds: float = 60.0, by_sport: bool = True) -> dict:
     """Screens of segments drawn uniformly at random from one outing and sport.
 
     Uniform draws over every segment of the timeline (proposals, controls and
@@ -222,7 +222,9 @@ def build_grid(items: dict[str, dict], *, experiment: str, screens: int = 30,
     pools: dict[tuple, list[dict]] = {}
     for item in items.values():
         if item["hasProxy"] and item["endMs"] - item["startMs"] <= max_seconds * 1000:
-            pools.setdefault((item["group"], item["sport"]), []).append(item)
+            # One outing per screen; one sport per screen unless asked to mix.
+            pools.setdefault((item["group"], item["sport"] if by_sport else "all"),
+                             []).append(item)
     pools = {k: sorted(v, key=lambda i: i["itemId"]) for k, v in sorted(pools.items())
              if len(v) >= per_screen}
     if not pools:

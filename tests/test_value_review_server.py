@@ -76,24 +76,44 @@ def test_page_needs_no_token_but_data_does(running):
     assert err.value.code == 403
 
 
+def _trips(view, activity="ski"):
+    return [{"trip": t["trip"], "place": t["place"], "outings": [
+        {"outing": o["outing"], "sources": [{"sha": r["sha"], "activity": activity}
+                                             for r in o["recordings"]]}
+        for o in t["outings"]]} for t in view["trips"]]
+
+
+def test_roster_view_groups_days_into_trips(running):
+    _, view, _ = running["call"]("/api/roster")
+    # Fixture days are Jan 10, 11, 12: one trip, three days, nothing labelled yet.
+    assert len(view["trips"]) == 1 and len(view["trips"][0]["outings"]) == 3
+    assert {r["activity"] for o in view["trips"][0]["outings"] for r in o["recordings"]} == {"unknown"}
+    assert "accidental" in view["activities"]
+
+
 def test_roster_edits_keep_every_recording_and_back_up(running):
     call = running["call"]
     _, view, _ = call("/api/roster")
-    outings = [{"outing": o["outing"], "sport": "ski",
-                "sources": [r["sha"] for r in o["recordings"]]} for o in view["outings"]]
-    merged = [{**outings[0], "sources": outings[0]["sources"] + outings[1]["sources"]}, outings[2]]
+    trips = _trips(view)
+    days = trips[0]["outings"]
+    merged = {**trips[0], "place": "Moorea",
+              "outings": [{**days[0], "sources": days[0]["sources"] + days[1]["sources"]}, days[2]]}
     with pytest.raises(HTTPError) as err:
-        call("/api/roster", {"status": "owner_confirmed", "outings": merged[:1]})
-    assert err.value.code == 400  # a recording would be lost
-    with pytest.raises(HTTPError):
         call("/api/roster", {"status": "owner_confirmed",
-                             "outings": [{**merged[0], "sport": None}, merged[1]]})
-    _, saved, _ = call("/api/roster", {"status": "owner_confirmed", "outings": merged})
-    assert saved == {"saved": True, "status": "owner_confirmed", "outings": 2}
+                             "trips": [{**merged, "outings": merged["outings"][:1]}]})
+    assert err.value.code == 400  # a recording would be lost
+    merged["outings"][1]["sources"][0]["activity"] = "accidental"
+    _, saved, _ = call("/api/roster", {"status": "owner_confirmed", "trips": [merged]})
+    assert saved["trips"] == 1 and saved["outings"] == 2 and saved["unlabelled"] == 0
     doc = roster.validate(json.loads((running["ledgers"] / "roster.json").read_text()))
-    assert doc["status"] == "owner_confirmed" and len(doc["outings"]) == 2
+    assert doc["status"] == "owner_confirmed" and {o["place"] for o in doc["outings"]} == {"Moorea"}
     assert doc["outings"][0]["sources"][0]["captureTime"]  # catalog details preserved
+    assert len(roster.excluded_sources(doc)) == 1
     assert list(running["ledgers"].glob("roster.json.bak-*"))
+    with pytest.raises(HTTPError):
+        bad = json.loads(json.dumps(merged))
+        bad["outings"][0]["sources"][0]["activity"] = "parasailing"
+        call("/api/roster", {"status": "provisional", "trips": [bad]})
 
 
 def test_thumbnail_is_read_once_and_cached(running):
@@ -124,15 +144,25 @@ def test_round_answers_save_immediately_and_latest_wins(running):
     assert err.value.code == 400
 
 
-def test_round_for_one_sport_uses_roster_tags(running):
+def test_rounds_use_recording_activity_and_skip_accidental_ones(running):
     call = running["call"]
     _, view, _ = call("/api/roster")
-    outings = [{"outing": o["outing"], "sport": "snorkeling" if i == 0 else "ski",
-                "sources": [r["sha"] for r in o["recordings"]]} for i, o in enumerate(view["outings"])]
-    call("/api/roster", {"status": "owner_confirmed", "outings": outings})
-    _, made, _ = call("/api/decks", {"sport": "snorkeling", "screens": 4})
+    trips = _trips(view)
+    days = trips[0]["outings"]
+    for item in days[0]["sources"]:
+        item["activity"] = "snorkeling"
+    days[0]["sources"][0]["activity"] = "accidental"
+    call("/api/roster", {"status": "owner_confirmed", "trips": trips})
+    accidental = days[0]["sources"][0]["sha"]
+    _, listing, _ = call("/api/decks")
+    assert "accidental" not in listing["sports"]
+    _, made, _ = call("/api/decks", {"sport": None, "screens": 12})
     deck = json.loads((running["ledgers"] / "decks" / f"{made['id']}.deck.json").read_text())
-    assert {s["sport"] for s in deck["screens"]} == {"snorkeling"}
+    shown = {c["sourceSha256"] for s in deck["screens"] for c in s["clips"]}
+    assert accidental not in shown and shown
+    _, made, _ = call("/api/decks", {"sport": "ski", "screens": 4})
+    deck = json.loads((running["ledgers"] / "decks" / f"{made['id']}.deck.json").read_text())
+    assert {s["sport"] for s in deck["screens"]} == {"ski"}
 
 
 def test_clips_stream_with_byte_ranges_and_nothing_else_is_served(running):

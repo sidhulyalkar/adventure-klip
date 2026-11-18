@@ -78,6 +78,14 @@ def _mapping(args):
     return roster.outing_by_source(doc), doc["status"] == "owner_confirmed"
 
 
+def _roster_extras(args) -> tuple[dict[str, str], set[str]]:
+    """({outing: trip}, recordings marked accidental)."""
+    if not getattr(args, "roster", None):
+        return {}, set()
+    doc = roster.validate(_json(args.roster))
+    return roster.trip_by_outing(doc), roster.excluded_sources(doc)
+
+
 def _owner(args, group_of):
     """All owner judgments and every pair derived from them."""
     rows = ledger.load(args.ledger) if getattr(args, "ledger", None) else []
@@ -106,11 +114,17 @@ def _load(args):
             else:
                 sources[sha] = source
     mapping, confirmed = _mapping(args)
+    trips, excluded = _roster_extras(args)
+    for sha in excluded & set(sources):
+        del sources[sha]  # accidental recordings never reach ranking or evaluation
 
     def group_of(sha):
         return roster.group_of(mapping, sha)
 
     owner = _owner(args, group_of)
+    owner["pairs"] = [p for p in owner["pairs"] if not {
+        p["left"]["sourceSha256"], p["right"]["sourceSha256"]} & excluded]
+    owner["judgments"] = [j for j in owner["judgments"] if j["sourceSha256"] not in excluded]
     embeddings = (features.attach_embeddings(sources, args.workspace)
                   if args.workspace and (args.workspace / "catalog.sqlite3").is_file() else None)
     pool = features.segment_intervals(sources)
@@ -123,7 +137,8 @@ def _load(args):
     labelled = {j["sourceSha256"] for j in owner["judgments"]}
     return {**owner, "sources": sources, "items": items, "pool_ids": pool_ids,
             "confirmed": confirmed, "embeddings": embeddings, "duplicates": duplicates,
-            "group_of": group_of,
+            "group_of": group_of, "trip_of": lambda outing: trips.get(outing, outing),
+            "excluded": len(excluded),
             "labelledSourcesWithoutEvidence": len(labelled - set(sources))}
 
 
@@ -201,11 +216,13 @@ def plan(args) -> list[dict]:
 
     owner = _owner(args, group_of)
     everything = _catalog_assets(args.workspace)
-    tagged = roster.sport_by_source(roster.validate(_json(args.roster))) if args.roster else {}
+    doc = roster.validate(_json(args.roster)) if args.roster else None
+    tagged = roster.sport_by_source(doc) if doc else {}
+    for sha in roster.excluded_sources(doc) if doc else ():
+        everything.pop(sha, None)  # accidental recordings are never scanned
     for sha, a in everything.items():
-        # Catalog tag, else the owner's outing tag, else unknown (no judge questions).
-        a["sport"] = (a["activity"] if a["activity"] in SPORTS
-                      else tagged.get(sha, "unknown"))
+        # The owner's activity tag, else the catalog's, else unknown (no judge questions).
+        a["sport"] = tagged.get(sha) or (a["activity"] if a["activity"] in SPORTS else "unknown")
     root = args.source_root.expanduser().absolute() if args.source_root else None
     where: dict[str, int] = {}
     activity: dict[str, int] = {}
@@ -361,6 +378,8 @@ def main(argv=None) -> int:
     deck.add_argument("--active", action="store_true",
                       help="pairs format: half the deck from pairs the current head separates least")
     ev.add_argument("--output", type=Path, required=True)
+    ev.add_argument("--holdout", choices=("trip", "outing"), default="trip",
+                    help="unit a model is tested on (default: whole trips)")
     imp = sub.add_parser("import-answers", aliases=["import-taps"])
     imp.add_argument("--deck", type=Path, required=True)
     imp.add_argument("--answers", type=Path, required=True)
@@ -463,11 +482,24 @@ def main(argv=None) -> int:
             if not state["pairs"]:
                 raise ValueError("No owner pairs found; run harvest to see which labels exist")
             answers = state["answers"]
+            common = dict(pool_ids=state["pool_ids"], roster_confirmed=state["confirmed"],
+                          seed=args.seed)
             report = value_eval.evaluate(
-                state["items"], state["pairs"], state["judgments"], pool_ids=state["pool_ids"],
-                roster_confirmed=state["confirmed"], seed=args.seed,
+                state["items"], state["pairs"], state["judgments"], **common,
+                holdout_of=state["trip_of"] if args.holdout == "trip" else None,
+                holdout_level=args.holdout,
                 self_consistency={"taps": pairs_mod.self_consistency(answers),
                                   "grid": pairs_mod.grid_consistency(answers)})
+            if args.holdout == "trip":
+                # The same comparison holding out single days: optimistic, because
+                # other days of the same trip (same places, people) are in training.
+                day = value_eval.evaluate(state["items"], state["pairs"], state["judgments"],
+                                          **common, holdout_level="outing")
+                report["optimisticDayLevel"] = {
+                    "note": "Held out one day at a time; other days of the same trip were "
+                            "in training. Read as an upper bound.",
+                    "pairAccuracyMacro": {k: v["macro"] for k, v in day["pairAccuracy"].items()},
+                    "gate": day["gate"]}
             report["inputs"] = {
                 "experiments": {f.name: ledger.file_digest(f / "experiment.json")
                                 for f in args.experiment},
@@ -480,6 +512,7 @@ def main(argv=None) -> int:
                                   else None),
                 "ownerEvidence": state["collected"]["counts"],
                 "rosterConfirmed": state["confirmed"], "embeddings": state["embeddings"],
+                "accidentalRecordingsExcluded": state["excluded"],
                 "seed": args.seed, "sourcesWithEvidence": len(state["sources"]),
                 "sourcesListedInTwoExperiments": state["duplicates"],
                 "labelledRecordingsNotInTheseExperiments": state["labelledSourcesWithoutEvidence"],
@@ -491,9 +524,11 @@ def main(argv=None) -> int:
                     json.dumps(doc, indent=2, sort_keys=True, allow_nan=False) + "\n",
                     encoding="utf-8")
             table = {name: row["macro"] for name, row in report["pairAccuracy"].items()}
-            print(json.dumps({"gate": report["gate"], "coverage": report["coverage"],
+            print(json.dumps({"gate": report["gate"], "holdoutLevel": report["holdoutLevel"],
+                              "coverage": report["coverage"],
                               "pairAccuracyMacro": dict(sorted(
-                                  table.items(), key=lambda kv: -(kv[1] or 0)))}, indent=2))
+                                  table.items(), key=lambda kv: -(kv[1] or 0))),
+                              "optimisticDayLevel": report.get("optimisticDayLevel")}, indent=2))
             print(f"report: {args.output / 'report.json'}", file=sys.stderr)
     except (ValueError, KeyError, OSError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)

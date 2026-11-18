@@ -123,12 +123,20 @@ def _bootstrap(per_group_a: dict, per_group_b: dict, *, seed: int, resamples: in
 
 def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *,
              pool_ids: set[str], roster_confirmed: bool, seed: int = 0,
-             self_consistency: dict | None = None) -> dict:
-    """Leave-one-outing-out comparison of the baseline ladder and the learned head."""
+             self_consistency: dict | None = None, holdout_of=None,
+             holdout_level: str = "outing") -> dict:
+    """Leave-one-unit-out comparison of the baseline ladder and the learned head.
+
+    Pairs and ranking pools stay within one outing (a day). `holdout_of` maps
+    an outing to the unit a model is tested on, normally its trip: the model
+    for a trip never saw any pair from any day of that trip.
+    """
+    unit = holdout_of or (lambda g: g)
     offered = len(pairs)
     pairs = head.usable(pairs, items)
     scored = [p for p in pairs if p["outcome"] != 0.5 and p["evalEligible"]]
-    groups = sorted({p["group"] for p in scored})
+    days = sorted({p["group"] for p in scored})
+    groups = sorted({unit(p["group"]) for p in scored})
     rankers = baseline_scores(items)
 
     # Owner-marked Keep spans are the only evidence that can measure recall:
@@ -149,21 +157,31 @@ def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *
     for i in sorted(pool_ids):
         pools.setdefault(items[i]["group"], []).append(items[i])
 
-    # One head per held-out outing, trained on every other outing's pairs.
+    # Segments the owner judged after a uniform random draw: their keep rate
+    # estimates the outing's, and the share of those keeps a ranker puts in
+    # its budget estimates its recall over the whole outing.
+    sampled: dict[str, dict[str, bool]] = {}
+    for r in judgments:
+        i = item_id(r["sourceSha256"], r["startMs"], r["endMs"])
+        if r["selection"] == "random_segment_sample" and i in pool_ids and r["decision"] in (
+                "keep", "skip"):
+            sampled.setdefault(items[i]["group"], {})[i] = r["decision"] == "keep"
+    # One head per held-out unit, trained on every other unit's pairs.
     for variant in head.VARIANTS:
         scores: dict[str, float | None] = {}
-        for group in sorted(set(groups) | set(kept)):
-            # A pair touching the held-out outing on either side is left out.
-            model = head.fit_selecting_l2([p for p in pairs if group not in p["groups"]], items,
-                                          variant=variant)
+        for held in sorted(set(groups) | {unit(g) for g in kept} | {unit(g) for g in sampled}):
+            # A pair touching the held-out unit on either side is left out.
+            model = head.fit_selecting_l2(
+                [p for p in pairs if held not in {unit(g) for g in p["groups"]}], items,
+                variant=variant, holdout_of=unit)
             for i, item in items.items():
-                if item["group"] == group:
+                if unit(item["group"]) == held:
                     scores[i] = head.score(model, item) if model else None
         rankers["head_" + variant] = scores
 
     accuracy = {}
     for name, scores in rankers.items():
-        per_group = {g: pair_accuracy([p for p in scored if p["group"] == g], scores)
+        per_group = {g: pair_accuracy([p for p in scored if unit(p["group"]) == g], scores)
                      for g in groups}
         overall = pair_accuracy(scored, scores)
         accuracy[name] = {
@@ -190,15 +208,6 @@ def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *
                            "perOuting": {g: _round(v) for g, v in chance.items()}}
         recall[str(budget)] = table
 
-    # Segments the owner judged after a uniform random draw: their keep rate
-    # estimates the outing's, and the share of those keeps a ranker puts in
-    # its budget estimates its recall over the whole outing.
-    sampled: dict[str, dict[str, bool]] = {}
-    for r in judgments:
-        i = item_id(r["sourceSha256"], r["startMs"], r["endMs"])
-        if r["selection"] == "random_segment_sample" and i in pool_ids and r["decision"] in (
-                "keep", "skip"):
-            sampled.setdefault(items[i]["group"], {})[i] = r["decision"] == "keep"
     sampled_recall = {}
     for budget in BUDGETS:
         table = {}
@@ -229,8 +238,10 @@ def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *
 
     return {
         "version": VERSION,
+        "holdoutLevel": holdout_level,
         "coverage": {
-            "outingsWithScoredPairs": len(groups),
+            "outingsWithScoredPairs": len(days),
+            "holdoutUnitsWithScoredPairs": len(groups),
             "pairsOffered": offered, "pairsUsable": len(pairs), "pairsScored": len(scored),
             # A pair is usable only when both recordings were scanned.
             "pairsMissingAScannedRecording": offered - len(pairs),
@@ -248,18 +259,18 @@ def evaluate(items: dict[str, dict], pairs: list[dict], judgments: list[dict], *
         "sampledKeepRate": keep_rate,
         "bestBaseline": best, "pairedDeltas": deltas,
         "ownerSelfConsistency": self_consistency,
-        "gate": _gate(groups, scored, best, deltas, roster_confirmed),
+        "gate": _gate(groups, scored, best, deltas, roster_confirmed, holdout_level),
     }
 
 
-def _gate(groups, scored, best, deltas, roster_confirmed) -> dict:
+def _gate(groups, scored, best, deltas, roster_confirmed, level="outing") -> dict:
     reasons = []
     if not roster_confirmed:
         reasons.append("outing roster is not owner-confirmed")
     if any(g.startswith("source:") for g in groups):
         reasons.append("some recordings have no outing and were held out one by one")
     if len(groups) < MIN_GROUPS:
-        reasons.append(f"{len(groups)} outings with scored pairs; need {MIN_GROUPS}")
+        reasons.append(f"{len(groups)} {level}s with scored pairs; need {MIN_GROUPS}")
     if len(scored) < MIN_PAIRS:
         reasons.append(f"{len(scored)} scored pairs; need {MIN_PAIRS}")
     if reasons:
