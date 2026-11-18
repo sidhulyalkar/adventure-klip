@@ -22,7 +22,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import threading
 import time
 
@@ -240,17 +239,16 @@ def _decode(path: Path, step_s: float, width: int, height: int, hwaccel: str | N
 
 
 def sample_frames(path: Path, step_s: float, width: int = FRAME_WIDTH,
-                  hwaccel: str | None = "auto") -> tuple[list[int], list[np.ndarray]]:
+                  hwaccel: str | None = None) -> tuple[list[int], list[np.ndarray]]:
     """About one keyframe every step_s seconds, as RGB arrays width pixels wide.
 
-    A single read of the file. On a Mac the hardware decoder (VideoToolbox)
-    is tried first, which is far faster for 4K HEVC; if it fails, software
-    decoding is used.
+    A single read of the file, decoding keyframes only in software. Measured on
+    30 s of 4K60 10-bit HEVC: 2.3 s this way versus 35 s decoding every frame.
+    Hardware decoding is opt-in: VideoToolbox appears to ignore the keyframes-only
+    request and decode every frame, which was slower on real DJI footage.
     """
     w, h = _video_size(path)
     height = max(2, int(round(width * h / w / 2)) * 2)
-    if hwaccel == "auto":
-        hwaccel = "videotoolbox" if sys.platform == "darwin" else None
     if hwaccel:
         try:
             return _decode(path, step_s, width, height, hwaccel)
@@ -298,7 +296,7 @@ def _save(path: Path, **arrays) -> None:
 
 
 def describe(sha: str, path: Path, store: Path, *, image, audio, step_s: float = 2.0,
-             sample=sample_frames, track=audio_track) -> dict:
+             sample=sample_frames, track=audio_track, hwaccel: str | None = None) -> dict:
     """Embed one recording. Resumable: a finished recording with the same models is skipped."""
     folder = Path(store) / sha
     meta_file = folder / "meta.json"
@@ -310,7 +308,7 @@ def describe(sha: str, path: Path, store: Path, *, image, audio, step_s: float =
             return {**meta, "skipped": True}
     folder.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    times, frames = sample(path, step_s)
+    times, frames = (sample(path, step_s, hwaccel=hwaccel) if hwaccel else sample(path, step_s))
     if not frames:
         raise ValueError("No frames decoded")
     decoded = time.monotonic()

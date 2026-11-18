@@ -192,10 +192,16 @@ def describe(args) -> dict:
         try:
             if not path.is_file():
                 raise ValueError("file missing")
-            meta = me.describe(sha, path, store, image=image, audio=audio, step_s=args.step)
+            meta = me.describe(sha, path, store, image=image, audio=audio, step_s=args.step,
+                               hwaccel=args.hwaccel)
             done += 1
+            secs = meta["seconds"]
+            length = (assets[sha].get("duration") or 0)
+            speed = f", decode {length / secs['decode']:.0f}x real time" if (
+                not meta.get("skipped") and secs["decode"] > 0 and length) else ""
             note = "already done" if meta.get("skipped") else (
-                f"{meta['frames']} frames, {meta['seconds']}")
+                f"{length / 60:.1f} min of footage, {meta['frames']} frames, "
+                f"decode {secs['decode']}s, image {secs['image']}s, audio {secs['audio']}s{speed}")
         except Exception as error:  # one bad recording never stops the pass
             failed += 1
             note = f"failed: {type(error).__name__}: {str(error)[:120]}"
@@ -424,6 +430,8 @@ def main(argv=None) -> int:
     des.add_argument("--no-audio", action="store_true")
     des.add_argument("--step", type=float, default=2.0, help="seconds between frames")
     des.add_argument("--max", type=int, help="describe at most this many recordings")
+    des.add_argument("--hwaccel", choices=("videotoolbox",),
+                     help="try hardware decoding (off by default; slower on DJI HEVC so far)")
     des.add_argument("--vocabulary-only", action="store_true",
                      help="re-encode the concept list only (after editing --terms)")
     loc = sub.add_parser("locate", help="find every Klip catalog and review export under folders")
