@@ -321,6 +321,15 @@ def main(argv=None) -> int:
         p.add_argument("--roster", type=Path)
         p.add_argument("--seed", type=int, default=0)
 
+    rev = sub.add_parser("review", help="open the local review app (outings and clip grid)")
+    rev.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
+    rev.add_argument("--source-root", type=Path, help="footage folder, for outing thumbnails")
+    rev.add_argument("--ledgers", type=Path,
+                     help="owner files folder (default: WORKSPACE/reports/owner-ledgers)")
+    rev.add_argument("--experiment", type=Path, nargs="*",
+                     help="discovery folders (default: every WORKSPACE/reports/discovery-*)")
+    rev.add_argument("--port", type=int, default=0)
+    rev.add_argument("--no-browser", action="store_true")
     loc = sub.add_parser("locate", help="find every Klip catalog and review export under folders")
     loc.add_argument("roots", type=Path, nargs="+")
     har = sub.add_parser("harvest", help="report every owner label and whether it is used")
@@ -369,7 +378,22 @@ def main(argv=None) -> int:
                 args.workspace = None
             else:
                 args.workspace = _workspace(args.workspace)
-        if args.command == "locate":
+        if args.command == "review":
+            from adventure_intelligence import value_review_server as app
+            folder = (args.ledgers or args.workspace / "reports" / "owner-ledgers").expanduser()
+            folder.mkdir(parents=True, exist_ok=True)
+            roster_file = folder / "roster.json"
+            if not roster_file.exists():
+                _emit(roster.propose(roster.catalog_rows(args.workspace)), roster_file)
+            experiments = args.experiment or sorted(
+                (args.workspace / "reports").glob("discovery-*"))
+            state = app.ReviewState(args.workspace, roster_file, folder / "owner-pairs.jsonl",
+                                    experiments, args.source_root)
+            print(f"[klip] {len(state.sources())} scanned recordings in "
+                  f"{len(experiments)} discovery folders; answers go to "
+                  f"{folder / 'owner-pairs.jsonl'}", file=sys.stderr)
+            app.serve(state, port=args.port, open_browser=not args.no_browser)
+        elif args.command == "locate":
             print(json.dumps(owner_evidence.locate(args.roots), indent=2))
         elif args.command == "roster":
             _emit(roster.propose(roster.catalog_rows(args.workspace),

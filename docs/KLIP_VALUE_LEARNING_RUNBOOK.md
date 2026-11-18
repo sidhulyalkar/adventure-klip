@@ -170,6 +170,27 @@ For a second batch of recordings, run `plan ... --exclude-experiment
 "$WS/reports/discovery-001"`. Then pass both experiment folders to `evaluate
 --experiment`.
 
+## The review app (easiest way to do steps 1 and 4)
+
+```bash
+python scripts/klip_value_experiment.py review --workspace "$WS" --source-root "$SSD"
+```
+
+This opens a local page (127.0.0.1 only, with a session token) with two tabs:
+
+- **Outings:** each outing as a card with frames from its first, middle and last
+  recording. Set the sport, merge days of the same trip, split one that mixes two
+  days, then confirm. Writes `$L/roster.json` and keeps the previous version as
+  `roster.json.bak-<time>`. It refuses any edit that would drop a recording, and
+  refuses to confirm while an outing has no sport.
+- **Review clips:** start a round (optionally one sport), then tick keeps, star the best,
+  and press Enter. Each screen is saved to `$L/owner-pairs.jsonl` as you answer. There is
+  no export step, and you can stop and continue any time. Rounds draw from every
+  `discovery-*` folder.
+
+Footage, catalog and discovery output are only read. Thumbnails are cached in
+`$L/thumbs/`.
+
 ## How to read the gate
 
 - `pilot_no_claim`: fewer than 5 outings or 100 scored pairs, or the roster is
