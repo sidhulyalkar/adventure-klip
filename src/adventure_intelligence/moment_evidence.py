@@ -20,13 +20,15 @@ from hashlib import sha256
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
+import sys
 import threading
 import time
 
 import numpy as np
 
-from .media import probe, require_tool
+from .media import require_tool
 
 VERSION = "klip-moment-evidence-v1"
 DEFAULT_IMAGE_MODEL = "google/siglip2-so400m-patch14-384"
@@ -34,6 +36,8 @@ DEFAULT_AUDIO_MODEL = "laion/clap-htsat-unfused"
 AUDIO_RATE = 48_000
 AUDIO_WINDOW_S = 2.0
 FRAME_WIDTH = 448
+PROBE_TIMEOUT_S = 300   # a busy external drive can be slow to answer
+DECODE_TIMEOUT_S = 3600
 
 # What a moment can show. Owner terms from vocabulary.json are added to these.
 SEE = {
@@ -172,7 +176,7 @@ class AudioEncoder:
 # ---- decoding (read-only) -------------------------------------------------------------
 
 def keyframe_times(path: Path) -> list[float]:
-    """Keyframe timestamps from packet flags: no decoding needed."""
+    """Keyframe timestamps from packet flags. Reads the whole file; used only in checks."""
     result = subprocess.run(
         [require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
          "packet=pts_time,flags", "-of", "csv=p=0", str(path)],
@@ -185,60 +189,87 @@ def keyframe_times(path: Path) -> list[float]:
     return sorted(times)
 
 
-def sample_frames(path: Path, step_s: float, width: int = FRAME_WIDTH) -> tuple[list[int], list[np.ndarray]]:
-    """About one keyframe every step_s seconds, as RGB arrays width pixels wide.
+_PTS = re.compile(rb"Parsed_showinfo.*? pts_time:\s*([0-9.]+)")
 
-    Only keyframes are decoded (-skip_frame nokey), in order, so the n-th
-    decoded frame is the n-th keyframe and its time comes from the packet list.
-    """
-    info = probe(path)
-    w, h = info.get("width"), info.get("height")
-    if not w or not h:
+
+def _video_size(path: Path) -> tuple[int, int]:
+    result = subprocess.run(
+        [require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height:stream_side_data=rotation", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True, timeout=PROBE_TIMEOUT_S)
+    streams = json.loads(result.stdout).get("streams") or []
+    if not streams or not streams[0].get("width"):
         raise ValueError("No video stream")
-    height = max(2, int(round(width * h / w / 2)) * 2)
-    times = keyframe_times(path)
-    keep, last = set(), None
-    for i, t in enumerate(times):
-        if last is None or t - last >= step_s - 1e-6:
-            keep.add(i)
-            last = t
-    process = subprocess.Popen(
-        [require_tool("ffmpeg"), "-v", "error", "-nostdin", "-skip_frame", "nokey", "-i", str(path),
-         "-map", "0:v:0", "-an", "-sn", "-fps_mode", "passthrough",
-         "-vf", f"scale={width}:{height}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    errors: list[bytes] = []
-    reader = threading.Thread(target=lambda: errors.append(process.stderr.read()), daemon=True)
+    w, h = streams[0]["width"], streams[0]["height"]
+    rotation = next((abs(int(d.get("rotation", 0))) for d in streams[0].get("side_data_list", [])
+                     if "rotation" in d), 0)
+    return (h, w) if rotation in (90, 270) else (w, h)
+
+
+def _decode(path: Path, step_s: float, width: int, height: int, hwaccel: str | None):
+    """One pass: keyframes only, keep one every step_s, timestamps from the decoder."""
+    keep = f"isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step_s - 1e-3:.3f})"
+    cmd = [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "info", "-nostdin"]
+    if hwaccel:
+        cmd += ["-hwaccel", hwaccel]
+    cmd += ["-skip_frame", "nokey", "-i", str(path), "-map", "0:v:0", "-an", "-sn",
+            "-vf", f"select='{keep}',scale={width}:{height},showinfo", "-fps_mode", "vfr",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    log: list[bytes] = []
+    reader = threading.Thread(target=lambda: log.append(process.stderr.read()), daemon=True)
     reader.start()
-    size = width * height * 3
-    out_t, out_f, i = [], [], 0
+    size, frames = width * height * 3, []
     try:
         while True:
             raw = process.stdout.read(size)
             if len(raw) < size:
                 break
-            if i in keep and i < len(times):
-                out_t.append(int(round(times[i] * 1000)))
-                out_f.append(np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy())
-            i += 1
+            frames.append(np.frombuffer(raw, np.uint8).reshape(height, width, 3).copy())
     finally:
         process.stdout.close()
-        code = process.wait(timeout=600)
-        reader.join(timeout=5)
-    if code != 0 and not out_f:
-        raise RuntimeError("ffmpeg could not decode keyframes: "
-                           + b"".join(errors).decode(errors="replace")[-300:])
-    return out_t, out_f
+        code = process.wait(timeout=DECODE_TIMEOUT_S)
+        reader.join(timeout=10)
+    text = b"".join(log)
+    times = [int(round(float(m) * 1000)) for m in _PTS.findall(text)]
+    if code != 0 or not frames or len(times) != len(frames):
+        tail = text.decode(errors="replace").strip().splitlines()[-3:]
+        raise RuntimeError(f"ffmpeg decode failed ({code}, {len(frames)} frames, "
+                           f"{len(times)} times): {' | '.join(tail)}")
+    return times, frames
+
+
+def sample_frames(path: Path, step_s: float, width: int = FRAME_WIDTH,
+                  hwaccel: str | None = "auto") -> tuple[list[int], list[np.ndarray]]:
+    """About one keyframe every step_s seconds, as RGB arrays width pixels wide.
+
+    A single read of the file. On a Mac the hardware decoder (VideoToolbox)
+    is tried first, which is far faster for 4K HEVC; if it fails, software
+    decoding is used.
+    """
+    w, h = _video_size(path)
+    height = max(2, int(round(width * h / w / 2)) * 2)
+    if hwaccel == "auto":
+        hwaccel = "videotoolbox" if sys.platform == "darwin" else None
+    if hwaccel:
+        try:
+            return _decode(path, step_s, width, height, hwaccel)
+        except (RuntimeError, subprocess.SubprocessError):
+            pass  # fall back to software decoding below
+    return _decode(path, step_s, width, height, None)
 
 
 def audio_track(path: Path) -> np.ndarray:
-    """Mono 48 kHz float samples; empty when the recording has no audio."""
-    if not probe(path).get("audio"):
-        return np.zeros(0, np.float32)
+    """Mono 48 kHz float samples; empty when the recording has no audio stream."""
     result = subprocess.run(
-        [require_tool("ffmpeg"), "-v", "error", "-nostdin", "-i", str(path), "-map", "0:a:0",
+        [require_tool("ffmpeg"), "-v", "error", "-nostdin", "-i", str(path), "-map", "0:a:0?",
          "-vn", "-ac", "1", "-ar", str(AUDIO_RATE), "-f", "f32le", "-"],
-        capture_output=True, check=True, timeout=1800)
+        capture_output=True, timeout=DECODE_TIMEOUT_S)
+    if result.returncode != 0 and b"does not contain any stream" in result.stderr:
+        return np.zeros(0, np.float32)  # no audio stream in this recording
+    if result.returncode != 0:
+        raise RuntimeError("ffmpeg could not read audio: "
+                           + result.stderr.decode(errors="replace")[-200:])
     return np.frombuffer(result.stdout, np.float32)
 
 

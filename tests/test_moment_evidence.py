@@ -196,3 +196,19 @@ def test_describe_command_skips_accidental_and_outside_recordings(video, tmp_pat
     assert cli.main(["describe", "--workspace", str(ws), "--source-root", str(ssd),
                      "--terms", str(tmp_path / "terms.txt"), "--vocabulary-only"]) == 0
     assert "see:my blue kayak" in json.loads((store / "vocabulary.json").read_text())["vocabulary"]["see"]
+
+
+def test_one_pass_sampling_is_exact_on_irregular_keyframes_and_falls_back(tmp_path):
+    path = tmp_path / "irregular.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=7",
+                    "-g", "21", "-pix_fmt", "yuv420p", str(path)], check=True)  # keyframe every 0.7 s
+    times, frames = me.sample_frames(path, 2.0, width=160, hwaccel=None)
+    assert times == [0, 2100, 4200, 6300]
+    for t, frame in zip(times, frames, strict=True):
+        exact = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t / 1000), "-i", str(path),
+                                "-frames:v", "1", "-vf", f"scale=160:{frame.shape[0]}", "-f", "rawvideo",
+                                "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        assert np.array_equal(frame, np.frombuffer(exact, np.uint8).reshape(frame.shape))
+    again, _ = me.sample_frames(path, 2.0, width=160, hwaccel="no_such_decoder")
+    assert again == times  # an unavailable hardware decoder falls back to software
+    assert len(me.audio_track(path)) == 0  # no audio stream is silence, not an error
