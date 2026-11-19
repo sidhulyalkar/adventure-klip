@@ -238,7 +238,9 @@ def run(assets: dict[str, dict], *, workspace: Path, trusted_root: Path, reports
         report = run_batch(folder / "sources.json", folder, workspace=workspace,
                            trusted_root=trusted_root, allow_mounted=allow_mounted,
                            stages=STAGES, decode=decode if motion else None,
-                           before=before, after=after, log=lambda m: None)
+                           before=before, after=after,
+                           # Per-stage chatter stays quiet; a failure's reason is shown.
+                           log=lambda m: log(m) if " failed: " in m else None)
         totals["batches"].append({"folder": folder.name, **report["totals"]})
 
     # 2. Recordings scanned by earlier runs that still need describing.
