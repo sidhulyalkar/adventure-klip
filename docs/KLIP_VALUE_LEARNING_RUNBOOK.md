@@ -178,17 +178,34 @@ python scripts/klip_value_experiment.py review --workspace "$WS" --source-root "
 
 This opens a local page (127.0.0.1 only, with a session token) with two tabs:
 
-- **Trips & days:** recordings are grouped by gaps in recording time: a new day
-  after 6 hours, a new trip after 4 days. Gaps are used rather than dates, so a
-  camera clock in the wrong time zone doesn't split a day at midnight. Each day
-  shows frames from its first, middle and last recording. Give every recording an
-  activity: ski, snorkeling, kayak, bike, hike, surf, other, or accidental.
-  - "Fill unlabelled" changes only recordings that are still unlabelled.
-  - Accidental recordings stay in their day but are left out of review rounds,
-    scanning plans, ranking and evaluation.
-  - You can merge or split days and trips, and give each trip a place.
-  - Saving writes `$L/roster.json` and keeps the previous version as
-    `roster.json.bak-<time>`. It refuses any edit that would drop a recording.
+- **Organize:** recordings are grouped by gaps in recording time: a new day after 6
+  hours, a new trip after 4 days. Gaps are used rather than dates, so a camera clock in
+  the wrong time zone doesn't split a day at midnight.
+  - **Layout:** trips and their days on the left. The selected day's recordings are in
+    the middle, grouped into bursts (recordings started within 2 minutes of each other).
+    Details are on the right.
+  - **Selecting:** click selects, Shift-click selects a range, Cmd/Ctrl-click adds, A
+    selects the whole day, Esc clears.
+  - **Activity:** 1–8 sets it for everything selected (ski, snorkeling, kayak, bike, hike,
+    surf, other, accidental); 0 clears it. J/K moves to the next or previous day.
+  - **Playing:** double-click or P plays the original (Safari, or Chrome with HEVC
+    support).
+  - **Suggestions are never applied unless you accept them.** There are two kinds:
+    - "accidental?" for clips under 3 s;
+    - the description pass's activity guess, when at least half the frames agree.
+
+    Accept one, or "Accept suggestions" for every unlabelled recording in the day.
+    Slow-motion, retake and short badges come from `atlas`.
+  - **Notes and tags** per recording; name, place and notes per day and per trip.
+  - **Restructuring:** move selected recordings to another day or a new day, merge days,
+    start a new trip at a day, merge trips.
+  - **Saving is automatic,** a moment after each change. The first save of a session
+    keeps the previous file as `roster.json.bak-<time>` (the last 10 are kept). A save
+    that would drop a recording is refused. "Confirm" unlocks once every recording has an
+    activity (accidental counts); any later edit turns it back into a draft.
+  - **Accidental recordings** stay in their day but are left out of review rounds,
+    scanning plans, ranking and evaluation. New scans and descriptions show up within
+    2 minutes while the app is open.
 - **Review clips:** start a round (one activity, or all activities mixed within each
   day), then tick keeps, star the best,
   and press Enter. Each screen is saved to `$L/owner-pairs.jsonl` as you answer. There is

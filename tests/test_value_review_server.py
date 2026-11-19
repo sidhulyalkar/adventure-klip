@@ -72,48 +72,93 @@ def test_page_needs_no_token_but_data_does(running):
     assert status == 200 and b"value_review" not in body and b"review.js" in body
     assert "script-src 'self'" in headers["Content-Security-Policy"]
     with pytest.raises(HTTPError) as err:
-        running["call"]("/api/roster", token_ok=False)
+        running["call"]("/api/library", token_ok=False)
     assert err.value.code == 403
 
 
-def _trips(view, activity="ski"):
-    return [{"trip": t["trip"], "place": t["place"], "outings": [
-        {"outing": o["outing"], "sources": [{"sha": r["sha"], "activity": activity}
-                                             for r in o["recordings"]]}
-        for o in t["outings"]]} for t in view["trips"]]
+def _body(view, activity="ski", status="provisional"):
+    """What the organizer posts: trips with days of recording SHAs, plus per-recording details."""
+    return {"status": status,
+            "trips": [{"trip": t["trip"], "title": t["title"], "place": t["place"],
+                       "note": t["note"], "days": [
+                           {"outing": d["outing"], "title": d["title"], "place": d["place"],
+                            "note": d["note"], "recordings": list(d["recordings"])}
+                           for d in t["days"]]} for t in view["trips"]],
+            "recordings": {sha: {"activity": activity, "note": r["note"], "tags": r["tags"]}
+                           for sha, r in view["recordings"].items()}}
 
 
-def test_roster_view_groups_days_into_trips(running):
-    _, view, _ = running["call"]("/api/roster")
+def test_library_view_groups_days_into_trips_with_suggestions(running):
+    _, view, _ = running["call"]("/api/library")
     # Fixture days are Jan 10, 11, 12: one trip, three days, nothing labelled yet.
-    assert len(view["trips"]) == 1 and len(view["trips"][0]["outings"]) == 3
-    assert {r["activity"] for o in view["trips"][0]["outings"] for r in o["recordings"]} == {"unknown"}
+    assert len(view["trips"]) == 1 and len(view["trips"][0]["days"]) == 3
+    assert {r["activity"] for r in view["recordings"].values()} == {"unknown"}
     assert "accidental" in view["activities"]
+    first = view["recordings"][view["trips"][0]["days"][0]["recordings"][0]]
+    assert first["burst"] and "hints" in first and first["hints"] == {}  # nothing described
 
 
-def test_roster_edits_keep_every_recording_and_back_up(running):
+def test_suggestions_come_from_the_atlas_and_refresh(running, tmp_path):
+    from adventure_intelligence import library_atlas
+    sha = running["made"]["shas"][0]
+    atlas_dir = tmp_path / "ws" / "reports" / "atlas"
+    atlas_dir.mkdir(parents=True)
+    head = {"version": library_atlas.HEADER_VERSION, "sourceSha256": sha,
+            "video": {"width": 3840, "height": 2160, "fps": 119.88, "pixFmt": "yuv420p10le",
+                      "colorTransfer": "bt709"}}
+    (atlas_dir / "headers.jsonl").write_text(json.dumps(head) + "\n{cut sho")
+    app.ReviewState.HINTS_SECONDS = 0
+    try:
+        _, view, _ = running["call"]("/api/library")
+    finally:
+        app.ReviewState.HINTS_SECONDS = 120
+    assert view["recordings"][sha]["hints"] == {"mode": "3840x2160 119.88fps 10-bit SDR",
+                                                "slowMotion": True}
+
+
+def test_library_edits_keep_every_recording_details_and_one_backup(running):
     call = running["call"]
-    _, view, _ = call("/api/roster")
-    trips = _trips(view)
-    days = trips[0]["outings"]
-    merged = {**trips[0], "place": "Moorea",
-              "outings": [{**days[0], "sources": days[0]["sources"] + days[1]["sources"]}, days[2]]}
+    _, view, _ = call("/api/library")
+    body = _body(view)
+    days = body["trips"][0]["days"]
+    lost = json.loads(json.dumps(body))
+    lost["trips"][0]["days"] = lost["trips"][0]["days"][:1]
     with pytest.raises(HTTPError) as err:
-        call("/api/roster", {"status": "owner_confirmed",
-                             "trips": [{**merged, "outings": merged["outings"][:1]}]})
-    assert err.value.code == 400  # a recording would be lost
-    merged["outings"][1]["sources"][0]["activity"] = "accidental"
-    _, saved, _ = call("/api/roster", {"status": "owner_confirmed", "trips": [merged]})
+        call("/api/library", lost)
+    assert err.value.code == 400  # recordings would be lost
+    days[0]["recordings"] += days[1]["recordings"]
+    del days[1]
+    body["trips"][0].update(title="French Polynesia", place="Moorea")
+    days[0].update(title="Turtle day", note="Lagoon snorkel")
+    odd = days[1]["recordings"][0]
+    body["recordings"][odd].update(activity="accidental", note="pocket", tags=["mistake", " ", "x"])
+    for _ in range(3):  # autosave: many saves, one backup per session
+        _, saved, _ = call("/api/library", body)
     assert saved["trips"] == 1 and saved["outings"] == 2 and saved["unlabelled"] == 0
     doc = roster.validate(json.loads((running["ledgers"] / "roster.json").read_text()))
-    assert doc["status"] == "owner_confirmed" and {o["place"] for o in doc["outings"]} == {"Moorea"}
+    assert doc["trips"][body["trips"][0]["trip"]]["title"] == "French Polynesia"
+    assert doc["outings"][0]["title"] == "Turtle day"
     assert doc["outings"][0]["sources"][0]["captureTime"]  # catalog details preserved
-    assert len(roster.excluded_sources(doc)) == 1
-    assert list(running["ledgers"].glob("roster.json.bak-*"))
+    row = next(r for o in doc["outings"] for r in o["sources"] if r["sourceSha256"] == odd)
+    assert row["note"] == "pocket" and row["tags"] == ["mistake", "x"]
+    assert roster.excluded_sources(doc) == {odd}
+    assert len(list(running["ledgers"].glob("roster.json.bak-*"))) == 1
+    _, again, _ = call("/api/library")
+    assert again["recordings"][odd]["note"] == "pocket"
+    assert again["trips"][0]["title"] == "French Polynesia"
+    bad = json.loads(json.dumps(body))
+    bad["recordings"][odd]["activity"] = "parasailing"
     with pytest.raises(HTTPError):
-        bad = json.loads(json.dumps(merged))
-        bad["outings"][0]["sources"][0]["activity"] = "parasailing"
-        call("/api/roster", {"status": "provisional", "trips": [bad]})
+        call("/api/library", bad)
+
+
+def test_originals_stream_only_from_the_footage_folder(running):
+    sha = running["made"]["shas"][0]
+    status, body, headers = running["call"](f"/original/{sha}", headers={"Range": "bytes=0-"})
+    assert status == 206 and body == b"video" and headers["Content-Range"] == "bytes 0-4/5"
+    with pytest.raises(HTTPError) as err:
+        running["call"](f"/original/{'0' * 64}")
+    assert err.value.code == 404
 
 
 def test_thumbnail_is_read_once_and_cached(running):
@@ -146,14 +191,14 @@ def test_round_answers_save_immediately_and_latest_wins(running):
 
 def test_rounds_use_recording_activity_and_skip_accidental_ones(running):
     call = running["call"]
-    _, view, _ = call("/api/roster")
-    trips = _trips(view)
-    days = trips[0]["outings"]
-    for item in days[0]["sources"]:
-        item["activity"] = "snorkeling"
-    days[0]["sources"][0]["activity"] = "accidental"
-    call("/api/roster", {"status": "owner_confirmed", "trips": trips})
-    accidental = days[0]["sources"][0]["sha"]
+    _, view, _ = call("/api/library")
+    body = _body(view, status="owner_confirmed")
+    day0 = body["trips"][0]["days"][0]["recordings"]
+    for sha in day0:
+        body["recordings"][sha]["activity"] = "snorkeling"
+    accidental = day0[0]
+    body["recordings"][accidental]["activity"] = "accidental"
+    call("/api/library", body)
     _, listing, _ = call("/api/decks")
     assert "accidental" not in listing["sports"]
     _, made, _ = call("/api/decks", {"sport": None, "screens": 12})
@@ -177,3 +222,19 @@ def test_clips_stream_with_byte_ranges_and_nothing_else_is_served(running):
         with pytest.raises(HTTPError) as err:
             call(bad)
         assert err.value.code in (403, 404)
+
+
+def test_thumbnail_falls_back_to_the_first_frame(running, monkeypatch):
+    from adventure_intelligence import frame_timing
+    asked = []
+
+    def picky(path, ms, width):
+        asked.append(ms)
+        if ms:
+            raise RuntimeError("FFmpeg failed to decode the requested video frame")
+        return b"\x89PNG first", {}
+
+    monkeypatch.setattr(frame_timing, "extract_frame_png", picky)
+    sha = running["made"]["shas"][1]
+    status, body, _ = running["call"](f"/thumb/{sha}")
+    assert status == 200 and body == b"\x89PNG first" and asked == [80_000, 0]

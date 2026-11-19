@@ -709,12 +709,10 @@ def main(argv=None) -> int:
             roster_file = folder / "roster.json"
             if not roster_file.exists():
                 _emit(roster.propose(roster.catalog_rows(args.workspace)), roster_file)
-            experiments = args.experiment or sorted(
-                (args.workspace / "reports").glob("discovery-*"))
             state = app.ReviewState(args.workspace, roster_file, folder / "owner-pairs.jsonl",
-                                    experiments, args.source_root)
+                                    args.experiment or None, args.source_root)
             print(f"[klip] {len(state.sources())} scanned recordings in "
-                  f"{len(experiments)} discovery folders; answers go to "
+                  f"{len(state.experiments)} discovery folders; answers go to "
                   f"{folder / 'owner-pairs.jsonl'}", file=sys.stderr)
             app.serve(state, port=args.port, open_browser=not args.no_browser)
         elif args.command == "locate":
