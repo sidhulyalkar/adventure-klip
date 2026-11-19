@@ -225,9 +225,14 @@ def atlas(args) -> dict:
         recordings = [{"sha": r[0], "path": r[1], "durationS": r[2], "captureTime": r[3],
                        "activity": r[4]} for r in db.execute(
             "SELECT sha256,stored_path,duration,capture_time,activity FROM assets WHERE duration>0")]
+    def say(message):
+        print("[atlas]", message, file=sys.stderr, flush=True)
+
+    say(f"{len(recordings)} recordings in the catalog; reading owner labels")
     doc = roster.validate(_json(args.roster)) if args.roster else None
     mapping, _ = _mapping(args)
     owner = _owner(args, lambda sha: roster.group_of(mapping, sha))
+    say(f"{len(owner['judgments'])} judgments, {len(owner['pairs'])} pairs; reading coverage")
     scanned, _ = _done(sorted((args.workspace / "reports").glob("discovery-*")))
     store = (args.evidence or args.workspace / "reports" / "evidence").expanduser()
     described = {m.parent.name for m in store.glob("*/meta.json")}
@@ -237,8 +242,7 @@ def atlas(args) -> dict:
         root = args.source_root.expanduser().absolute() if args.source_root else None
         reachable = [r for r in recordings
                      if root is None or Path(r["path"]).is_relative_to(root)]
-        heads = library_atlas.headers(out / "headers.jsonl", reachable,
-                                      log=lambda m: print("[atlas]", m, file=sys.stderr))
+        heads = library_atlas.headers(out / "headers.jsonl", reachable, log=say)
     built = library_atlas.build(recordings, roster_doc=doc, heads=heads, scanned=scanned,
                                 described=described, judgments=owner["judgments"],
                                 pairs=owner["pairs"])

@@ -21,12 +21,17 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 import json
+import os
+import re
 import sqlite3
 
 from . import evidence_ledger as ledger
 
 VERSION = "klip-owner-evidence-collection-v1"
 MAX_FILE_BYTES = 40_000_000
+# Folders Klip itself writes per recording: never review exports, and they hold thousands
+# of JSON files (motion, audio, segments), so reading them made every command slow.
+DERIVED = re.compile(r"^(discovery-.+|value-.+|evidence|atlas|thumbs)$")
 _HIGHLIGHT = {"keep": "keep", "skip": "skip", "neutral": "unsure"}
 _PAIR_CHOICE = {"left": 1.0, "right": 0.0, "tie": 0.5}
 # Review schemas Klip has written. Anything listed here and found on disk is
@@ -192,9 +197,17 @@ def _scan(workspace: Path, extra: list[Path] | None = None) -> list[tuple[Path, 
     return found
 
 
+def _json_files(root: Path):
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if not DERIVED.match(d))
+        for name in sorted(files):
+            if name.endswith(".json"):
+                yield Path(folder) / name
+
+
 def _scan_root(root: Path) -> list[tuple[Path, dict, str]]:
     found = []
-    for path in sorted(root.rglob("*.json")):
+    for path in _json_files(root):
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
             continue
         raw = path.read_bytes()

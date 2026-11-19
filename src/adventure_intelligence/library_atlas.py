@@ -92,7 +92,10 @@ def headers(cache: Path, recordings: list[dict], *, probe=header, workers: int =
     known: dict[str, dict] = {}
     if cache.is_file():
         for line in cache.read_text(encoding="utf-8").splitlines():
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue  # a line cut short when a run was stopped
             if row.get("version") == HEADER_VERSION:
                 known[row["sourceSha256"]] = row
     todo = []
@@ -115,9 +118,12 @@ def headers(cache: Path, recordings: list[dict], *, probe=header, workers: int =
         cache.parent.mkdir(parents=True, exist_ok=True)
         with ThreadPoolExecutor(max_workers=workers) as pool, \
                 open(cache, "a", encoding="utf-8") as handle:
-            for row in pool.map(one, todo):
+            for k, row in enumerate(pool.map(one, todo), 1):
                 handle.write(json.dumps(row) + "\n")
+                handle.flush()  # a stopped run keeps what it read
                 known[row["sourceSha256"]] = row
+                if k % 25 == 0 or k == len(todo):
+                    log(f"headers {k}/{len(todo)}")
     return known
 
 

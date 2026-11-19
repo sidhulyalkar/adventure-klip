@@ -634,3 +634,15 @@ def test_trip_holdout_never_trains_on_another_day_of_the_same_trip(tmp_path, mon
     assert report["coverage"]["outingsWithScoredPairs"] == 6
     assert set(report["pairAccuracy"]["audio_peak_rel"]["perOuting"]) == {"trip-0", "trip-1", "trip-2"}
     assert any("trips with scored pairs" in r for r in report["gate"]["reasons"])
+
+
+def test_scan_skips_folders_klip_writes_per_recording(tmp_path):
+    from adventure_intelligence import owner_evidence as oe
+    review = tmp_path / "reports" / "klip-marine-review-1" / "export.json"
+    derived = [tmp_path / "reports" / "discovery-004" / "ab" / "motion.json",
+               tmp_path / "reports" / "evidence" / "ab" / "meta.json",
+               tmp_path / "reports" / "value-003" / "evaluation.json"]
+    for path in [review, *derived]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"version": "x"}')
+    assert [f[0] for f in oe._scan(tmp_path)] == [review]
