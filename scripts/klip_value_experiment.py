@@ -129,6 +129,7 @@ def _load(args):
                   if args.workspace and (args.workspace / "catalog.sqlite3").is_file() else None)
     store = _evidence(args)
     described = features.attach_described(sources, store) if store else 0
+    space = features.use_one_embedding_space(sources)
     pool = features.segment_intervals(sources)
     taps = [r for r in owner["answers"] if "left" in r]
     items = features.build_items(
@@ -140,7 +141,7 @@ def _load(args):
     return {**owner, "sources": sources, "items": items, "pool_ids": pool_ids,
             "confirmed": confirmed, "embeddings": embeddings, "duplicates": duplicates,
             "group_of": group_of, "trip_of": lambda outing: trips.get(outing, outing),
-            "excluded": len(excluded), "described": described,
+            "excluded": len(excluded), "described": described, "embeddingSpace": space,
             "vocabulary": store.doc["digest"] if store else None,
             "labelledSourcesWithoutEvidence": len(labelled - set(sources))}
 
@@ -431,7 +432,7 @@ def main(argv=None) -> int:
     des.add_argument("--step", type=float, default=2.0, help="seconds between frames")
     des.add_argument("--max", type=int, help="describe at most this many recordings")
     des.add_argument("--hwaccel", choices=("videotoolbox",),
-                     help="try hardware decoding (off by default; slower on DJI HEVC so far)")
+                     help="hardware decoding; about 7x faster than software on DJI HEVC in the probe, frees the CPU for the models")
     des.add_argument("--vocabulary-only", action="store_true",
                      help="re-encode the concept list only (after editing --terms)")
     loc = sub.add_parser("locate", help="find every Klip catalog and review export under folders")
@@ -605,6 +606,7 @@ def main(argv=None) -> int:
                 "rosterConfirmed": state["confirmed"], "embeddings": state["embeddings"],
                 "accidentalRecordingsExcluded": state["excluded"],
                 "describedRecordings": state["described"], "vocabulary": state["vocabulary"],
+                "embeddingSpace": state["embeddingSpace"],
                 "seed": args.seed, "sourcesWithEvidence": len(state["sources"]),
                 "sourcesListedInTwoExperiments": state["duplicates"],
                 "labelledRecordingsNotInTheseExperiments": state["labelledSourcesWithoutEvidence"],

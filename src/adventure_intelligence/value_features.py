@@ -151,6 +151,31 @@ def attach_described(sources: dict[str, dict], store) -> int:
     return count
 
 
+def embedding_space(sources: dict[str, dict]) -> dict:
+    """Which embedding space novelty and the head use, and what is set aside.
+
+    Catalog and description-pass vectors come from different models (and sizes), so
+    they are never compared with each other. The space covering the most recordings
+    wins; on a tie the description pass wins, since it uses one model everywhere.
+    """
+    counts: dict[str, int] = {}
+    for source in sources.values():
+        if source["frames"] is not None:
+            counts[source["embeddingKey"]] = counts.get(source["embeddingKey"], 0) + 1
+    chosen = max(counts, key=lambda k: (counts[k], k.startswith("described:"), k)) if counts else None
+    return {"space": chosen, "recordings": counts.get(chosen, 0),
+            "setAside": {k: n for k, n in sorted(counts.items()) if k != chosen}}
+
+
+def use_one_embedding_space(sources: dict[str, dict]) -> dict:
+    """Drop vectors outside the chosen space (in memory only) and report the choice."""
+    report = embedding_space(sources)
+    for source in sources.values():
+        if source["frames"] is not None and source["embeddingKey"] != report["space"]:
+            source.update(frameTimes=None, frames=None, embeddingKey=None)
+    return report
+
+
 def build_items(sources: dict[str, dict], intervals: list[tuple[str, int, int]],
                 group_of, *, seed: int = 0, archive_cap: int = 4000,
                 evidence=None) -> dict[str, dict]:
@@ -160,9 +185,14 @@ def build_items(sources: dict[str, dict], intervals: list[tuple[str, int, int]],
     unlike the other footage from that day) and with other outings (is this
     unlike the archive). Both use only frames outside the interval.
     """
+    space = embedding_space(sources)["space"]
+
+    def in_space(source: dict) -> bool:
+        return source["frames"] is not None and source["embeddingKey"] == space
+
     by_group: dict[str, list[str]] = {}
     for sha, source in sources.items():
-        if source["frames"] is not None:
+        if in_space(source):
             by_group.setdefault(group_of(sha), []).append(sha)
     rng = np.random.default_rng(seed)
     stats = {}
@@ -209,7 +239,7 @@ def build_items(sources: dict[str, dict], intervals: list[tuple[str, int, int]],
             signals["audio_peak_rel"] = (float(np.max(heard[:, 1])) - centre) / (spread + 1e-6)
             flux = heard[:, 2][np.isfinite(heard[:, 2])]
             signals["audio_flux_peak"] = float(np.max(flux)) if len(flux) else None
-        vector = _embedding(source, start, end)
+        vector = _embedding(source, start, end) if in_space(source) else None
         if vector is not None:
             context = []
             for other in by_group.get(group, []):

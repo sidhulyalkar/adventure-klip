@@ -190,6 +190,39 @@ def test_outing_novelty_ignores_the_interval_and_its_neighbours(tmp_path):
     assert target["signals"]["novelty_outing"] > max(others)
 
 
+def test_catalog_and_described_vectors_are_never_mixed(tmp_path):
+    # Real failure: catalog SigLIP (768) for most recordings, description pass (1152)
+    # for a few. Novelty and the head must use one space; the rest are set aside.
+    made = write_experiment(tmp_path / "exp", outings=2, per_outing=2)
+    sources = features.load_experiment(tmp_path / "exp")
+    shas = made["shas"]
+    rng = np.random.default_rng(1)
+    for i, s in enumerate(shas):
+        times, _ = made["embeddings"][s]
+        width, key = (1152, "described:siglip2") if i == 0 else (768, "catalog:siglip")
+        m = rng.normal(size=(len(times), width)).astype(np.float32)
+        sources[s].update(frameTimes=times, frames=m / np.linalg.norm(m, axis=1, keepdims=True),
+                          embeddingKey=key)
+    items = features.build_items(sources, features.segment_intervals(sources),
+                                 lambda s: roster.group_of(made["mapping"], s))
+    dims = {len(i["embedding"]) for i in items.values() if i["embedding"] is not None}
+    assert dims == {768}
+    assert all(i["embedding"] is None for i in items.values() if i["sourceSha256"] == shas[0])
+    report = features.use_one_embedding_space(sources)
+    assert report == {"space": "catalog:siglip", "recordings": 3,
+                      "setAside": {"described:siglip2": 1}}
+    assert sources[shas[0]]["frames"] is None
+    # Once the description pass covers as many recordings, it wins the tie.
+    for s in shas[1:2]:
+        sources[s].update(frameTimes=made["embeddings"][s][0],
+                          frames=np.ones((len(made["embeddings"][s][0]), 4), np.float32) / 2,
+                          embeddingKey="described:siglip2")
+    sources[shas[0]].update(frameTimes=made["embeddings"][shas[0]][0],
+                            frames=np.ones((len(made["embeddings"][shas[0]][0]), 4), np.float32) / 2,
+                            embeddingKey="described:siglip2")
+    assert features.embedding_space(sources)["space"] == "described:siglip2"
+
+
 def test_attach_embeddings_keeps_one_model_revision(tmp_path, monkeypatch):
     made = write_experiment(tmp_path / "exp", outings=1, per_outing=2)
     sources = features.load_experiment(tmp_path / "exp")
