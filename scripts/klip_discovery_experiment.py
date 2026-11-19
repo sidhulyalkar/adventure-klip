@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the discovery experiment end to end on a short, explicit list of recordings.
 
-    verify SHA -> motion timeline -> segments -> proxy clips -> judge panel -> report
+    verify SHA -> motion timeline -> audio timeline -> segments -> proxy clips -> judge panel -> report
 
 Resumable: rerun the same command after an interruption and finished work is
 skipped. Sources are read-only; output must be outside the footage directory.
@@ -17,7 +17,7 @@ Then run, and rerun to resume:
         --trusted-source-root /Volumes/SSD/DJI --allow-mounted-ssd \\
         --output "$WS/reports/discovery-001" [--ledger owner-evidence.jsonl]
 
-Use --stages verify motion segments to stop before any model call.
+Use --stages verify motion audio segments to stop before any model call.
 """
 from __future__ import annotations
 
@@ -34,7 +34,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     listing = sub.add_parser("list", help="hash files and print a source list")
-    listing.add_argument("--sport", choices=sorted(panel.RUBRICS), required=True)
+    listing.add_argument("--sport", choices=sorted((*panel.RUBRICS, experiment.UNKNOWN_SPORT)),
+                         required=True)
     listing.add_argument("files", nargs="+", type=Path)
     run = sub.add_parser("run")
     run.add_argument("--sources", type=Path, required=True)

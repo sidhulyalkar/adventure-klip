@@ -32,13 +32,17 @@ def probe(path: Path) -> dict:
 
 def motion_series(path: Path, fps: int = 2, width: int = 64, height: int = 36,
                   max_seconds: float | None = None, progress=None,
-                  total_seconds: float | None = None) -> list[dict]:
+                  total_seconds: float | None = None, hwaccel: str | None = None) -> list[dict]:
     """Mean absolute inter-frame pixel change; camera motion and cuts confound this signal.
 
     Bounded RAM, streaming decoder. Time approximated by uniform fps; this is a proposal
     generator only and must never be interpreted as a confirmed jump or turn.
+    hwaccel (e.g. "videotoolbox") only changes which decoder produces the same pixels.
     """
-    cmd = [require_tool("ffmpeg"), "-v", "error", "-nostdin", "-i", str(path)]
+    cmd = [require_tool("ffmpeg"), "-v", "error", "-nostdin"]
+    if hwaccel:
+        cmd += ["-hwaccel", hwaccel]
+    cmd += ["-i", str(path)]
     if max_seconds is not None:
         cmd.extend(["-t", str(max_seconds)])
     cmd.extend(["-vf", f"fps={fps},scale={width}:{height},format=gray", "-an", "-sn",

@@ -29,8 +29,9 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     imp = sub.add_parser("import")
     imp.add_argument("--kind", choices=sorted(ledger.ADAPTERS), required=True)
-    imp.add_argument("--context", type=Path, required=True,
-                     help="frozen sample manifest, or the ski run context plan")
+    imp.add_argument("--context", type=Path,
+                     help="frozen sample manifest, or the ski run context plan; a ski-run "
+                          "annotation can be imported without it")
     imp.add_argument("--review", type=Path, required=True)
     imp.add_argument("--ledger", type=Path, required=True)
     rep = sub.add_parser("report")
@@ -41,8 +42,16 @@ def main(argv=None) -> int:
     try:
         if args.command == "import":
             before = ledger.file_digest(args.review)
-            rows = ledger.ADAPTERS[args.kind](
-                _json(args.context), _json(args.review), before)
+            review = _json(args.review)
+            if args.context is not None:
+                context = _json(args.context)
+            elif args.kind == "ski-run":
+                context = ledger.ski_run_plan_from_annotation(review)
+            else:
+                raise ValueError(f"--context is required for {args.kind} reviews")
+            rows = ledger.ADAPTERS[args.kind](context, review, before)
+            if args.context is None:
+                rows = [{**r, "contextPlanReconstructed": True} for r in rows]
             result = ledger.append(args.ledger, rows)
             if ledger.file_digest(args.review) != before:
                 raise ValueError("Review export changed during import")

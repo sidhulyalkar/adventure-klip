@@ -1,4 +1,4 @@
-"""One resumable run: verify sources, scan motion, segment, cut proxies, judge, report.
+"""One resumable run: verify sources, scan motion and audio, segment, cut proxies, judge, report.
 
 Scope is an explicit, owner-written list of recordings (at most MAX_SOURCES),
 never the whole catalog. Every stage writes a receipt and is skipped when its
@@ -26,9 +26,13 @@ from .media import motion_series, probe, require_tool
 
 VERSION = "klip-discovery-experiment-v1"
 MAX_SOURCES = 12
-STAGES = ("verify", "motion", "segments", "proxies", "judge")
+STAGES = ("verify", "motion", "audio", "segments", "proxies", "judge")
+AUDIO_VERSION = "klip-discovery-audio-timeline-v1"
+# Motion, audio, segments and proxies do not depend on sport; only the judge
+# panel's questions do, so an untagged recording skips the judge stage.
+UNKNOWN_SPORT = "unknown"
 DEFAULTS = {"fps": 2, "budgetFraction": 0.25, "controls": 2, "minSegmentMs": 4000,
-            "sensitivity": 3.0, "maxFrames": 16, "proxyWidth": 960,
+            "sensitivity": 3.0, "maxFrames": 16, "proxyWidth": 960, "proxyAudio": True,
             "models": ["qwen3-vl:32b", "gemma3:27b"]}
 
 
@@ -41,8 +45,10 @@ def load_sources(path: Path) -> list[dict]:
     for row in rows:
         if (not isinstance(row, dict) or set(row) != {"sourceSha256", "path", "sport"}
                 or not ledger._is_sha(row["sourceSha256"]) or row["sourceSha256"] in seen
-                or not isinstance(row["path"], str) or row["sport"] not in panel.RUBRICS):
-            raise ValueError("Each source needs a unique sourceSha256, a path and a known sport")
+                or not isinstance(row["path"], str)
+                or row["sport"] not in (*panel.RUBRICS, UNKNOWN_SPORT)):
+            raise ValueError("Each source needs a unique sourceSha256, a path and a sport "
+                             f"({', '.join(sorted(panel.RUBRICS))} or {UNKNOWN_SPORT})")
         seen.add(row["sourceSha256"])
     return rows
 
@@ -63,14 +69,19 @@ def _read(path: Path):
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
-def cut_proxy(source: Path, dest: Path, start_ms: int, end_ms: int, *, width: int) -> None:
-    """Re-encode one interval to a small silent H.264 file. The source is only read."""
+def cut_proxy(source: Path, dest: Path, start_ms: int, end_ms: int, *, width: int,
+              audio: bool = True) -> None:
+    """Re-encode one interval to a small H.264 file. The source is only read.
+
+    Audio is kept by default: the owner compares clips with sound, and a
+    shout or a crash is part of what makes a moment.
+    """
     partial = dest.with_suffix(".partial.mp4")
     seconds = (end_ms - start_ms) / 1000
     job = subprocess.run(
         [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
          "-ss", f"{start_ms / 1000:.3f}", "-i", str(source), "-t", f"{seconds:.3f}",
-         "-an", "-sn", "-vf", f"scale='min({width},iw)':-2", "-c:v", "libx264",
+         *(["-c:a", "aac", "-b:a", "64k", "-ac", "1"] if audio else ["-an"]), "-sn", "-vf", f"scale='min({width},iw)':-2", "-c:v", "libx264",
          "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p", "-y", str(partial)],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         timeout=max(120, int(seconds * 4)), check=False)
@@ -81,7 +92,7 @@ def cut_proxy(source: Path, dest: Path, start_ms: int, end_ms: int, *, width: in
 
 
 def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, decode,
-                   cut, frames, transport, log) -> dict:
+                   audio, cut, frames, transport, log, trusted_root: Path) -> dict:
     sha = row["sourceSha256"]
     timing: dict[str, float] = {}
 
@@ -96,7 +107,9 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
     if identity is None:
         path = resolve(row["path"])
         if path is None:
-            raise ValueError("Source is outside the trusted root or missing")
+            under = Path(row["path"]).is_relative_to(trusted_root)
+            raise ValueError("Source file not found under the trusted root" if under else
+                             "Source path is not under --trusted-source-root")
         size = timed("verify", lambda: _hash_verified(path, sha))
         duration_ms = int(float(probe(path)["duration"]) * 1000)
         identity = {"version": VERSION, "sourceSha256": sha, "sport": row["sport"],
@@ -122,6 +135,16 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
             "sourceDurationMs": duration_ms, "sampleFps": config["fps"], "series": series})
     motion = _read(folder / "motion.json")
 
+    if "audio" in stages and _read(folder / "audio.json") is None:
+        # One loudness row per second. An empty series means no audio stream,
+        # which is recorded so the file is not opened again.
+        log(f"{sha[:12]} decoding audio timeline")
+        rows = timed("audio", lambda: audio(source_path()))
+        _atomic_json(folder / "audio.json", {
+            "version": AUDIO_VERSION, "sourceSha256": sha, "windowMs": 1000,
+            "series": [{"t_ms": r["t_ms"], "rms": r["rms"],
+                        "spectralFlux": r.get("spectralFlux")} for r in rows]})
+
     if "segments" in stages and motion and _read(folder / "segments.json") is None:
         plan = ts.propose(
             ts.segment(ts.change_from_motion(motion["series"]), duration_ms,
@@ -138,10 +161,13 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
             dest = folder / "proxies" / f'{s["startMs"]}-{s["endMs"]}.mp4'
             if not dest.is_file():
                 log(f'{sha[:12]} cutting {s["startMs"]}-{s["endMs"]} ms')
-                cut(source_path(), dest, s["startMs"], s["endMs"], width=config["proxyWidth"])
+                cut(source_path(), dest, s["startMs"], s["endMs"], width=config["proxyWidth"],
+                    audio=config["proxyAudio"])
         timing["proxies"] = round(time.monotonic() - began, 2)
 
-    if "judge" in stages and chosen:
+    if "judge" in stages and chosen and row["sport"] == UNKNOWN_SPORT:
+        log(f"{sha[:12]} has no sport; judge stage skipped")
+    elif "judge" in stages and chosen:
         (folder / "judgments").mkdir(exist_ok=True)
         began = time.monotonic()
         for s in chosen:
@@ -228,8 +254,9 @@ def build_report(output: Path, rows: list[dict], config: dict, failures: dict,
 
 def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path,
         allow_mounted: bool = False, overrides: dict | None = None,
-        stages=STAGES, ledger_file: Path | None = None, decode=None, cut=cut_proxy,
-        frames=None, transport=None, log=lambda message: None) -> dict:
+        stages=STAGES, ledger_file: Path | None = None, decode=None, audio=None,
+        cut=cut_proxy, frames=None, transport=None, log=lambda message: None,
+        before=None, after=None) -> dict:
     rows = load_sources(sources_file)
     config = _config(overrides)
     if not set(stages) <= set(STAGES):
@@ -247,6 +274,8 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
                          "use a new output directory")
     decode = decode or (lambda path, fps, seconds: motion_series(
         path, fps=fps, total_seconds=seconds))
+    if audio is None:
+        from .acoustics import audio_series as audio
     if frames is None:
         from .panel_frames import sample_frames as frames
 
@@ -254,17 +283,25 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
         return _require_local_path(path, Path(workspace), trusted, allow_mounted)
 
     failures, timings = {}, {}
+    # before(row) / after(row, failed) let a caller do more with each file while it is
+    # still in the OS cache (the library index describes it there and prefetches the next).
     for row in rows:
         sha = row["sourceSha256"]
         (output / sha).mkdir(exist_ok=True)
+        if before is not None:
+            before(row)
         try:
             timings[sha] = _source_stages(
                 row, output / sha, config, stages, resolve=resolve, decode=decode,
-                cut=cut, frames=frames, transport=transport, log=log)["timingSeconds"]
-        except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+                audio=audio, cut=cut, trusted_root=trusted, frames=frames, transport=transport, log=log)["timingSeconds"]
+        except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+            # SubprocessError covers ffprobe/ffmpeg failures (an unreadable or
+            # truncated file, a drive that went away) as well as timeouts.
             # One bad recording must not stop the others, and is never a negative.
             failures[sha] = f"{type(error).__name__}: {error}"
             log(f"{sha[:12]} failed: {error}")
+        if after is not None:
+            after(row, sha in failures)
     report = build_report(output, rows, config, failures, timings,
                           ledger.load(ledger_file) if ledger_file else None)
     _atomic_json(output / "report.json", report)

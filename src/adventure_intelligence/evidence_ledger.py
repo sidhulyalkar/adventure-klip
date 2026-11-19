@@ -118,6 +118,20 @@ def from_ski_run(plan: dict, doc: dict, digest: str) -> list[dict]:
     )]
 
 
+def ski_run_plan_from_annotation(doc: dict) -> dict:
+    """The context plan's identity fields, as recorded in the annotation itself.
+
+    For an annotation whose plan file is lost. Bounds are still checked
+    against the recorded context; the anchor cannot be cross-checked.
+    """
+    keys = ("sourceAssetSha256", "anchorRecordId", "contextSourceStartMs", "contextSourceEndMs")
+    if not isinstance(doc, dict) or any(k not in doc for k in keys):
+        raise ValueError("Not a ski run owner annotation")
+    return {"sourceAssetSha256": doc["sourceAssetSha256"], "recordId": doc["anchorRecordId"],
+            "contextSourceStartMs": doc["contextSourceStartMs"],
+            "contextSourceEndMs": doc["contextSourceEndMs"]}
+
+
 ADAPTERS = {"marine": from_marine, "calibration": from_calibration, "ski-run": from_ski_run}
 
 

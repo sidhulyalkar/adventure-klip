@@ -1,0 +1,93 @@
+body{font:15px/1.45 system-ui,sans-serif;margin:0;background:#14171a;color:#e8e8e8}
+header{display:flex;gap:16px;align-items:center;padding:10px 18px;background:#1b2026;
+  border-bottom:1px solid #2c333b;position:sticky;top:0;z-index:5}
+nav{display:flex;gap:6px}
+main{max-width:1500px;margin:0 auto;padding:14px 18px}
+button,select,input{font:inherit;color:inherit}
+button{padding:7px 13px;border-radius:6px;border:1px solid #4a5560;background:#232a31;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:#2c5d3d;border-color:#3ecf6e}
+button.tab[aria-pressed=true]{background:#33404d;border-color:#7fb4ff}
+button:focus-visible,select:focus-visible,.tile:focus-visible{outline:3px solid #7fb4ff;outline-offset:1px}
+select,input{background:#232a31;border:1px solid #4a5560;border-radius:6px;padding:6px 8px}
+#message{color:#9fd3a8;margin-left:auto}
+#message.error{color:#ff9b8a}
+.muted{color:#9aa4ad}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 14px}
+.badge{padding:2px 8px;border-radius:10px;background:#33404d;font-size:13px}
+.badge.ok{background:#2c5d3d}
+.card{background:#1b2026;border:1px solid #2c333b;border-radius:8px;padding:12px 14px;margin:0 0 12px}
+.card.unset{border-color:#8a6d2b}
+.card-head{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.card-head h3{margin:0;font-size:16px;flex:1 1 260px}
+.thumbs{display:flex;gap:8px;margin:10px 0 4px}
+.thumbs img{width:240px;aspect-ratio:16/9;object-fit:cover;border-radius:4px;background:#000}
+.recs{margin:8px 0 0;padding:0;list-style:none}
+.recs li{display:flex;gap:10px;align-items:center;padding:3px 0;border-top:1px solid #262d34}
+.recs li span.file{font-family:ui-monospace,monospace;font-size:13px;flex:1}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.tile{position:relative;border:4px solid transparent;border-radius:8px;cursor:pointer;background:#000}
+.tile.keep{border-color:#3ecf6e}
+.tile.best{border-color:#ffc83d}
+.tile video{width:100%;display:block;border-radius:4px;aspect-ratio:16/9;background:#000;
+  max-height:calc((100vh - 230px) / 2);object-fit:contain}
+.tile .num{position:absolute;top:6px;left:8px;background:#000a;padding:2px 8px;border-radius:4px;font-weight:600}
+.tile .mark{position:absolute;top:6px;right:8px;background:#000a;padding:2px 8px;border-radius:4px}
+.tile .mark:empty{display:none}
+table{border-collapse:collapse;width:100%}
+td,th{padding:6px 8px;border-bottom:1px solid #2c333b;text-align:left}
+progress{width:220px}
+.trip{border-left:3px solid #4a6fa5;padding-left:12px;margin:0 0 22px}
+.trip>.card-head h2{margin:0;font-size:18px;flex:1 1 260px}
+.trip>.card-head{margin:0 0 10px}
+.trip input[type=text]{min-width:220px}
+img.mini{width:128px;aspect-ratio:16/9;object-fit:cover;border-radius:3px;background:#000}
+
+/* organizer */
+.small{font-size:13px}
+textarea{font:inherit;color:inherit;background:#232a31;border:1px solid #4a5560;border-radius:6px;
+  padding:6px 8px;width:100%;box-sizing:border-box;resize:vertical}
+textarea:focus-visible,input:focus-visible,.rec-main:focus-visible,.side-day:focus-visible{outline:3px solid #7fb4ff;outline-offset:1px}
+.organizer{display:grid;grid-template-columns:260px minmax(0,1fr) 300px;gap:16px;align-items:start}
+.side{position:sticky;top:64px;max-height:calc(100vh - 80px);overflow:auto;padding-right:4px}
+.side-trip h3{font-size:15px;margin:10px 0 0}
+.side-trip p{margin:0 0 4px}
+.side ul{list-style:none;margin:0;padding:0}
+.side-day{display:flex;justify-content:space-between;gap:6px;width:100%;text-align:left;margin:2px 0;
+  padding:6px 8px;background:transparent;border-color:transparent}
+.side-day.current{background:#33404d;border-color:#7fb4ff}
+.count.todo{color:#ffc83d}
+.count.done{color:#3ecf6e}
+.day-head .fields{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 6px}
+.burst h4{margin:12px 0 4px;font-weight:500}
+.recs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.rec{background:#1b2026;border:2px solid #2c333b;border-radius:8px;overflow:hidden}
+.rec.picked{border-color:#7fb4ff;box-shadow:0 0 0 2px #7fb4ff55}
+.rec-main{display:block;width:100%;padding:0;border:0;border-radius:0;background:#000;position:relative;text-align:left}
+.rec-main img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#000}
+.rec .chip{position:absolute;top:6px;left:6px;padding:2px 8px;border-radius:10px;font-size:13px;background:#000b}
+.rec .meta{position:absolute;bottom:6px;left:6px;padding:1px 6px;border-radius:4px;font-size:12px;background:#000b}
+.rec-foot{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px}
+.tag{font-size:12px;padding:1px 6px;border-radius:8px;background:#33404d}
+.tag.warn{background:#6b4d1a}
+button.suggest{font-size:12px;padding:2px 8px;border-style:dashed;border-color:#ffc83d;background:transparent}
+button.link{font-size:12px;padding:2px 6px;margin-left:auto;background:transparent;border-color:transparent;text-decoration:underline}
+.details{position:sticky;top:64px;background:#1b2026;border:1px solid #2c333b;border-radius:8px;padding:12px}
+.details h3{margin:0 0 4px;font-size:15px;word-break:break-all}
+.details label{display:block;margin:10px 0 2px}
+.details input{width:100%;box-sizing:border-box}
+.keys{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:8px 0}
+.keys button{text-align:left;padding:5px 8px;font-size:13px}
+.act-ski .chip,button.act-ski{background:#2b4a6f}
+.act-snorkeling .chip,button.act-snorkeling{background:#1f5f5b}
+.act-kayak .chip,button.act-kayak{background:#3d5a2a}
+.act-bike .chip,button.act-bike{background:#6b4a2a}
+.act-hike .chip,button.act-hike{background:#4f5a2a}
+.act-surf .chip,button.act-surf{background:#2a4f6b}
+.act-other .chip,button.act-other{background:#4a4a55}
+.act-accidental .chip,button.act-accidental{background:#6b2a2a}
+.act-unknown .chip{background:#000b;border:1px dashed #ffc83d}
+dialog#player{background:#14171a;color:#e8e8e8;border:1px solid #4a5560;border-radius:8px;width:min(1200px,95vw);padding:12px}
+dialog#player::backdrop{background:#000c}
+dialog#player video{width:100%;max-height:75vh;background:#000}
+@media (max-width:1100px){.organizer{grid-template-columns:200px minmax(0,1fr)}.details{grid-column:1/-1;position:static}}

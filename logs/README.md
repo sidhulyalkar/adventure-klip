@@ -7,6 +7,7 @@ These files are **public/portable descriptions** of source-backed experiments, a
 ## Where to look
 
 - [Historical outcomes and lessons](experiments/2026-11-16-state-and-lessons.md)
+- [Within-outing value learning (2026-11-17)](experiments/2026-11-17-within-outing-value-learning.md)
 - [Research mission](../docs/KLIP_RESEARCH_MISSION.md)
 - [Technical architecture](../docs/KLIP_ARCHITECTURE_V3.md)
 - [Prioritized roadmap](../docs/KLIP_IMPLEMENTATION_ROADMAP.md)

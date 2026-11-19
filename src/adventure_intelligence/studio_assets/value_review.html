@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="klip-token" content="KLIP_SESSION_TOKEN">
+<title>Klip review</title>
+<link rel="stylesheet" href="/review.css">
+</head><body>
+<header>
+  <strong>Klip review</strong>
+  <nav>
+    <button id="tab-outings" class="tab" aria-pressed="true">Organize</button>
+    <button id="tab-review" class="tab" aria-pressed="false">Review clips</button>
+  </nav>
+  <span id="message" role="status" aria-live="polite"></span>
+</header>
+<main>
+  <section id="outings-view" aria-label="Organize trips, days and activities"></section>
+  <section id="review-view" hidden></section>
+</main>
+<dialog id="player" aria-label="Play recording"></dialog>
+<script src="/review.js"></script>
+</body></html>
