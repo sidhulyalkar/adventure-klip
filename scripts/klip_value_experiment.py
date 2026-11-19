@@ -213,6 +213,52 @@ def describe(args) -> dict:
     return {"described": done, "failed": failed, "store": str(store), "vocabulary": doc["digest"]}
 
 
+def atlas(args) -> dict:
+    """Read-only map of the library: shooting, structure, and what the labels can answer."""
+    import csv
+    from adventure_intelligence import library_atlas
+    database = args.workspace / "catalog.sqlite3"
+    if database.is_symlink() or not database.is_file():
+        raise ValueError("No catalog in this workspace")
+    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as db:
+        db.execute("PRAGMA query_only=ON")
+        recordings = [{"sha": r[0], "path": r[1], "durationS": r[2], "captureTime": r[3],
+                       "activity": r[4]} for r in db.execute(
+            "SELECT sha256,stored_path,duration,capture_time,activity FROM assets WHERE duration>0")]
+    doc = roster.validate(_json(args.roster)) if args.roster else None
+    mapping, _ = _mapping(args)
+    owner = _owner(args, lambda sha: roster.group_of(mapping, sha))
+    scanned, _ = _done(sorted((args.workspace / "reports").glob("discovery-*")))
+    store = (args.evidence or args.workspace / "reports" / "evidence").expanduser()
+    described = {m.parent.name for m in store.glob("*/meta.json")}
+    out = (args.output or args.workspace / "reports" / "atlas").expanduser()
+    heads = {}
+    if not args.no_probe:
+        root = args.source_root.expanduser().absolute() if args.source_root else None
+        reachable = [r for r in recordings
+                     if root is None or Path(r["path"]).is_relative_to(root)]
+        heads = library_atlas.headers(out / "headers.jsonl", reachable,
+                                      log=lambda m: print("[atlas]", m, file=sys.stderr))
+    built = library_atlas.build(recordings, roster_doc=doc, heads=heads, scanned=scanned,
+                                described=described, judgments=owner["judgments"],
+                                pairs=owner["pairs"])
+    out.mkdir(parents=True, exist_ok=True)
+    # Derived and rebuilt from sources every run, so it is replaced, never appended.
+    (out / "atlas.json.partial").write_text(json.dumps(built["summary"], indent=2) + "\n",
+                                            encoding="utf-8")
+    (out / "atlas.json.partial").replace(out / "atlas.json")
+    with open(out / "recordings.csv.tmp", "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(built["rows"][0]) if built["rows"] else [])
+        writer.writeheader()
+        writer.writerows(built["rows"])
+    (out / "recordings.csv.tmp").replace(out / "recordings.csv")
+    print(f"[atlas] wrote {out / 'atlas.json'} and {out / 'recordings.csv'} "
+          f"({len(built['rows'])} recordings; trips and days are in atlas.json)", file=sys.stderr)
+    s = built["summary"]
+    return {k: s[k] for k in ("rosterConfirmed", "library", "byActivity", "byMode", "byCamera",
+                              "coverage", "labelsAskedWhat", "evaluableByActivity")}
+
+
 def index(args) -> dict:
     """Scan and describe every recording not yet done, each file read from disk once."""
     from adventure_intelligence import library_index
@@ -503,6 +549,12 @@ def main(argv=None) -> int:
                      help="hardware decoding; about 7x faster than software on DJI HEVC in the probe, frees the CPU for the models")
     des.add_argument("--vocabulary-only", action="store_true",
                      help="re-encode the concept list only (after editing --terms)")
+    atl = sub.add_parser("atlas", help="read-only map of the library: how it was shot, "
+                                       "its structure, and what the labels can answer")
+    owner_inputs(atl)
+    atl.add_argument("--source-root", type=Path, help="read file headers only under this folder")
+    atl.add_argument("--no-probe", action="store_true", help="skip reading file headers")
+    atl.add_argument("--output", type=Path, help="folder (default <workspace>/reports/atlas)")
     idx = sub.add_parser("index", help="scan and describe every recording not yet done "
                                        "(one disk read per file; resumable)")
     owner_inputs(idx)
@@ -572,6 +624,8 @@ def main(argv=None) -> int:
             if not 0.5 <= args.step <= 30:
                 raise ValueError("--step must be 0.5..30 seconds")
             print(json.dumps(describe(args), indent=2))
+        elif args.command == "atlas":
+            print(json.dumps(atlas(args), indent=2))
         elif args.command == "index":
             if not 0.5 <= args.step <= 30:
                 raise ValueError("--step must be 0.5..30 seconds")

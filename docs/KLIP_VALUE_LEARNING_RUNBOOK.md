@@ -198,6 +198,29 @@ This opens a local page (127.0.0.1 only, with a session token) with two tabs:
 Footage, catalog and discovery output are only read. Thumbnails are cached in
 `$L/thumbs/`.
 
+## Know the library before modelling it (atlas)
+
+```bash
+python scripts/klip_value_experiment.py atlas --workspace "$WS" --source-root "$SSD" \
+    --roster "$L/roster.json" --ledger "$L/owner-evidence.jsonl" \
+    --pairs-ledger "$L/owner-pairs.jsonl"
+```
+
+Read-only. Reads container headers only (seconds per file, cached by SHA and size), never
+decodes, and never stores location values (only whether a file has a location tag). It
+writes three files to `$WS/reports/atlas/`:
+
+- `atlas.json` covers:
+  - the library by activity, shooting mode and camera;
+  - trips → days, with bursts, retakes, short clips and slow-motion counts;
+  - scan, description and label coverage;
+  - **which question each label source asked**, on which activities and days;
+  - **whether a held-out evaluation is possible per activity** (day and trip).
+- `recordings.csv` has one row per recording, to sort in Numbers or Excel.
+- `headers.jsonl` is the header cache.
+
+Rerun it any time; the derived files are replaced.
+
 ## Indexing the library (one command, replaces plan + discovery loops + describe)
 
 ```bash

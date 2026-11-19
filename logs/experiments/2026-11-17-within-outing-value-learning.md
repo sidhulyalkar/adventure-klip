@@ -125,3 +125,18 @@ Changes:
   recorded as `embeddingSpace`.
 
 Status: synthetic CI passed (860 tests). Not yet run on real media.
+
+## Revision 6 (2026-11-19): library atlas before more modelling
+
+- The owner reports the footage has no spoken commentary, so speech is dropped from the plan.
+- New in `library_atlas` + `atlas`: a read-only data profile. Its sections:
+  - **Shooting modes:** from container headers (resolution, frame rate, bit depth, colour
+    transfer, data tracks such as DJI `djmd`). Location values are never stored.
+  - **Filming behaviour:** position in day, gaps, retakes (≤30 s), bursts (≤120 s), short
+    clips (<3 s), slow-motion modes (≥90 fps).
+  - **Trip/day/activity structure,** with coverage.
+  - **Which goal each label source asked,** on which activities.
+  - **Whether day or trip held-out evaluation is possible per activity.**
+- Filming behaviour is a fact about the owner, not a label. If used, it enters as features
+  that are ablated against the existing ladder.
+- Status: synthetic CI passed. Not yet run on the real library.
