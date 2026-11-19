@@ -498,3 +498,23 @@ def test_cli_deck_import_and_evaluate_end_to_end(tmp_path, capsys):
     assert report["inputs"]["rosterConfirmed"] is True
     assert (tmp_path / "out" / "queue.json").is_file()
     assert cli.main(args) == 2  # never overwrites an earlier evaluation
+
+
+def test_same_day_rule_pairs_keeps_filed_under_other_goals():
+    # Real data: 12 keeps under personal memory / nature had no same-goal skip, so the
+    # default rule gave them no pairs at all.
+    def row(i, sha, decision, goal):
+        return {"sourceSha256": sha, "startMs": i * 10_000, "endMs": i * 10_000 + 5000,
+                "decision": decision, "goal": goal, "evidenceId": f"e{i}"}
+    rows = [row(0, "a" * 64, "keep", "curation_personal_memory"),
+            row(1, "a" * 64, "skip", "curation_athletic_skill"),
+            row(2, "b" * 64, "skip", "curation_athletic_skill"),
+            row(3, "c" * 64, "keep", "curation_nature_encounter")]
+    day = {"a" * 64: "d1", "b" * 64: "d1", "c" * 64: "d2"}.get
+    assert pairs_mod.from_ledger(rows, day) == []
+    made = pairs_mod.from_ledger(rows, day, rule="same_day")
+    assert len(made) == 2 and {p["group"] for p in made} == {"d1"}
+    assert all(p["pairRule"] == "same_day" and p["outcome"] == 1.0 for p in made)
+    assert made[0]["goal"] == "curation_athletic_skill|curation_personal_memory"
+    with pytest.raises(ValueError):
+        pairs_mod.from_ledger(rows, day, rule="anything")

@@ -266,6 +266,23 @@ def build_items(sources: dict[str, dict], intervals: list[tuple[str, int, int]],
     return items
 
 
+def attach_cards(items: dict[str, dict], cards: dict[tuple[str, int, int], dict]) -> int:
+    """Add scene-card facts (prefixed 'card:') to the items they were made for.
+
+    Cards exist only for the segments that were described (owner-labelled ones and
+    random controls), so they are compared on pair accuracy, not on whole-day recall.
+    """
+    from .scene_cards import features as card_features
+    n = 0
+    for item in items.values():
+        doc = cards.get((item["sourceSha256"], item["startMs"], item["endMs"]))
+        facts = card_features(doc["cards"]) if doc else {}
+        if facts:
+            item["concepts"] = {**(item.get("concepts") or {}), **facts}
+            n += 1
+    return n
+
+
 def item_id(sha: str, start: int, end: int) -> str:
     return f"{sha}:{start}-{end}"
 

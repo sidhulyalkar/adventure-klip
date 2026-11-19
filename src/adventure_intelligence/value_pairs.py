@@ -34,8 +34,16 @@ def _side_id(side: dict) -> str:
     return item_id(side["sourceSha256"], side["startMs"], side["endMs"])
 
 
-def from_ledger(records: list[dict], group_of, *, cap: int = 400, seed: int = 0) -> list[dict]:
-    """Every Keep over every Skip within one outing and one goal.
+PAIR_RULES = ("same_goal", "same_day")
+
+
+def from_ledger(records: list[dict], group_of, *, cap: int = 400, seed: int = 0,
+                rule: str = "same_goal") -> list[dict]:
+    """Every Keep over every Skip within one outing (and, by default, one goal).
+
+    rule="same_day" pairs across goals: it reads keep/skip as one answer to "keep this?"
+    and the goal as the reason, so a keep filed under personal memory still outranks a
+    skip filed under athletic skill from the same day.
 
     `records` are evidence-ledger rows or owner_evidence judgments; both carry
     sourceSha256, startMs, endMs, decision, goal and evidenceId.
@@ -43,10 +51,12 @@ def from_ledger(records: list[dict], group_of, *, cap: int = 400, seed: int = 0)
     Intervals that overlap in the same recording are not paired: skipping a
     wide window does not rank it below a moment the owner kept inside it.
     """
+    if rule not in PAIR_RULES:
+        raise ValueError(f"pair rule must be one of {PAIR_RULES}")
     buckets: dict[tuple, dict[str, list[dict]]] = {}
     for r in records:
         if r["decision"] in ("keep", "skip"):
-            key = (group_of(r["sourceSha256"]), r["goal"])
+            key = (group_of(r["sourceSha256"]), r["goal"] if rule == "same_goal" else "any")
             buckets.setdefault(key, {"keep": [], "skip": []})[r["decision"]].append(r)
     out = []
     for (group, goal), sides in sorted(buckets.items()):
@@ -61,7 +71,9 @@ def from_ledger(records: list[dict], group_of, *, cap: int = 400, seed: int = 0)
                 made.setdefault((_side_id(left), _side_id(right)), {
                     "left": left, "right": right, "outcome": 1.0,
                     "tier": "owner_keep_over_skip", "group": group, "groups": [group],
-                    "goal": goal, "evalEligible": True,
+                    "goal": goal if rule == "same_goal" else
+                    "|".join(sorted({keep["goal"], skip["goal"]})),
+                    "pairRule": rule, "evalEligible": True,
                     "evidenceIds": [keep["evidenceId"], skip["evidenceId"]]})
         rows = [made[k] for k in sorted(made)]
         if len(rows) > cap:

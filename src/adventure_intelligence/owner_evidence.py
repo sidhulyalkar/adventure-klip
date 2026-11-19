@@ -31,7 +31,7 @@ VERSION = "klip-owner-evidence-collection-v1"
 MAX_FILE_BYTES = 40_000_000
 # Folders Klip itself writes per recording: never review exports, and they hold thousands
 # of JSON files (motion, audio, segments), so reading them made every command slow.
-DERIVED = re.compile(r"^(discovery-.+|value-.+|evidence|atlas|thumbs)$")
+DERIVED = re.compile(r"^(discovery-.+|value-.+|evidence|atlas|thumbs|scene-cards)$")
 _HIGHLIGHT = {"keep": "keep", "skip": "skip", "neutral": "unsure"}
 _PAIR_CHOICE = {"left": 1.0, "right": 0.0, "tie": 0.5}
 # Review schemas Klip has written. Anything listed here and found on disk is

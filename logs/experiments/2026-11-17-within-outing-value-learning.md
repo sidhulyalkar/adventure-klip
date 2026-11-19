@@ -140,3 +140,32 @@ Status: synthetic CI passed (860 tests). Not yet run on real media.
 - Filming behaviour is a fact about the owner, not a label. If used, it enters as features
   that are ablated against the existing ladder.
 - Status: synthetic CI passed. Not yet run on the real library.
+
+## Revision 7 (2026-11-19): what the labels are, and cards to describe scenes
+
+The atlas, run with `~/Downloads`, gave this picture:
+- **Recordings:** 232 recordings, 9.7 h, one camera (Osmo Action 4).
+  - Short clips (<3 s): 30.
+  - Slow-motion recordings (120 fps): 46.
+  - Bursts: 95.
+  - `djmd` track: on every file. Location tag: none.
+- **Labels:** 136 judgments over 119 recordings.
+  - 108 judgments and 256 of 258 pairs are filed under athletic skill.
+  - The 12 keeps under personal memory, nature encounter and story payoff have no
+    same-goal skip, so they formed no pairs.
+  - Every label is on a pipeline-proposed window.
+- **Evaluable activities:** only one, about 10 days. Activity is unknown for 187
+  recordings.
+
+Changes:
+- **`--pairing same_day`:** an evaluated alternative pair rule; keep over skip within a
+  day, whatever the goal.
+- **`scene_cards` + `cards`:** local VLM facts per segment (labelled plus random controls),
+  with control questions, abstentions and fingerprints. `evaluate --scene-cards` adds
+  them as `card:` evidence.
+- **`index`:** sees scans run by another process between batches, and never reuses a
+  folder name.
+- **System map:** `docs/KLIP_VALUE_SYSTEM.md`.
+
+Status: synthetic CI passed (871). Cards and the same-day rule have not been run on real
+data.

@@ -198,6 +198,33 @@ This opens a local page (127.0.0.1 only, with a session token) with two tabs:
 Footage, catalog and discovery output are only read. Thumbnails are cached in
 `$L/thumbs/`.
 
+## Scene cards (local vision-language model)
+
+```bash
+ollama pull qwen3-vl:8b            # needs Ollama 0.12.7 or later
+python scripts/klip_value_experiment.py cards --workspace "$WS" --source-root "$SSD" \
+    --roster "$L/roster.json" --ledger "$L/owner-evidence.jsonl" --pairs-ledger "$L/owner-pairs.jsonl"
+```
+
+The command describes:
+- every owner-labelled segment;
+- 4 random windows from each labelled day, as controls.
+
+Each segment gets about 6 frames and a card. A card holds:
+- 17 yes/no/unclear facts;
+- 2 control questions;
+- an activity guess;
+- a people count;
+- an animal name;
+- a caption.
+
+Cards are model observations. The command is resumable and stores cards in
+`$WS/reports/scene-cards/`. To test whether the facts help, compare evaluations on the
+same pairs with and without `--scene-cards "$WS/reports/scene-cards"`.
+
+`--pairing same_day` (on evaluate, deck and harvest) also pairs a keep and a skip filed
+under different goals from the same day.
+
 ## Know the library before modelling it (atlas)
 
 ```bash

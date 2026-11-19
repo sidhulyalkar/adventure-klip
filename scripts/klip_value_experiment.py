@@ -99,7 +99,8 @@ def _owner(args, group_of):
                                        [r.expanduser() for r in getattr(args, "reports", None) or []])
     grid = pairs_mod.grid_judgments(answers)
     judgments = collected["judgments"] + grid
-    pairs = (pairs_mod.from_ledger(collected["judgments"], group_of, seed=args.seed)
+    rule = getattr(args, "pairing", None) or "same_goal"
+    pairs = (pairs_mod.from_ledger(collected["judgments"], group_of, seed=args.seed, rule=rule)
              + pairs_mod.from_ratings(collected["judgments"], group_of, seed=args.seed)
              + pairs_mod.from_direct(collected["pairs"], group_of)
              + pairs_mod.from_taps(answers, group_of)
@@ -141,8 +142,13 @@ def _load(args):
         + value_eval.pair_intervals(owner["collected"]["pairs"] + taps)
         + value_eval.grid_intervals(owner["answers"]), group_of, seed=args.seed, evidence=store)
     pool_ids = {features.item_id(*interval) for interval in pool} & set(items)
+    carded = 0
+    if getattr(args, "scene_cards", None):
+        from adventure_intelligence import scene_cards
+        carded = features.attach_cards(items, scene_cards.load(args.scene_cards.expanduser()))
     labelled = {j["sourceSha256"] for j in owner["judgments"]}
     return {**owner, "sources": sources, "items": items, "pool_ids": pool_ids,
+            "itemsWithSceneCards": carded,
             "confirmed": confirmed, "embeddings": embeddings, "duplicates": duplicates,
             "group_of": group_of, "trip_of": lambda outing: trips.get(outing, outing),
             "excluded": len(excluded), "described": described, "embeddingSpace": space,
@@ -215,6 +221,41 @@ def describe(args) -> dict:
         print(f"[describe] {k}/{len(order)} {path.name}: {note} (about {eta:.0f} min left)",
               file=sys.stderr, flush=True)
     return {"described": done, "failed": failed, "store": str(store), "vocabulary": doc["digest"]}
+
+
+def cards(args) -> dict:
+    """Scene cards for every owner-labelled segment plus random controls per day."""
+    from adventure_intelligence import scene_cards
+    root = args.source_root.expanduser().absolute()
+    mapping, _ = _mapping(args)
+    _, excluded = _roster_extras(args)
+
+    def group_of(sha):
+        return roster.group_of(mapping, sha)
+
+    owner = _owner(args, group_of)
+    assets = _catalog_assets(args.workspace)
+    scanned_shas, _ = _done(sorted((args.workspace / "reports").glob("discovery-*")))
+    scanned = {s: {"durationMs": int(assets[s]["duration"] * 1000)}
+               for s in scanned_shas if s in assets and s not in excluded}
+    segments = [t for t in scene_cards.targets(
+        [j for j in owner["judgments"] if j["sourceSha256"] not in excluded],
+        [p for p in owner["pairs"] if not {p["left"]["sourceSha256"],
+                                           p["right"]["sourceSha256"]} & excluded],
+        scanned, group_of, controls_per_day=args.controls_per_day, seed=args.seed)]
+    if args.max:
+        segments = segments[:args.max]
+
+    def path_of(sha):
+        path = Path(assets[sha]["path"]) if sha in assets else None
+        return path if path and path.is_relative_to(root) and path.is_file() else None
+
+    out = (args.output or args.workspace / "reports" / "scene-cards").expanduser()
+    print(f"[cards] {len(segments)} segments "
+          f"({sum(s['role'] == 'random_control' for s in segments)} random controls), "
+          f"models {', '.join(args.models)}", file=sys.stderr, flush=True)
+    return scene_cards.describe(segments, path_of, out, args.models,
+                                log=lambda m: print("[cards]", m, file=sys.stderr, flush=True))
 
 
 def atlas(args) -> dict:
@@ -541,6 +582,10 @@ def main(argv=None) -> int:
         p.add_argument("--pairs-ledger", type=Path)
         p.add_argument("--roster", type=Path)
         p.add_argument("--seed", type=int, default=0)
+        p.add_argument("--scene-cards", type=Path,
+                       help="add scene-card facts (from the cards command) as evidence")
+        p.add_argument("--pairing", choices=pairs_mod.PAIR_RULES, default="same_goal",
+                       help="same_day also pairs a keep and a skip filed under different goals")
 
     rev = sub.add_parser("review", help="open the local review app (outings and clip grid)")
     rev.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
@@ -566,6 +611,14 @@ def main(argv=None) -> int:
                      help="hardware decoding; about 7x faster than software on DJI HEVC in the probe, frees the CPU for the models")
     des.add_argument("--vocabulary-only", action="store_true",
                      help="re-encode the concept list only (after editing --terms)")
+    crd = sub.add_parser("cards", help="describe owner-labelled segments (and random "
+                                       "controls) with a local vision-language model")
+    owner_inputs(crd)
+    crd.add_argument("--source-root", type=Path, required=True)
+    crd.add_argument("--models", nargs="+", default=["qwen3-vl:8b"])
+    crd.add_argument("--controls-per-day", type=int, default=4)
+    crd.add_argument("--max", type=int, help="at most this many segments this run")
+    crd.add_argument("--output", type=Path, help="folder (default <workspace>/reports/scene-cards)")
     atl = sub.add_parser("atlas", help="read-only map of the library: how it was shot, "
                                        "its structure, and what the labels can answer")
     owner_inputs(atl)
@@ -641,6 +694,8 @@ def main(argv=None) -> int:
             if not 0.5 <= args.step <= 30:
                 raise ValueError("--step must be 0.5..30 seconds")
             print(json.dumps(describe(args), indent=2))
+        elif args.command == "cards":
+            print(json.dumps(cards(args), indent=2))
         elif args.command == "atlas":
             print(json.dumps(atlas(args), indent=2))
         elif args.command == "index":
@@ -764,6 +819,8 @@ def main(argv=None) -> int:
                 "rosterConfirmed": state["confirmed"], "embeddings": state["embeddings"],
                 "accidentalRecordingsExcluded": state["excluded"],
                 "describedRecordings": state["described"], "vocabulary": state["vocabulary"],
+                "pairRule": getattr(args, "pairing", "same_goal"),
+                "itemsWithSceneCards": state["itemsWithSceneCards"],
                 "embeddingSpace": state["embeddingSpace"],
                 "seed": args.seed, "sourcesWithEvidence": len(state["sources"]),
                 "sourcesListedInTwoExperiments": state["duplicates"],

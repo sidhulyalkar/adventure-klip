@@ -189,3 +189,33 @@ def test_motion_decode_can_use_hardware_without_changing_the_signal(monkeypatch)
     assert "-hwaccel" not in seen["cmd"]
     # Same sampling and size either way.
     assert "fps=2,scale=64:36,format=gray" in seen["cmd"]
+
+
+@needs_ffmpeg
+def test_index_sees_a_scan_another_process_ran_meanwhile(library):
+    lib = library
+    events = []
+    real_run = experiment.run
+    taken = {}
+
+    def other_process_then_run(sources_file, output, **kwargs):
+        if not taken:
+            # While the index runs its first batch, another scan claims discovery-002
+            # and a recording the index planned for its second batch.
+            rows = json.loads((output / "sources.json").read_text())
+            planned = sorted(set(lib["assets"]) - {r["sourceSha256"] for r in rows})
+            taken["sha"] = planned[0]
+            other = lib["reports"] / "discovery-002"
+            (lib["reports"] / "x.json").write_text(json.dumps([{
+                "sourceSha256": planned[0], "path": lib["assets"][planned[0]]["path"],
+                "sport": "unknown"}]))
+            real_run(lib["reports"] / "x.json", other, workspace=lib["ws"],
+                     trusted_root=lib["footage"], stages=("verify", "motion"),
+                     decode=lambda p, f, s: fake_motion(p, f, s)[0])
+        return real_run(sources_file, output, **kwargs)
+
+    totals = go(lib, events, run_batch=other_process_then_run)
+    assert [b["folder"] for b in totals["batches"]] == ["discovery-001", "discovery-003"]
+    batch3 = json.loads((lib["reports"] / "discovery-003" / "sources.json").read_text())
+    assert taken["sha"] not in {r["sourceSha256"] for r in batch3}
+    assert totals["scanned"] == 4

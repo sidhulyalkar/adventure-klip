@@ -20,6 +20,7 @@ footage; resumable; one failed recording never stops the rest.
 from __future__ import annotations
 
 from pathlib import Path
+import itertools
 import json
 import re
 import threading
@@ -161,13 +162,29 @@ def run(assets: dict[str, dict], *, workspace: Path, trusted_root: Path, reports
     queue = [s for s in plan["scan"]
              if not any(s in (_read(f / "experiment.json") or {}).get("sources", [])
                         for f in done["unfinished"])]
-    number = done["nextNumber"]
-    while queue and budget[0] > 0:
-        take = queue[:int(min(experiment.MAX_SOURCES, budget[0]))]
-        queue = queue[len(take):]
-        budget[0] -= len(take)
-        batches.append((reports / f"discovery-{number:03d}", take))
-        number += 1
+
+    def new_batches():
+        """Batches made one at a time, so a scan another process ran meanwhile (or a
+        folder it created) is seen before each batch rather than duplicated or clobbered."""
+        nonlocal queue
+        while queue and budget[0] > 0:
+            now = survey(reports)
+            # Only what someone else attempted since this run began (a retry stays queued).
+            queue = [q for q in queue if q not in now["attempted"] - done["attempted"]]
+            take = queue[:int(min(experiment.MAX_SOURCES, budget[0]))]
+            if not take:
+                return
+            number = now["nextNumber"]
+            while True:
+                folder = reports / f"discovery-{number:03d}"
+                try:
+                    folder.mkdir(parents=True, exist_ok=False)
+                    break
+                except FileExistsError:
+                    number += 1
+            queue = queue[len(take):]
+            budget[0] -= len(take)
+            yield folder, take
 
     decoders: dict[str, str] = {}
     clocks: dict[str, float] = {}
@@ -177,9 +194,8 @@ def run(assets: dict[str, dict], *, workspace: Path, trusted_root: Path, reports
         decoders[str(path)] = decoder
         return series
 
-    for folder, take in batches:
+    for folder, take in itertools.chain(batches, new_batches()):
         if take is not None:
-            folder.mkdir(parents=True, exist_ok=False)
             (folder / "sources.json").write_text(json.dumps(
                 [{"sourceSha256": s, "path": assets[s]["path"], "sport": assets[s]["sport"]}
                  for s in take], indent=2), encoding="utf-8")
