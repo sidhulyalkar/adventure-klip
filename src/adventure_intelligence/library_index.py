@@ -127,11 +127,16 @@ def run(assets: dict[str, dict], *, workspace: Path, trusted_root: Path, reports
     totals = {"scanned": 0, "scanFailed": 0, "described": 0, "describeFailed": 0,
               "skippedFailedBefore": len(plan["skippedFailedBefore"]), "batches": []}
     budget = [max_recordings if max_recordings is not None else float("inf")]
-    work = sum(assets[s].get("durationS") or 0 for s in plan["scan"] + plan["describeOnly"])
+    # Speed and time left count only recordings that had work to do: one that a resumed
+    # batch had already finished must not make the run look thousands of times faster.
+    counted = set(plan["scan"] + plan["describeOnly"])
+    work = sum(assets[s].get("durationS") or 0 for s in counted)
     started, footage = clock(), [0.0]
 
     def progress(sha, note, name=None):
-        footage[0] += assets.get(sha, {}).get("durationS") or 0
+        if sha in counted:
+            counted.discard(sha)
+            footage[0] += assets.get(sha, {}).get("durationS") or 0
         spent = clock() - started
         speed = footage[0] / spent if spent > 0 else 0
         left = (work - footage[0]) / speed / 60 if speed else 0
