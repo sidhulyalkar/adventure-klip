@@ -31,6 +31,10 @@ from adventure_intelligence import value_pairs as pairs_mod
 
 SPORTS = ("ski", "snorkeling", "bike")
 DEFAULT_WORKSPACE = Path(os.environ.get("ADVENTURE_HOME") or Path.home() / "AdventureAI")
+# Review exports kept outside the workspace (e.g. ~/Downloads). Set once in the shell so
+# no command silently runs without them.
+EXTRA_REPORTS = [Path(p).expanduser() for p in os.environ.get("KLIP_REPORTS", "").split(os.pathsep)
+                 if p.strip()]
 
 
 def _json(path: Path):
@@ -232,7 +236,12 @@ def atlas(args) -> dict:
     doc = roster.validate(_json(args.roster)) if args.roster else None
     mapping, _ = _mapping(args)
     owner = _owner(args, lambda sha: roster.group_of(mapping, sha))
-    say(f"{len(owner['judgments'])} judgments, {len(owner['pairs'])} pairs; reading coverage")
+    files = owner["collected"].get("files", [])
+    say(f"{len(owner['judgments'])} judgments, {len(owner['pairs'])} pairs from "
+        f"{sum(f['used'] for f in files)} review files; reading coverage")
+    if not args.reports:
+        say("no --reports folders (or $KLIP_REPORTS): review exports outside the workspace, "
+            "such as ~/Downloads, were not read")
     scanned, _ = _done(sorted((args.workspace / "reports").glob("discovery-*")))
     store = (args.evidence or args.workspace / "reports" / "evidence").expanduser()
     described = {m.parent.name for m in store.glob("*/meta.json")}
@@ -246,6 +255,8 @@ def atlas(args) -> dict:
     built = library_atlas.build(recordings, roster_doc=doc, heads=heads, scanned=scanned,
                                 described=described, judgments=owner["judgments"],
                                 pairs=owner["pairs"])
+    built["summary"]["labelSources"] = {"extraFolders": [str(r) for r in args.reports],
+                                        "reviewFilesUsed": sum(f["used"] for f in files)}
     out.mkdir(parents=True, exist_ok=True)
     # Derived and rebuilt from sources every run, so it is replaced, never appended.
     (out / "atlas.json.partial").write_text(json.dumps(built["summary"], indent=2) + "\n",
@@ -259,7 +270,7 @@ def atlas(args) -> dict:
     print(f"[atlas] wrote {out / 'atlas.json'} and {out / 'recordings.csv'} "
           f"({len(built['rows'])} recordings; trips and days are in atlas.json)", file=sys.stderr)
     s = built["summary"]
-    return {k: s[k] for k in ("rosterConfirmed", "library", "byActivity", "byMode", "byCamera",
+    return {k: s[k] for k in ("rosterConfirmed", "labelSources", "library", "byActivity", "byMode", "byCamera",
                               "coverage", "labelsAskedWhat", "evaluableByActivity")}
 
 
@@ -522,8 +533,10 @@ def main(argv=None) -> int:
                             f"(default: $ADVENTURE_HOME or {DEFAULT_WORKSPACE})")
         p.add_argument("--evidence", type=Path,
                        help="description store (default: WORKSPACE/reports/evidence when present)")
-        p.add_argument("--reports", type=Path, nargs="*", default=[],
-                       help="extra folders holding review exports (workspace reports/ and exports/ are always read)")
+        p.add_argument("--reports", type=Path, nargs="*", default=EXTRA_REPORTS,
+                       help="extra folders holding review exports (workspace reports/ and "
+                            "exports/ are always read; default: $KLIP_REPORTS, folders "
+                            "separated by ':')")
         p.add_argument("--ledger", type=Path)
         p.add_argument("--pairs-ledger", type=Path)
         p.add_argument("--roster", type=Path)
