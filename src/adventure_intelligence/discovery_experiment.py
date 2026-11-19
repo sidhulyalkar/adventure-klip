@@ -255,7 +255,8 @@ def build_report(output: Path, rows: list[dict], config: dict, failures: dict,
 def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path,
         allow_mounted: bool = False, overrides: dict | None = None,
         stages=STAGES, ledger_file: Path | None = None, decode=None, audio=None,
-        cut=cut_proxy, frames=None, transport=None, log=lambda message: None) -> dict:
+        cut=cut_proxy, frames=None, transport=None, log=lambda message: None,
+        before=None, after=None) -> dict:
     rows = load_sources(sources_file)
     config = _config(overrides)
     if not set(stages) <= set(STAGES):
@@ -282,9 +283,13 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
         return _require_local_path(path, Path(workspace), trusted, allow_mounted)
 
     failures, timings = {}, {}
+    # before(row) / after(row, failed) let a caller do more with each file while it is
+    # still in the OS cache (the library index describes it there and prefetches the next).
     for row in rows:
         sha = row["sourceSha256"]
         (output / sha).mkdir(exist_ok=True)
+        if before is not None:
+            before(row)
         try:
             timings[sha] = _source_stages(
                 row, output / sha, config, stages, resolve=resolve, decode=decode,
@@ -295,6 +300,8 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
             # One bad recording must not stop the others, and is never a negative.
             failures[sha] = f"{type(error).__name__}: {error}"
             log(f"{sha[:12]} failed: {error}")
+        if after is not None:
+            after(row, sha in failures)
     report = build_report(output, rows, config, failures, timings,
                           ledger.load(ledger_file) if ledger_file else None)
     _atomic_json(output / "report.json", report)

@@ -213,6 +213,74 @@ def describe(args) -> dict:
     return {"described": done, "failed": failed, "store": str(store), "vocabulary": doc["digest"]}
 
 
+def index(args) -> dict:
+    """Scan and describe every recording not yet done, each file read from disk once."""
+    from adventure_intelligence import library_index
+    from adventure_intelligence import media
+    from adventure_intelligence import moment_evidence as me
+    from adventure_intelligence.judge_panel import RUBRICS
+    root = args.source_root.expanduser().absolute()
+    doc = roster.validate(_json(args.roster)) if args.roster else None
+    skip = roster.excluded_sources(doc) if doc else set()
+    tagged = roster.sport_by_source(doc) if doc else {}
+    assets = {}
+    for sha, a in _catalog_assets(args.workspace).items():
+        path = Path(a["path"])
+        if sha in skip or not path.is_relative_to(root) or not path.is_file():
+            continue  # accidental, elsewhere, or not on this drive: never opened
+        sport = tagged.get(sha) or a["activity"]
+        assets[sha] = {"path": str(path), "durationS": a["duration"],
+                       "sport": sport if sport in RUBRICS else "unknown"}
+    # Recordings with owner labels first: their pairs become usable soonest.
+    first: dict[str, float] = {}
+    try:
+        mapping, _ = _mapping(args)
+        owner = _owner(args, lambda sha: roster.group_of(mapping, sha))
+        for j in owner["judgments"]:
+            first[j["sourceSha256"]] = first.get(j["sourceSha256"], 0) + 1
+        for pair in owner["pairs"]:
+            for side in ("left", "right"):
+                sha = pair[side]["sourceSha256"]
+                first[sha] = first.get(sha, 0) + 0.5
+    except (ValueError, OSError, KeyError) as error:
+        print(f"[index] owner labels not read ({error}); going in capture order", file=sys.stderr)
+    store = (args.evidence or args.workspace / "reports" / "evidence").expanduser()
+    describe_one, described = None, set()
+    if not args.no_describe:
+        image = me.ImageEncoder(args.image_model)
+        audio = None if args.no_audio else me.AudioEncoder(args.audio_model)
+        terms = []
+        if args.terms:
+            terms = [t.strip() for t in args.terms.read_text(encoding="utf-8").splitlines()
+                     if t.strip()]
+        me.encode_vocabulary(store, me.vocabulary(terms), image=image, audio=audio)
+        wanted = {"version": me.VERSION, "imageModel": image.model_id,
+                  "audioModel": audio.model_id if audio else None, "stepSeconds": args.step}
+        for meta_file in store.glob("*/meta.json"):
+            meta = _json(meta_file)
+            if all(meta.get(k) == v for k, v in wanted.items()):
+                described.add(meta_file.parent.name)
+
+        def describe_one(sha, path):
+            return me.describe(sha, path, store, image=image, audio=audio, step_s=args.step,
+                               hwaccel=args.hwaccel)
+
+    def motion(path, fps, seconds):
+        if args.hwaccel:
+            try:
+                return media.motion_series(path, fps=fps, total_seconds=seconds,
+                                           hwaccel=args.hwaccel), args.hwaccel
+            except RuntimeError:
+                pass  # software below; the decoder used is logged per recording
+        return media.motion_series(path, fps=fps, total_seconds=seconds), "software"
+
+    return library_index.run(
+        assets, workspace=args.workspace, trusted_root=root,
+        reports=args.workspace / "reports", described=described, describe_one=describe_one,
+        motion=motion, first=first, max_recordings=args.max, retry_failed=args.retry_failed,
+        log=lambda m: print("[index]", m, file=sys.stderr, flush=True))
+
+
 def _catalog_assets(workspace: Path) -> dict[str, dict]:
     database = workspace / "catalog.sqlite3"
     if database.is_symlink() or not database.is_file():
@@ -435,6 +503,21 @@ def main(argv=None) -> int:
                      help="hardware decoding; about 7x faster than software on DJI HEVC in the probe, frees the CPU for the models")
     des.add_argument("--vocabulary-only", action="store_true",
                      help="re-encode the concept list only (after editing --terms)")
+    idx = sub.add_parser("index", help="scan and describe every recording not yet done "
+                                       "(one disk read per file; resumable)")
+    owner_inputs(idx)
+    idx.add_argument("--source-root", type=Path, required=True)
+    idx.add_argument("--max", type=int, help="at most this many recordings this run")
+    idx.add_argument("--hwaccel", choices=("videotoolbox",),
+                     help="hardware decoding for motion and frames, software if it fails")
+    idx.add_argument("--retry-failed", action="store_true",
+                     help="also retry recordings an earlier scan could not read")
+    idx.add_argument("--no-describe", action="store_true", help="scan only")
+    idx.add_argument("--terms", type=Path, help="extra things to look for, one per line")
+    idx.add_argument("--image-model", default="google/siglip2-so400m-patch14-384")
+    idx.add_argument("--audio-model", default="laion/clap-htsat-unfused")
+    idx.add_argument("--no-audio", action="store_true")
+    idx.add_argument("--step", type=float, default=2.0, help="seconds between described frames")
     loc = sub.add_parser("locate", help="find every Klip catalog and review export under folders")
     loc.add_argument("roots", type=Path, nargs="+")
     har = sub.add_parser("harvest", help="report every owner label and whether it is used")
@@ -489,6 +572,10 @@ def main(argv=None) -> int:
             if not 0.5 <= args.step <= 30:
                 raise ValueError("--step must be 0.5..30 seconds")
             print(json.dumps(describe(args), indent=2))
+        elif args.command == "index":
+            if not 0.5 <= args.step <= 30:
+                raise ValueError("--step must be 0.5..30 seconds")
+            print(json.dumps(index(args), indent=2))
         elif args.command == "review":
             from adventure_intelligence import value_review_server as app
             folder = (args.ledgers or args.workspace / "reports" / "owner-ledgers").expanduser()

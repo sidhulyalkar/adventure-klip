@@ -90,3 +90,38 @@
   - in synthetic data, a value visible only as a concept is learned by the full head
     (above 0.9), while energy signals stay below 0.7.
 - Not yet run with the real weights. That first happens on the owner's Mac.
+
+## Revision 5 (2026-11-18): one pass per recording; embedding spaces kept apart
+
+What the owner's Mac measured:
+- Scan of 120 recordings in 10 batches took about 5.4 min per recording (12 recordings: motion 45.7 min,
+  verify 19.0 min, audio 0.1 min).
+- Decode probe on one DJI file (2.7K50 10-bit HEVC, 83 Mbit/s, keyframe every 0.6 s):
+  - disk 101 MB/s, so reading is capped at about 10x real time;
+  - keyframes only: 9.6x software, 73x VideoToolbox;
+  - every frame in software: 1.0x.
+- The earlier 1x describe runs overlapped the scan on the same SSD. The earlier note that
+  VideoToolbox ignores keyframes-only was wrong for this footage.
+
+Audit: each recording was read from disk up to five times by separate runs:
+1. SHA check;
+2. full software decode for a 2 fps, 64x36 motion signal (the largest cost);
+3. 8 kHz audio timeline;
+4. keyframes for description;
+5. 48 kHz audio for CLAP.
+
+Changes:
+- `library_index` + `index` command: per recording, in order, while it is in the OS
+  cache:
+  - SHA check, motion, audio, segments, review clips;
+  - then description.
+  - The next recording is read ahead in the background.
+  - Output: ordinary discovery-NNN batches of 12, so every reader works unchanged. A
+    stopped batch is finished before new ones start. The judge panel is not run.
+- `motion_series(hwaccel=...)`: hardware decoding is optional. It uses the same sampling
+  and scaling. The decoder used is logged per recording (`index.jsonl`).
+- `evaluate` failed when 768-d catalog vectors met 1152-d description vectors. Now one space
+  is used: the one covering the most recordings, with description winning ties. It is
+  recorded as `embeddingSpace`.
+
+Status: synthetic CI passed (860 tests). Not yet run on real media.

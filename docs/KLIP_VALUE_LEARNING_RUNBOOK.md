@@ -198,6 +198,46 @@ This opens a local page (127.0.0.1 only, with a session token) with two tabs:
 Footage, catalog and discovery output are only read. Thumbnails are cached in
 `$L/thumbs/`.
 
+## Indexing the library (one command, replaces plan + discovery loops + describe)
+
+```bash
+python scripts/klip_value_experiment.py index --workspace "$WS" --source-root "$SSD" \
+    --roster "$L/roster.json" --ledger "$L/owner-evidence.jsonl" \
+    --pairs-ledger "$L/owner-pairs.jsonl" --hwaccel videotoolbox
+```
+
+The command does the following:
+
+- **Picks the recordings.** Every catalog recording under `--source-root` is picked,
+  except:
+  - ones marked accidental;
+  - ones already scanned;
+  - ones an earlier scan could not read (use `--retry-failed` to include these).
+
+  Owner-labelled recordings go first, then capture order, so whole days finish together.
+- **Reads each file from disk once.** For each recording, while it is in the file cache,
+  the command runs:
+  1. SHA check;
+  2. motion timeline;
+  3. audio timeline;
+  4. segments;
+  5. review clips;
+  6. description (SigLIP frames, CLAP audio).
+
+  The next recording is read ahead while the current one is decoded.
+- **Describes earlier recordings.** Recordings scanned by earlier runs are only described.
+  A size check against the scan's verified size comes first.
+- **Writes ordinary batches.** Output goes to new `discovery-NNN` folders of 12. Each has
+  `index.jsonl` with timings and the motion decoder used. `evaluate`, `deck` and the
+  review app read these folders as usual.
+- **Skips the judge panel.** It is a separate, opt-in model step.
+- **Resumes.** Rerun the same command after any stop, and a batch that was interrupted is
+  finished first.
+- **Limits a run.** `--max N` processes at most N recordings this run, for example to check
+  speed.
+
+Use `discovery-*` (not `discovery-0*`) when passing folders to `evaluate`.
+
 ## Describing every recording with pretrained models
 
 ```bash
