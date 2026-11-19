@@ -36,7 +36,7 @@ def _probe(path: Path, seconds: float) -> dict:
          "-read_intervals", f"%+{seconds:g}", "-show_entries", "frame=pts_time",
          "-of", "csv=p=0", str(path)], check=True, capture_output=True, text=True, timeout=600)
     times = [float(t.split(",")[0]) for t in keys.stdout.split() if t.split(",")[0].strip()]
-    gaps = [b - a for a, b in zip(times, times[1:])]
+    gaps = [b - a for a, b in zip(times, times[1:], strict=False)]
     return {"codec": stream["codec_name"], "size": f"{stream['width']}x{stream['height']}",
             "pixFmt": stream.get("pix_fmt"), "fps": round(num / den, 2) if den else None,
             "durationS": round(float(fmt["duration"]), 1),
@@ -87,7 +87,7 @@ def main(argv=None) -> None:
             speed[name] = round(window / _timed(cmd), 1)
         except (subprocess.SubprocessError, OSError) as err:
             speed[name] = f"failed: {type(err).__name__}"
-    seeks = [t for t in [i * STEP_S for i in range(int(secs / STEP_S))]][:30]
+    seeks = [i * STEP_S for i in range(int(secs / STEP_S))][:30]
     start = time.perf_counter()
     for t in seeks:
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-noaccurate_seek", "-ss", f"{t:.3f}",
