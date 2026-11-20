@@ -61,6 +61,9 @@ CONTROLS = {
 }
 
 
+NUM_CTX = 8192
+
+
 def questions(sport: str) -> dict[str, str]:
     if sport not in RUBRICS:
         raise ValueError("Unknown sport rubric")
@@ -153,10 +156,14 @@ def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
     from .adaptive_judge_v2 import _send_local
     if len(images) != len(stamps_ms) or not images:
         raise ValueError("Each frame needs a timestamp")
+    # Explicit context: gemma3 spends 256 tokens per image, so 16 frames alone exceed
+    # Ollama's default window, which silently truncates the prompt instead of failing.
+    options = {"temperature": 0, "num_ctx": NUM_CTX}
     base = {"model": model, "family": family(model), "sport": sport,
-            "fingerprint": fingerprint(model, sport), "frames": len(images)}
+            "fingerprint": fingerprint(model, sport), "frames": len(images),
+            "options": options}
     body = {"model": model, "stream": False, "format": schema(sport),
-            "options": {"temperature": 0},
+            "options": options,
             "messages": [{"role": "user", "content": prompt(sport, stamps_ms),
                           "images": images}]}
     try:

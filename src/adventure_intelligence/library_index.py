@@ -11,7 +11,9 @@ Per recording, in order, while its file is cached:
     SHA check -> motion -> audio -> segments -> review clips    (discovery stages, unchanged)
     -> pretrained description (SigLIP frames, CLAP audio)       (moment_evidence, unchanged)
 
-The judge panel is not run here: it is a separate, opt-in model step.
+The judge panel is not run here: it is a separate, opt-in model step. Batch reports
+say so (judgeStageRequested false) and count the backlog (judgeCallsLeft); run
+scripts/klip_judge_batches.py afterwards to judge from the review clips already cut.
 
 Output goes to ordinary discovery-NNN folders of at most 12 recordings, so every
 existing reader (evaluate, deck, the review app, plan) uses it unchanged. Read-only on

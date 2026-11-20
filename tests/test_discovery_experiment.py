@@ -227,3 +227,72 @@ def test_unreadable_recording_fails_alone_and_the_run_continues(setup):
     assert source["failure"].startswith("CalledProcessError")
     assert report["totals"]["failedSources"] == 1
     assert (setup["out"] / "report.json").is_file()
+
+
+SCAN = ("verify", "motion", "audio", "segments", "proxies")
+
+
+def test_index_batch_reports_its_judge_backlog_instead_of_zeros(setup):
+    totals = go(setup, stages=SCAN)["totals"]
+    assert totals["judgeStageRequested"] is False and totals["judgedSegments"] == 0
+    assert totals["judgeCallsExpected"] == totals["segmentsForReview"] * 2 > 0
+    assert totals["judgeCallsLeft"] == totals["judgeCallsExpected"]
+
+
+def test_judge_only_pass_never_opens_originals_and_keeps_old_report(setup):
+    go(setup, stages=SCAN)
+    setup["clip"].unlink()  # the drive is gone: judging must still work from proxies
+    totals = go(setup, stages=("judge",))["totals"]
+    assert totals["failedSources"] == 0 and totals["judgeCallsLeft"] == 0
+    assert totals["judgePanelsComplete"] == totals["judgedSegments"] > 0
+    assert len(list((setup["out"] / "report-history").glob("report-*.json"))) == 1
+    report = json.loads((setup["out"] / "report.json").read_text())
+    assert "motion" in report["sources"][0]["timingSeconds"]  # scan timings kept
+
+
+def test_judge_only_pass_refuses_to_hash_an_unscanned_recording(setup):
+    report = go(setup, stages=("judge",))
+    assert "never scanned" in report["sources"][0]["failure"]
+
+
+def test_judging_is_model_major_budgeted_and_resumable(setup):
+    go(setup, stages=SCAN)
+    order = []
+
+    def transport(body):
+        order.append(body["model"])
+        assert body["options"]["num_ctx"] >= 8192
+        return answer(body)
+
+    first = go(setup, stages=("judge",), transport=transport, judge_budget=[1])["totals"]
+    assert len(order) == 1 and first["judgeCallsAnswered"] == 1
+    assert first["judgePanelsComplete"] == 0
+    go(setup, stages=("judge",), transport=transport)
+    n = len(order)
+    # every segment's first model before any segment's second model
+    assert order == sorted(order, key=lambda m: experiment.DEFAULTS["models"].index(m))
+    assert n == go(setup, stages=SCAN)["totals"]["judgeCallsExpected"]
+
+
+def test_judge_batches_cli_dry_run_then_pilot(setup, capsys, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "klip_judge_batches", Path(__file__).parents[1] / "scripts" / "klip_judge_batches.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    reports = setup["workspace"] / "reports"
+    folder = reports / "discovery-001"
+    folder.mkdir(parents=True)
+    shutil.copy(setup["sources"], folder / "sources.json")
+    go(setup, out=folder, stages=SCAN)
+    argv = ["--reports", str(reports), "--trusted-source-root", str(setup["footage"])]
+    assert cli.main(argv + ["--dry-run"]) == 0
+    backlog = json.loads(capsys.readouterr().out)
+    assert backlog["judgeCallsLeft"] == backlog["judgeCallsExpected"] > 0
+    monkeypatch.setattr(experiment, "missing_models", lambda models: [])
+    real_run = experiment.run
+    monkeypatch.setattr(experiment, "run",
+                        lambda *a, **k: real_run(*a, **{**k, "transport": answer}))
+    assert cli.main(argv + ["--max-calls", "1"]) == 0
+    assert '"judgeCallsAnswered": 1' in capsys.readouterr().out

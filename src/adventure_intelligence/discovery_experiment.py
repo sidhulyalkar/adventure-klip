@@ -92,7 +92,8 @@ def cut_proxy(source: Path, dest: Path, start_ms: int, end_ms: int, *, width: in
 
 
 def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, decode,
-                   audio, cut, frames, transport, log, trusted_root: Path) -> dict:
+                   audio, cut, frames, transport, log, trusted_root: Path,
+                   judge_budget: list | None = None) -> dict:
     sha = row["sourceSha256"]
     timing: dict[str, float] = {}
 
@@ -104,6 +105,9 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
 
     identity = _read(folder / "source.json")
     path = None
+    if identity is None and "verify" not in stages:
+        # A judge-only pass must never fall back to hashing a camera original.
+        raise ValueError("Recording was never scanned; run the scan stages first")
     if identity is None:
         path = resolve(row["path"])
         if path is None:
@@ -170,32 +174,91 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
     elif "judge" in stages and chosen:
         (folder / "judgments").mkdir(exist_ok=True)
         began = time.monotonic()
-        for s in chosen:
-            name = f'{s["startMs"]}-{s["endMs"]}'
-            proxy, out = folder / "proxies" / (name + ".mp4"), folder / "judgments" / (name + ".json")
-            previous = _read(out) or {"judgments": []}
-            done = {j["model"]: j for j in previous["judgments"] if j["status"] == "answered"}
-            if not proxy.is_file() or set(done) == set(config["models"]):
-                continue
-            length = s["endMs"] - s["startMs"]
-            times = panel.frame_plan(0, length, [t - s["startMs"] for t in s["eventCandidatesMs"]],
-                                     max_frames=config["maxFrames"])
-            images = frames(proxy, times)
-            log(f"{sha[:12]} judging {name} ms")
-            # Only judges without an answer are asked again, so a retry is cheap.
-            judgments = [done.get(m) or panel.ask(m, row["sport"], images, times,
-                                                  transport=transport)
-                         for m in config["models"]]
-            _atomic_json(out, {"version": VERSION, "sourceSha256": sha,
-                               "startMs": s["startMs"], "endMs": s["endMs"], "role": s["role"],
-                               "frameTimesMs": times, "judgments": judgments,
-                               "panel": panel.combine(judgments)})
+        # Model-major: one model answers every segment of this recording before the
+        # next model is asked, so Ollama is not swapping two ~20 GB models per segment.
+        # Each answer is written as soon as it arrives; only missing answers are asked
+        # again, so an interrupted or budget-limited pass resumes where it stopped.
+        for model in config["models"]:
+            for s in chosen:
+                name = f'{s["startMs"]}-{s["endMs"]}'
+                proxy = folder / "proxies" / (name + ".mp4")
+                out = folder / "judgments" / (name + ".json")
+                if not proxy.is_file():
+                    continue
+                previous = _read(out)
+                have = {j["model"]: j for j in (previous or {}).get("judgments", [])}
+                if have.get(model, {}).get("status") == "answered":
+                    continue
+                if judge_budget is not None and judge_budget[0] <= 0:
+                    break
+                if previous:
+                    times = previous["frameTimesMs"]  # every judge sees the same frames
+                else:
+                    times = panel.frame_plan(
+                        0, s["endMs"] - s["startMs"],
+                        [t - s["startMs"] for t in s["eventCandidatesMs"]],
+                        max_frames=config["maxFrames"])
+                images = frames(proxy, times)
+                log(f"{sha[:12]} judging {name} ms with {model}")
+                asked = time.monotonic()
+                answer = panel.ask(model, row["sport"], images, times, transport=transport)
+                have[model] = {**answer, "elapsedSeconds": round(time.monotonic() - asked, 2)}
+                if judge_budget is not None:
+                    judge_budget[0] -= 1
+                judgments = [have[m] for m in config["models"] if m in have]
+                _atomic_json(out, {"version": VERSION, "sourceSha256": sha,
+                                   "startMs": s["startMs"], "endMs": s["endMs"],
+                                   "role": s["role"], "frameTimesMs": times,
+                                   "judgments": judgments,
+                                   "complete": all(have.get(m, {}).get("status") == "answered"
+                                                   for m in config["models"]),
+                                   "panel": panel.combine(judgments)})
         timing["judge"] = round(time.monotonic() - began, 2)
     return {"timingSeconds": timing}
 
 
+def judge_workload(output: Path, rows: list[dict], models: list[str]) -> dict:
+    """What the judge stage has to do in one output folder, from files only.
+
+    Expected work comes from the review segments the plan chose, not from judgments
+    already written, so a batch that never ran the judge reports its full backlog
+    instead of zeros.
+    """
+    work = {"segmentsForReview": 0, "segmentsSkippedUnknownSport": 0,
+            "segmentsMissingProxy": 0, "judgeCallsExpected": 0, "judgeCallsAnswered": 0,
+            "judgeCallsAbstained": 0, "panelsComplete": 0, "bySport": {}}
+    for row in rows:
+        folder = output / row["sourceSha256"]
+        plan = _read(folder / "segments.json")
+        if plan is None:
+            continue
+        chosen = [s for s in plan["segments"] if s["role"] != "not_reviewed"]
+        work["segmentsForReview"] += len(chosen)
+        if row["sport"] == UNKNOWN_SPORT:
+            work["segmentsSkippedUnknownSport"] += len(chosen)
+            continue
+        for s in chosen:
+            name = f'{s["startMs"]}-{s["endMs"]}'
+            if not (folder / "proxies" / (name + ".mp4")).is_file():
+                work["segmentsMissingProxy"] += 1
+                continue
+            work["judgeCallsExpected"] += len(models)
+            sport = work["bySport"].setdefault(row["sport"], {"segments": 0, "callsLeft": 0})
+            sport["segments"] += 1
+            judged = _read(folder / "judgments" / (name + ".json")) or {"judgments": []}
+            status = {j["model"]: j["status"] for j in judged["judgments"]}
+            answered = sum(status.get(m) == "answered" for m in models)
+            work["judgeCallsAnswered"] += answered
+            work["judgeCallsAbstained"] += sum(status.get(m) == "abstained" for m in models)
+            work["panelsComplete"] += answered == len(models)
+            sport["callsLeft"] += len(models) - answered
+    work["judgeCallsLeft"] = work["judgeCallsExpected"] - work["judgeCallsAnswered"]
+    return work
+
+
 def build_report(output: Path, rows: list[dict], config: dict, failures: dict,
-                 timings: dict, ledger_rows: list[dict] | None) -> dict:
+                 timings: dict, ledger_rows: list[dict] | None,
+                 stages=STAGES) -> dict:
     sources, queue = [], []
     for row in rows:
         sha = row["sourceSha256"]
@@ -216,6 +279,8 @@ def build_report(output: Path, rows: list[dict], config: dict, failures: dict,
                 judgedSegments=len(panels),
                 segmentFacts=[{
                     "startMs": p["startMs"], "endMs": p["endMs"], "role": p["role"],
+                    "complete": p.get("complete", all(
+                        j["status"] == "answered" for j in p["judgments"])),
                     "agreed": {k: v["outcome"][7:] for k, v in p["panel"]["facts"].items()
                                if v["outcome"].startswith("agreed_")},
                     "needsOwner": p["panel"]["needsOwner"],
@@ -234,15 +299,23 @@ def build_report(output: Path, rows: list[dict], config: dict, failures: dict,
                     motion["series"], identity["durationMs"], kept)
         sources.append(entry)
     facts = [f for s in sources for f in s.get("segmentFacts", [])]
-    asked = len(facts) * len(config["models"])
+    work = judge_workload(output, rows, config["models"])
     return {
         "version": VERSION, "config": config, "sources": sources,
         "totals": {
             "sources": len(rows), "failedSources": len(failures),
+            # False for library-index batches: zeros below then mean "not run yet".
+            "judgeStageRequested": "judge" in stages,
             "judgedSegments": len(facts),
+            "judgePanelsComplete": sum(f["complete"] for f in facts),
             "judgeAbstentions": sum(len(f["abstained"]) for f in facts),
             "judgeControlFailures": sum(len(f["failedControls"]) for f in facts),
-            "judgeCallsExpected": asked,
+            "judgeCallsExpected": work["judgeCallsExpected"],
+            "judgeCallsAnswered": work["judgeCallsAnswered"],
+            "judgeCallsLeft": work["judgeCallsLeft"],
+            "segmentsForReview": work["segmentsForReview"],
+            "segmentsSkippedUnknownSport": work["segmentsSkippedUnknownSport"],
+            "segmentsMissingProxy": work["segmentsMissingProxy"],
             "segmentsWithDisputedFacts": len(queue),
             "sourcesWithOwnerSpans": sum("comparison" in s for s in sources),
         },
@@ -256,7 +329,9 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
         allow_mounted: bool = False, overrides: dict | None = None,
         stages=STAGES, ledger_file: Path | None = None, decode=None, audio=None,
         cut=cut_proxy, frames=None, transport=None, log=lambda message: None,
-        before=None, after=None) -> dict:
+        before=None, after=None, judge_budget: list | None = None) -> dict:
+    """judge_budget: [n] caps how many judge calls this invocation makes (a timing
+    pilot); it is not part of the frozen settings, and a rerun continues the work."""
     rows = load_sources(sources_file)
     config = _config(overrides)
     if not set(stages) <= set(STAGES):
@@ -293,7 +368,8 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
         try:
             timings[sha] = _source_stages(
                 row, output / sha, config, stages, resolve=resolve, decode=decode,
-                audio=audio, cut=cut, trusted_root=trusted, frames=frames, transport=transport, log=log)["timingSeconds"]
+                audio=audio, cut=cut, trusted_root=trusted, frames=frames, transport=transport, log=log,
+                judge_budget=judge_budget)["timingSeconds"]
         except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
             # SubprocessError covers ffprobe/ffmpeg failures (an unreadable or
             # truncated file, a drive that went away) as well as timeouts.
@@ -302,8 +378,19 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
             log(f"{sha[:12]} failed: {error}")
         if after is not None:
             after(row, sha in failures)
+    previous = _read(output / "report.json")
+    if previous is not None:
+        # A later pass (e.g. judge-only) keeps earlier stage timings, and the report it
+        # replaces is kept rather than overwritten.
+        for entry in previous.get("sources", []):
+            sha = entry["sourceSha256"]
+            timings[sha] = {**entry.get("timingSeconds", {}), **timings.get(sha, {})}
+        history = output / "report-history"
+        history.mkdir(exist_ok=True)
+        _atomic_json(history / f"report-{len(list(history.glob('report-*.json'))) + 1:03d}.json",
+                     previous)
     report = build_report(output, rows, config, failures, timings,
-                          ledger.load(ledger_file) if ledger_file else None)
+                          ledger.load(ledger_file) if ledger_file else None, stages=stages)
     _atomic_json(output / "report.json", report)
     return report
 
