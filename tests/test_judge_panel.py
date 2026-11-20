@@ -138,3 +138,31 @@ def test_ollama_http_error_reason_is_kept_on_the_abstention(monkeypatch):
     out = jp.ask("qwen3-vl:32b", "ski", ["aGk="], [0])
     assert out["status"] == "abstained"
     assert out["failureDetail"] == "Local Ollama HTTP 500: unknown model architecture: 'qwen3vl'"
+
+
+def test_context_refusal_is_retried_once_with_a_window_that_fits(monkeypatch):
+    monkeypatch.setattr(panel, "_CTX_BY_MODEL", {})
+    sent = []
+
+    def ollama(body):
+        sent.append(body["options"]["num_ctx"])
+        if body["options"]["num_ctx"] < 16921:
+            raise RuntimeError('Local Ollama HTTP 400: {"error":{"message":"request (16921 '
+                               'tokens) exceeds the available context size (8192 tokens)",'
+                               '"type":"exceed_context_size_error","n_prompt_tokens":16921}}')
+        return reply("ski")
+
+    first = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert first["status"] == "answered" and first["options"]["num_ctx"] == 20480
+    panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert sent == [8192, 20480, 20480]  # the model's window is remembered
+
+
+def test_context_beyond_the_bound_is_an_abstention(monkeypatch):
+    monkeypatch.setattr(panel, "_CTX_BY_MODEL", {})
+
+    def ollama(body):
+        raise RuntimeError('exceed_context_size_error "n_prompt_tokens":90000')
+
+    out = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert out["status"] == "abstained" and "90000" in out["failureDetail"]

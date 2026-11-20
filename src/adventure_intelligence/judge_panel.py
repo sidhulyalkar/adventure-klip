@@ -61,7 +61,19 @@ CONTROLS = {
 }
 
 
-NUM_CTX = 8192
+NUM_CTX = 8192          # first try; enough for gemma3 (256 tokens/image)
+MAX_CTX = 32768         # bound on the KV cache a judge may ask for on a 64 GB machine
+_CTX_BY_MODEL: dict[str, int] = {}  # what each model turned out to need, this process
+
+
+def _context_needed(error: Exception) -> int | None:
+    """Context to retry with, if Ollama refused the request as longer than its window."""
+    m = re.search(r"n_prompt_tokens[^0-9]*(\d+)", str(error))
+    if "exceed" not in str(error) or not m:
+        return None
+    need = int(m.group(1)) + 2048           # room for the JSON answer
+    ctx = -(-need // 4096) * 4096
+    return ctx if ctx <= MAX_CTX else None
 
 
 def questions(sport: str) -> dict[str, str]:
@@ -156,22 +168,31 @@ def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
     from .adaptive_judge_v2 import _send_local
     if len(images) != len(stamps_ms) or not images:
         raise ValueError("Each frame needs a timestamp")
-    # Explicit context: gemma3 spends 256 tokens per image, so 16 frames alone exceed
-    # Ollama's default window, which silently truncates the prompt instead of failing.
-    options = {"temperature": 0, "num_ctx": NUM_CTX}
-    base = {"model": model, "family": family(model), "sport": sport,
-            "fingerprint": fingerprint(model, sport), "frames": len(images),
-            "options": options}
-    body = {"model": model, "stream": False, "format": schema(sport),
-            "options": options,
-            "messages": [{"role": "user", "content": prompt(sport, stamps_ms),
-                          "images": images}]}
-    try:
-        reply = _send_local(body, timeout=timeout, transport=transport)
-        parsed = validate(json.loads(reply["message"]["content"]), sport)
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
-        return {**base, "status": "abstained", "failure": type(error).__name__,
-                "failureDetail": str(error)[:300], "notANegative": True}
+    # Explicit context, sized per model: Ollama refuses a request longer than its window
+    # (qwen3-vl spends ~1,050 tokens per frame, gemma3 256), so a refusal is retried once
+    # with a window that fits, and the window used is recorded with the judgment.
+    ctx = _CTX_BY_MODEL.get(model, NUM_CTX)
+    for attempt in (1, 2):
+        options = {"temperature": 0, "num_ctx": ctx}
+        base = {"model": model, "family": family(model), "sport": sport,
+                "fingerprint": fingerprint(model, sport), "frames": len(images),
+                "options": options}
+        body = {"model": model, "stream": False, "format": schema(sport),
+                "options": options,
+                "messages": [{"role": "user", "content": prompt(sport, stamps_ms),
+                              "images": images}]}
+        try:
+            reply = _send_local(body, timeout=timeout, transport=transport)
+            parsed = validate(json.loads(reply["message"]["content"]), sport)
+            _CTX_BY_MODEL[model] = ctx
+            break
+        except (RuntimeError, ValueError, KeyError, TypeError) as error:
+            bigger = _context_needed(error) if attempt == 1 else None
+            if bigger and bigger > ctx:
+                ctx = bigger
+                continue
+            return {**base, "status": "abstained", "failure": type(error).__name__,
+                    "failureDetail": str(error)[:300], "notANegative": True}
     controls = [k for k in CONTROLS[sport] if parsed["answers"][k] == "yes"]
     return {**base, "status": "answered",
             "answers": {k: v for k, v in parsed["answers"].items() if k not in CONTROLS[sport]},
