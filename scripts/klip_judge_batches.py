@@ -103,14 +103,15 @@ def main(argv=None) -> int:
                         help="take sports from this roster for recordings frozen as unknown")
     args = parser.parse_args(argv)
     try:
-        tagged = {}
+        tagged, activity = {}, {}
         if args.roster:
-            tagged = roster.sport_by_source(roster.validate(json.loads(
-                args.roster.read_text(encoding="utf-8"))))
+            doc = roster.validate(json.loads(args.roster.read_text(encoding="utf-8")))
+            tagged, activity = roster.sport_by_source(doc), roster.activity_by_source(doc)
         folders = _folders(args.reports.expanduser(), args.folders)
         if not folders:
             raise ValueError(f"No discovery folders under {args.reports}")
         backlog, models, inputs, still_unknown, relabelled = {}, set(), {}, [], 0
+        no_rubric: dict[str, int] = {}  # tagged kayak/hike/...: no judge questions, by design
         for folder in folders:
             frozen = json.loads((folder / "experiment.json").read_text(encoding="utf-8"))
             original = experiment.load_sources(folder / "sources.json")
@@ -123,7 +124,10 @@ def main(argv=None) -> int:
             for row in rows:
                 plan = experiment._read(folder / row["sourceSha256"] / "segments.json")
                 chosen = sum(s["role"] != "not_reviewed" for s in (plan or {}).get("segments", []))
-                if row["sport"] == experiment.UNKNOWN_SPORT and chosen:
+                own = activity.get(row["sourceSha256"], roster.UNLABELLED)
+                if row["sport"] == experiment.UNKNOWN_SPORT and chosen and own != roster.UNLABELLED:
+                    no_rubric[own] = no_rubric.get(own, 0) + chosen
+                elif row["sport"] == experiment.UNKNOWN_SPORT and chosen:
                     still_unknown.append({"folder": folder.name, "sourceSha256": row["sourceSha256"],
                                           "file": Path(row["path"]).name,
                                           "reviewSegments": chosen})
@@ -139,10 +143,12 @@ def main(argv=None) -> int:
         print(json.dumps({"folders": len(folders), "models": sorted(models), **total,
                           "bySport": by_sport,
                           "recordingsRelabelledFromRoster": relabelled,
+                          "segmentsTaggedWithoutJudgeRubric": no_rubric,
                           "recordingsStillUnknown": len(still_unknown)}, indent=2))
         if args.dry_run:
             if still_unknown:
-                print("still unknown (tag these in the roster to judge them):", file=sys.stderr)
+                print("untagged in the roster (tag these; only ski, snorkeling and bike get "
+                      "judge questions):", file=sys.stderr)
                 for u in still_unknown:
                     print(f"  {u['folder']}  {u['file']}  {u['sourceSha256'][:12]}  "
                           f"{u['reviewSegments']} segments", file=sys.stderr)
