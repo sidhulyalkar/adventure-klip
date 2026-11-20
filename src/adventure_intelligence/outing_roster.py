@@ -219,6 +219,16 @@ def activity_by_source(doc: dict) -> dict[str, str]:
 GUESS_TAG = "activity-guessed"
 
 
+# Owner's "probably accidental, not sure": the recording stays in every run (unlike the
+# accidental activity, which removes it) but is not asked about again.
+MAYBE_ACCIDENTAL_TAG = "maybe-accidental"
+
+
+def tagged_sources(doc: dict, tag: str) -> set[str]:
+    return {row["sourceSha256"] for outing in validate(doc)["outings"]
+            for row in outing["sources"] if tag in (row.get("tags") or [])}
+
+
 def guessed_sources(doc: dict) -> set[str]:
     """Recordings whose activity is a model guess the owner has not confirmed."""
     return {row["sourceSha256"] for outing in validate(doc)["outings"]

@@ -105,11 +105,12 @@ def main(argv=None) -> int:
                         help="take sports from this roster for recordings frozen as unknown")
     args = parser.parse_args(argv)
     try:
-        tagged, activity, guessed = {}, {}, set()
+        tagged, activity, guessed, maybe = {}, {}, set(), set()
         if args.roster:
             doc = roster.validate(json.loads(args.roster.read_text(encoding="utf-8")))
             tagged, activity = roster.sport_by_source(doc), roster.activity_by_source(doc)
             guessed = roster.guessed_sources(doc)
+            maybe = roster.tagged_sources(doc, roster.MAYBE_ACCIDENTAL_TAG)
         folders = _folders(args.reports.expanduser(), args.folders)
         if not folders:
             raise ValueError(f"No discovery folders under {args.reports}")
@@ -132,6 +133,9 @@ def main(argv=None) -> int:
                 own = activity.get(row["sourceSha256"], roster.UNLABELLED)
                 if row["sport"] == experiment.UNKNOWN_SPORT and chosen and own != roster.UNLABELLED:
                     no_rubric[own] = no_rubric.get(own, 0) + chosen
+                elif row["sport"] == experiment.UNKNOWN_SPORT and chosen and row["sourceSha256"] in maybe:
+                    no_rubric[roster.MAYBE_ACCIDENTAL_TAG] = (
+                        no_rubric.get(roster.MAYBE_ACCIDENTAL_TAG, 0) + chosen)
                 elif row["sport"] == experiment.UNKNOWN_SPORT and chosen:
                     still_unknown.append({"folder": folder.name, "sourceSha256": row["sourceSha256"],
                                           "file": Path(row["path"]).name,
