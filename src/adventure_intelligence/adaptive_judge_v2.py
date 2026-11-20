@@ -263,7 +263,16 @@ def _send_local(body:dict,timeout:int=150,transport=None)->dict:
             return json.loads(payload)
     except TimeoutError:
         raise RuntimeError("Local Ollama timed out") from None
-    except (URLError,HTTPError) as exc:
+    except HTTPError as exc:
+        # Ollama answered with an error (model failed to load, bad request, ...): keep its
+        # reason, bounded, instead of reporting the server as unavailable.
+        try:
+            detail=exc.read(2048).decode("utf-8","replace")
+            detail=json.loads(detail).get("error",detail)
+        except (ValueError,OSError,AttributeError):
+            detail=""
+        raise RuntimeError(f"Local Ollama HTTP {exc.code}: {str(detail)[:300]}") from None
+    except URLError as exc:
         if isinstance(getattr(exc,"reason",None),TimeoutError):
             raise RuntimeError("Local Ollama timed out") from None
         raise RuntimeError("Local Ollama unavailable") from None

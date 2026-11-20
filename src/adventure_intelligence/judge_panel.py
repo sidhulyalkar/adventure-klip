@@ -171,7 +171,7 @@ def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
         parsed = validate(json.loads(reply["message"]["content"]), sport)
     except (RuntimeError, ValueError, KeyError, TypeError) as error:
         return {**base, "status": "abstained", "failure": type(error).__name__,
-                "notANegative": True}
+                "failureDetail": str(error)[:300], "notANegative": True}
     controls = [k for k in CONTROLS[sport] if parsed["answers"][k] == "yes"]
     return {**base, "status": "answered",
             "answers": {k: v for k, v in parsed["answers"].items() if k not in CONTROLS[sport]},

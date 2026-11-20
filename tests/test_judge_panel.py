@@ -123,3 +123,18 @@ def test_cli_samples_frames_from_a_synthetic_clip_and_requires_two_families(tmp_
     assert cli.main(["--proxy", str(clip), "--sport", "ski",
                      "--models", "qwen3-vl:32b", "qwen3-vl:8b"]) == 2
     assert "two different families" in capsys.readouterr().err
+
+
+def test_ollama_http_error_reason_is_kept_on_the_abstention(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+    from adventure_intelligence import adaptive_judge_v2, judge_panel as jp
+
+    def refuse(req, timeout):
+        raise HTTPError(req.full_url, 500, "x", {},
+                        io.BytesIO(b'{"error":"unknown model architecture: \\u0027qwen3vl\\u0027"}'))
+
+    monkeypatch.setattr(adaptive_judge_v2, "urlopen", refuse)
+    out = jp.ask("qwen3-vl:32b", "ski", ["aGk="], [0])
+    assert out["status"] == "abstained"
+    assert out["failureDetail"] == "Local Ollama HTTP 500: unknown model architecture: 'qwen3vl'"
