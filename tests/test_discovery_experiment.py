@@ -296,3 +296,45 @@ def test_judge_batches_cli_dry_run_then_pilot(setup, capsys, monkeypatch):
                         lambda *a, **k: real_run(*a, **{**k, "transport": answer}))
     assert cli.main(argv + ["--max-calls", "1"]) == 0
     assert '"judgeCallsAnswered": 1' in capsys.readouterr().out
+
+
+def test_judge_batches_cli_takes_sport_from_roster_without_editing_sources(setup, capsys,
+                                                                            monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from adventure_intelligence import outing_roster as roster
+    spec = importlib.util.spec_from_file_location(
+        "klip_judge_batches", Path(__file__).parents[1] / "scripts" / "klip_judge_batches.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    reports = setup["workspace"] / "reports"
+    folder = reports / "discovery-001"
+    folder.mkdir(parents=True)
+    unknown = [{**json.loads(setup["sources"].read_text())[0], "sport": "unknown"}]
+    (folder / "sources.json").write_text(json.dumps(unknown))
+    frozen = (folder / "sources.json").read_bytes()
+    go(setup, out=folder, stages=SCAN)
+    argv = ["--reports", str(reports), "--trusted-source-root", str(setup["footage"])]
+    assert cli.main(argv + ["--dry-run"]) == 0
+    assert json.loads(capsys.readouterr().out)["recordingsStillUnknown"] == 1
+    roster_file = setup["workspace"] / "roster.json"
+    roster_file.write_text(json.dumps({
+        "version": roster.VERSION, "status": next(iter(roster.STATUSES)),
+        "outings": [{"outing": "day1", "sources": [
+            {"sourceSha256": setup["sha"], "activity": "ski"}]}]}))
+    assert cli.main(argv + ["--roster", str(roster_file), "--dry-run"]) == 0
+    backlog = json.loads(capsys.readouterr().out)
+    assert backlog["recordingsRelabelledFromRoster"] == 1 and backlog["bySport"]["ski"]
+    monkeypatch.setattr(experiment, "missing_models", lambda models: [])
+    real_run = experiment.run
+    monkeypatch.setattr(experiment, "run",
+                        lambda *a, **k: real_run(*a, **{**k, "transport": answer}))
+    assert cli.main(argv + ["--roster", str(roster_file)]) == 0
+    capsys.readouterr()
+    assert (folder / "sources.json").read_bytes() == frozen
+    prov = json.loads((folder / "judge-sources.provenance.json").read_text())
+    assert prov["sportFrom"][setup["sha"]] == "roster"
+    report = json.loads((folder / "report.json").read_text())
+    assert report["totals"]["judgeCallsLeft"] == 0 and report["sources"][0]["sport"] == "ski"
+    assert cli.main(argv + ["--dry-run"]) == 0  # resumes with the relabelled list
+    assert json.loads(capsys.readouterr().out)["recordingsStillUnknown"] == 0

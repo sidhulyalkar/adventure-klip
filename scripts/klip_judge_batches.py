@@ -16,6 +16,12 @@ frozen in each folder's experiment.json. Resumable; only missing answers are ask
 
     # 3. Full pass (rerun to resume)
     klip_judge_batches.py --reports "$WS/reports" --trusted-source-root /Volumes/Sid_DJI_SSD
+
+Recordings indexed before their activity was tagged are frozen as "unknown" in each
+batch's sources.json and get no judge questions. Pass --roster to take the sport from
+the roster's current tags instead: the batch's sources.json is never edited; the
+relabelled list is written beside it as judge-sources.json, with judge-sources.provenance.json
+saying where each sport came from. Recordings still unknown are listed by --dry-run.
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ from statistics import median
 import sys
 
 from adventure_intelligence import discovery_experiment as experiment
+from adventure_intelligence import outing_roster as roster
 
 
 def _folders(reports: Path, names: list[str] | None) -> list[Path]:
@@ -38,6 +45,39 @@ def _folders(reports: Path, names: list[str] | None) -> list[Path]:
         if missing:
             raise ValueError("Not a discovery folder with sources.json: " + ", ".join(sorted(missing)))
     return found
+
+
+def _relabel(folder: Path, rows: list[dict], tagged: dict[str, str], roster_file: Path | None,
+             write: bool) -> tuple[Path, list[dict]]:
+    """Rows with sport from the roster where the batch froze "unknown"; never edits sources.json."""
+    if roster_file is None:
+        # A relabelled list from an earlier --roster run keeps being used, so a resumed
+        # pass does not silently drop back to "unknown".
+        earlier = folder / "judge-sources.json"
+        if earlier.is_file():
+            return earlier, experiment.load_sources(earlier)
+        return folder / "sources.json", rows
+    out, provenance = [], {}
+    for row in rows:
+        sport, origin = row["sport"], "sources.json"
+        if sport == experiment.UNKNOWN_SPORT and row["sourceSha256"] in tagged:
+            sport, origin = tagged[row["sourceSha256"]], "roster"
+            # A recording already judged under another rubric must not be mixed.
+            for path in (folder / row["sourceSha256"] / "judgments").glob("*.json"):
+                judged = json.loads(path.read_text(encoding="utf-8"))["judgments"]
+                if any(j["sport"] != sport for j in judged):
+                    raise ValueError(f"{folder.name}/{row['sourceSha256'][:12]} was judged as "
+                                     f"another sport; not relabelling it to {sport}")
+        out.append({**row, "sport": sport})
+        provenance[row["sourceSha256"]] = origin
+    target = folder / "judge-sources.json"
+    if write:
+        experiment._atomic_json(target, out)
+        experiment._atomic_json(folder / "judge-sources.provenance.json", {
+            "roster": str(roster_file),
+            "rosterSha256": experiment.source_digest(roster_file),
+            "sportFrom": provenance})
+    return target, out
 
 
 def _seconds_per_call(folders: list[Path]) -> dict[str, dict]:
@@ -59,18 +99,34 @@ def main(argv=None) -> int:
     parser.add_argument("--folders", nargs="+", help="only these batch folders")
     parser.add_argument("--dry-run", action="store_true", help="count the backlog only")
     parser.add_argument("--max-calls", type=int, help="stop after this many judge calls")
+    parser.add_argument("--roster", type=Path,
+                        help="take sports from this roster for recordings frozen as unknown")
     args = parser.parse_args(argv)
     try:
+        tagged = {}
+        if args.roster:
+            tagged = roster.sport_by_source(roster.validate(json.loads(
+                args.roster.read_text(encoding="utf-8"))))
         folders = _folders(args.reports.expanduser(), args.folders)
         if not folders:
             raise ValueError(f"No discovery folders under {args.reports}")
-        backlog, models = {}, set()
+        backlog, models, inputs, still_unknown, relabelled = {}, set(), {}, [], 0
         for folder in folders:
             frozen = json.loads((folder / "experiment.json").read_text(encoding="utf-8"))
-            rows = experiment.load_sources(folder / "sources.json")
+            original = experiment.load_sources(folder / "sources.json")
+            inputs[folder.name], rows = _relabel(folder, original, tagged, args.roster,
+                                                 write=not args.dry_run)
+            relabelled += sum(a["sport"] != b["sport"] for a, b in zip(original, rows))
             models |= set(frozen["config"]["models"])
             backlog[folder.name] = experiment.judge_workload(folder, rows,
                                                              frozen["config"]["models"])
+            for row in rows:
+                plan = experiment._read(folder / row["sourceSha256"] / "segments.json")
+                chosen = sum(s["role"] != "not_reviewed" for s in (plan or {}).get("segments", []))
+                if row["sport"] == experiment.UNKNOWN_SPORT and chosen:
+                    still_unknown.append({"folder": folder.name, "sourceSha256": row["sourceSha256"],
+                                          "file": Path(row["path"]).name,
+                                          "reviewSegments": chosen})
         total = {k: sum(b[k] for b in backlog.values()) for k in
                  ("segmentsForReview", "segmentsSkippedUnknownSport", "segmentsMissingProxy",
                   "judgeCallsExpected", "judgeCallsAnswered", "judgeCallsLeft")}
@@ -81,8 +137,15 @@ def main(argv=None) -> int:
                 agg["segments"] += n["segments"]
                 agg["callsLeft"] += n["callsLeft"]
         print(json.dumps({"folders": len(folders), "models": sorted(models), **total,
-                          "bySport": by_sport}, indent=2))
+                          "bySport": by_sport,
+                          "recordingsRelabelledFromRoster": relabelled,
+                          "recordingsStillUnknown": len(still_unknown)}, indent=2))
         if args.dry_run:
+            if still_unknown:
+                print("still unknown (tag these in the roster to judge them):", file=sys.stderr)
+                for u in still_unknown:
+                    print(f"  {u['folder']}  {u['file']}  {u['sourceSha256'][:12]}  "
+                          f"{u['reviewSegments']} segments", file=sys.stderr)
             return 0
         missing = experiment.missing_models(sorted(models))
         if missing:
@@ -98,7 +161,7 @@ def main(argv=None) -> int:
             print(f"[judge] {folder.name}: {backlog[folder.name]['judgeCallsLeft']} calls left",
                   file=sys.stderr, flush=True)
             report = experiment.run(
-                folder / "sources.json", folder, workspace=workspace,
+                inputs[folder.name], folder, workspace=workspace,
                 trusted_root=args.trusted_source_root, allow_mounted=True,
                 stages=("judge",), judge_budget=budget,
                 log=lambda m: print("[judge]", m, file=sys.stderr, flush=True))
