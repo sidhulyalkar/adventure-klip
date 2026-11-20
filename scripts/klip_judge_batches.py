@@ -48,7 +48,7 @@ def _folders(reports: Path, names: list[str] | None) -> list[Path]:
 
 
 def _relabel(folder: Path, rows: list[dict], tagged: dict[str, str], roster_file: Path | None,
-             write: bool) -> tuple[Path, list[dict]]:
+             write: bool, guessed: set[str] = frozenset()) -> tuple[Path, list[dict]]:
     """Rows with sport from the roster where the batch froze "unknown"; never edits sources.json."""
     if roster_file is None:
         # A relabelled list from an earlier --roster run keeps being used, so a resumed
@@ -61,7 +61,9 @@ def _relabel(folder: Path, rows: list[dict], tagged: dict[str, str], roster_file
     for row in rows:
         sport, origin = row["sport"], "sources.json"
         if sport == experiment.UNKNOWN_SPORT and row["sourceSha256"] in tagged:
-            sport, origin = tagged[row["sourceSha256"]], "roster"
+            sport = tagged[row["sourceSha256"]]
+            # A model guess is recorded as one, never as the owner's tag.
+            origin = "roster-model-guess" if row["sourceSha256"] in guessed else "roster"
             # A recording already judged under another rubric must not be mixed.
             for path in (folder / row["sourceSha256"] / "judgments").glob("*.json"):
                 judged = json.loads(path.read_text(encoding="utf-8"))["judgments"]
@@ -103,21 +105,24 @@ def main(argv=None) -> int:
                         help="take sports from this roster for recordings frozen as unknown")
     args = parser.parse_args(argv)
     try:
-        tagged, activity = {}, {}
+        tagged, activity, guessed = {}, {}, set()
         if args.roster:
             doc = roster.validate(json.loads(args.roster.read_text(encoding="utf-8")))
             tagged, activity = roster.sport_by_source(doc), roster.activity_by_source(doc)
+            guessed = roster.guessed_sources(doc)
         folders = _folders(args.reports.expanduser(), args.folders)
         if not folders:
             raise ValueError(f"No discovery folders under {args.reports}")
-        backlog, models, inputs, still_unknown, relabelled = {}, set(), {}, [], 0
+        backlog, models, inputs, still_unknown, relabelled, from_guesses = {}, set(), {}, [], 0, 0
         no_rubric: dict[str, int] = {}  # tagged kayak/hike/...: no judge questions, by design
         for folder in folders:
             frozen = json.loads((folder / "experiment.json").read_text(encoding="utf-8"))
             original = experiment.load_sources(folder / "sources.json")
             inputs[folder.name], rows = _relabel(folder, original, tagged, args.roster,
-                                                 write=not args.dry_run)
+                                                 write=not args.dry_run, guessed=guessed)
             relabelled += sum(a["sport"] != b["sport"] for a, b in zip(original, rows))
+            from_guesses += sum(a["sport"] != b["sport"] and b["sourceSha256"] in guessed
+                                for a, b in zip(original, rows))
             models |= set(frozen["config"]["models"])
             backlog[folder.name] = experiment.judge_workload(folder, rows,
                                                              frozen["config"]["models"])
@@ -143,6 +148,7 @@ def main(argv=None) -> int:
         print(json.dumps({"folders": len(folders), "models": sorted(models), **total,
                           "bySport": by_sport,
                           "recordingsRelabelledFromRoster": relabelled,
+                          "ofWhichModelGuesses": from_guesses,
                           "segmentsTaggedWithoutJudgeRubric": no_rubric,
                           "recordingsStillUnknown": len(still_unknown)}, indent=2))
         if args.dry_run:

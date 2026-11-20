@@ -78,7 +78,7 @@ def _emit(doc, output: Path | None) -> None:
 def _mapping(args):
     if not getattr(args, "roster", None):
         return {}, False
-    doc = roster.validate(_json(args.roster))
+    doc = roster.refuse_guesses(roster.validate(_json(args.roster)))
     return roster.outing_by_source(doc), doc["status"] == "owner_confirmed"
 
 
@@ -86,7 +86,7 @@ def _roster_extras(args) -> tuple[dict[str, str], set[str]]:
     """({outing: trip}, recordings marked accidental)."""
     if not getattr(args, "roster", None):
         return {}, set()
-    doc = roster.validate(_json(args.roster))
+    doc = roster.refuse_guesses(roster.validate(_json(args.roster)))
     return roster.trip_by_outing(doc), roster.excluded_sources(doc)
 
 
@@ -184,7 +184,7 @@ def describe(args) -> dict:
         return {"vocabulary": doc["digest"], "store": str(store)}
     assets = _catalog_assets(args.workspace)
     root = args.source_root.expanduser().absolute()
-    doc_roster = roster.validate(_json(args.roster)) if args.roster else None
+    doc_roster = roster.refuse_guesses(roster.validate(_json(args.roster))) if args.roster else None
     skip = roster.excluded_sources(doc_roster) if doc_roster else set()
     scanned = set()
     for folder in sorted((args.workspace / "reports").glob("discovery-*")):
@@ -274,7 +274,7 @@ def atlas(args) -> dict:
         print("[atlas]", message, file=sys.stderr, flush=True)
 
     say(f"{len(recordings)} recordings in the catalog; reading owner labels")
-    doc = roster.validate(_json(args.roster)) if args.roster else None
+    doc = roster.refuse_guesses(roster.validate(_json(args.roster))) if args.roster else None
     mapping, _ = _mapping(args)
     owner = _owner(args, lambda sha: roster.group_of(mapping, sha))
     files = owner["collected"].get("files", [])
@@ -322,7 +322,7 @@ def index(args) -> dict:
     from adventure_intelligence import moment_evidence as me
     from adventure_intelligence.judge_panel import RUBRICS
     root = args.source_root.expanduser().absolute()
-    doc = roster.validate(_json(args.roster)) if args.roster else None
+    doc = roster.refuse_guesses(roster.validate(_json(args.roster))) if args.roster else None
     skip = roster.excluded_sources(doc) if doc else set()
     tagged = roster.sport_by_source(doc) if doc else {}
     assets = {}
@@ -457,7 +457,7 @@ def plan(args) -> list[dict]:
 
     owner = _owner(args, group_of)
     everything = _catalog_assets(args.workspace)
-    doc = roster.validate(_json(args.roster)) if args.roster else None
+    doc = roster.refuse_guesses(roster.validate(_json(args.roster))) if args.roster else None
     tagged = roster.sport_by_source(doc) if doc else {}
     for sha in roster.excluded_sources(doc) if doc else ():
         everything.pop(sha, None)  # accidental recordings are never scanned

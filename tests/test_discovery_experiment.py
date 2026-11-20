@@ -338,3 +338,52 @@ def test_judge_batches_cli_takes_sport_from_roster_without_editing_sources(setup
     assert report["totals"]["judgeCallsLeft"] == 0 and report["sources"][0]["sport"] == "ski"
     assert cli.main(argv + ["--dry-run"]) == 0  # resumes with the relabelled list
     assert json.loads(capsys.readouterr().out)["recordingsStillUnknown"] == 0
+
+
+def _guess_cli():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "klip_guess_activities", Path(__file__).parents[1] / "scripts" / "klip_guess_activities.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class _FakeStore:
+    def __init__(self, votes):
+        self.votes = votes
+
+    def activity(self, sha):
+        v = self.votes.get(sha)
+        return v and {"proposal": v[0], "share": v[1], "votes": {v[0]: v[1]}}
+
+
+def test_activity_guesses_are_tagged_conservative_and_refused_by_evaluation():
+    from adventure_intelligence import outing_roster as roster
+    g = _guess_cli()
+    sha = lambda c: c * 64
+    doc = {"version": roster.VERSION, "status": "provisional", "outings": [{
+        "outing": "d", "sources": [
+            {"sourceSha256": sha("a"), "activity": "ski"},   # owner tag, same day
+            {"sourceSha256": sha("b")}, {"sourceSha256": sha("c")}, {"sourceSha256": sha("d")},
+            {"sourceSha256": sha("e")}, {"sourceSha256": sha("f")}]}]}
+    names = {sha(x): f"DJI_20260301{i}_D.MP4" for i, x in enumerate("abcde")}
+    names[sha("f")] = "other.mp4"
+    store = _FakeStore({sha("b"): ("ski", 0.9), sha("c"): ("snorkeling", 0.4),
+                        sha("d"): ("accidental", 0.8), sha("f"): ("bike", 0.7)})
+    rec = g.guess(doc, names, store)
+    assert rec[sha("b")]["confidence"] == "high"
+    assert rec[sha("c")]["guess"] == "ski" and rec[sha("c")]["confidence"] == "low"
+    assert rec[sha("d")]["possibleAccidental"] and rec[sha("d")]["guess"] == "ski"
+    assert rec[sha("e")]["reason"].startswith("day only")
+    assert rec[sha("f")]["guess"] == "bike" and rec[sha("f")]["confidence"] == "medium"
+    before = json.dumps(doc)
+    out = g.apply(doc, rec)
+    assert json.dumps(doc) == before  # input untouched
+    assert roster.guessed_sources(out) == {sha(x) for x in "bcdef"}
+    assert all(r.get("activity") != "accidental" for o in out["outings"] for r in o["sources"])
+    with pytest.raises(ValueError, match="model-guessed"):
+        roster.refuse_guesses(out)
+    assert roster.refuse_guesses(doc) is doc
+    assert g.guess(out, names, store) == {}  # guesses are not re-guessed

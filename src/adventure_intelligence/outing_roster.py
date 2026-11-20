@@ -214,6 +214,27 @@ def activity_by_source(doc: dict) -> dict[str, str]:
     return out
 
 
+# Marks a recording whose activity came from a model guess, not the owner. A roster
+# holding any is for the judge panel only; evaluation commands refuse it.
+GUESS_TAG = "activity-guessed"
+
+
+def guessed_sources(doc: dict) -> set[str]:
+    """Recordings whose activity is a model guess the owner has not confirmed."""
+    return {row["sourceSha256"] for outing in validate(doc)["outings"]
+            for row in outing["sources"] if GUESS_TAG in (row.get("tags") or [])}
+
+
+def refuse_guesses(doc: dict) -> dict:
+    """The roster, unless it holds model-guessed activities (which are not owner labels)."""
+    guessed = guessed_sources(doc)
+    if guessed:
+        raise ValueError(f"This roster holds {len(guessed)} model-guessed activities (tag "
+                         f"{GUESS_TAG}); use it only with klip_judge_batches.py, or confirm the "
+                         "guesses (remove the tag) first")
+    return doc
+
+
 def sport_by_source(doc: dict) -> dict[str, str]:
     """{source SHA: sport} for recordings whose activity has judge questions."""
     return {sha: a for sha, a in activity_by_source(doc).items() if a in JUDGED_SPORTS}
