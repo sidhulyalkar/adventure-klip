@@ -166,3 +166,15 @@ def test_context_beyond_the_bound_is_an_abstention(monkeypatch):
 
     out = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
     assert out["status"] == "abstained" and "90000" in out["failureDetail"]
+
+
+def test_ollama_counters_are_kept_as_usage():
+    def ollama(body):
+        return {**reply("ski"), "prompt_eval_count": 16921, "prompt_eval_duration": 4.2e11,
+                "eval_count": 180, "eval_duration": 3.1e10, "load_duration": 9e9,
+                "total_duration": 4.6e11}
+
+    out = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert out["usage"] == {"promptTokens": 16921, "outputTokens": 180, "loadSeconds": 9.0,
+                            "prefillSeconds": 420.0, "generateSeconds": 31.0,
+                            "totalSeconds": 460.0}

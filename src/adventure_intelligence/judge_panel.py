@@ -76,6 +76,18 @@ def _context_needed(error: Exception) -> int | None:
     return ctx if ctx <= MAX_CTX else None
 
 
+def usage(reply: dict) -> dict:
+    """Where the time went, from Ollama's own counters (prefill vs generation)."""
+    ns = 1e9
+    out = {"promptTokens": reply.get("prompt_eval_count"),
+           "outputTokens": reply.get("eval_count")}
+    for key, name in (("load_duration", "loadSeconds"), ("prompt_eval_duration", "prefillSeconds"),
+                      ("eval_duration", "generateSeconds"), ("total_duration", "totalSeconds")):
+        if isinstance(reply.get(key), (int, float)):
+            out[name] = round(reply[key] / ns, 2)
+    return out
+
+
 def questions(sport: str) -> dict[str, str]:
     if sport not in RUBRICS:
         raise ValueError("Unknown sport rubric")
@@ -194,7 +206,7 @@ def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
             return {**base, "status": "abstained", "failure": type(error).__name__,
                     "failureDetail": str(error)[:300], "notANegative": True}
     controls = [k for k in CONTROLS[sport] if parsed["answers"][k] == "yes"]
-    return {**base, "status": "answered",
+    return {**base, "status": "answered", "usage": usage(reply),
             "answers": {k: v for k, v in parsed["answers"].items() if k not in CONTROLS[sport]},
             "modelDescription": parsed["description"],
             "controlFailures": controls, "ownerVerified": False}
