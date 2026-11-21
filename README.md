@@ -2,7 +2,7 @@
 
 **Start here:** [Mission and product objective](docs/KLIP_RESEARCH_MISSION.md) → [V3 architecture](docs/KLIP_ARCHITECTURE_V3.md) → [Prioritized roadmap](docs/KLIP_IMPLEMENTATION_ROADMAP.md).
 
-**Engineering handoff:** [Claude Code brief](docs/KLIP_CLAUDE_CODE_BRIEF.md) · [Append-only experiment ledger](logs/README.md) · [Known results and unresolved failures](logs/experiments/2026-11-16-state-and-lessons.md) · [Current implementation map](docs/CURRENT_PIPELINE.md).
+**Run it end to end:** [Pipeline](docs/KLIP_PIPELINE.md) · **Engineering handoff:** [Claude Code brief](docs/KLIP_CLAUDE_CODE_BRIEF.md) · [Append-only experiment ledger](logs/README.md) · [Known results and unresolved failures](logs/experiments/2026-11-16-state-and-lessons.md) · [Current implementation map](docs/CURRENT_PIPELINE.md).
 
 **Active review work:** scene-first owner descriptions and story judgments (instead of animal-only categories), with backward-compatible marine annotations. This is a research branch, not an automatically learning production model.
 
