@@ -2,9 +2,11 @@
 """One entry point from indexed footage to highlight reels.
 
     status   where every stage stands across the library (reads files only)
-    reels    recipes from validated outing stories, preview reels from review clips,
-             a gallery page; --approve RECIPE_SHA --master renders full quality from the
-             camera originals for approved recipes only
+    reels    recipes from validated outing stories (near-duplicates dropped), preview
+             reels from review clips, a gallery page; --ab-color writes a blind colour A/B
+             deck; --color underwater-v1 applies the correction; --approve RECIPE_SHA
+             --master renders full quality from the camera originals for approved recipes
+    ab-score score a downloaded colour A/B answers file (exact sign test)
     run      judge pass -> stories (quality, describe, story) -> reels, each resumable
 
 Stages and where they write (all new files; originals and earlier reports are not edited):
@@ -137,8 +139,27 @@ def _originals(reports: Path) -> dict[str, dict]:
     return out
 
 
+def _embedder(reports: Path):
+    """Stored SigLIP2 interval embeddings, if the description store exists."""
+    folder = reports / "evidence"
+    if not (folder / "vocabulary.json").is_file():
+        return None
+    try:
+        from adventure_intelligence.moment_evidence import Store
+        store = Store(folder)
+    except (ValueError, OSError):
+        return None
+
+    def embed(sha, start, end):
+        got = store.interval(sha, start, end)
+        return None if got is None else got.get("embedding")
+    return embed
+
+
 def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
-          approve: list[str], trusted_root: Path | None, log) -> dict:
+          approve: list[str], trusted_root: Path | None, log, color_mode: str = "none",
+          ab_color: bool = False, similarity_threshold: float = compile_.SIMILARITY_THRESHOLD,
+          sampler=compile_.sample_rgb) -> dict:
     hl = reports / "highlights-v1"
     approvals_file = hl / "approvals.json"
     approvals = _read(approvals_file) or {"approved": []}
@@ -151,6 +172,7 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
     if approve:
         _write(approvals_file, approvals)
     locate = _locator(reports)
+    embed = _embedder(reports)
     made = Counter()
     shown = []
     for story_file in sorted((reports / "outing-stories-v1" / "stories").glob("*.json")):
@@ -159,7 +181,9 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
             made["noStory"] += 1
             continue
         try:
-            recipe = compile_.plan_reel(doc, locate, target_seconds=target_seconds, order=order)
+            recipe = compile_.plan_reel(doc, locate, target_seconds=target_seconds, order=order,
+                                        embed=embed, sampler=sampler, color_mode=color_mode,
+                                        similarity_threshold=similarity_threshold)
         except ValueError as error:
             log(str(error))
             made["noShortlist"] += 1
@@ -192,7 +216,14 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
         shown.append({"recipe": recipe, "preview": meta})
         made["recipes"] += 1
     _write(hl / "index.html", compile_.gallery(shown))
-    return {**dict(made), "gallery": str(hl / "index.html"),
+    ab = None
+    if ab_color:
+        ab = compile_.color_ab_deck([x["recipe"] for x in shown], hl / "color-ab",
+                                    seed="|".join(sorted(x["recipe"]["recipeSha256"] for x in shown)))
+        log(f"colour A/B deck: {ab['pairs']} pairs -> {ab['page']}")
+    return {**dict(made), "gallery": str(hl / "index.html"), "colorAB": ab,
+            "dropped": Counter(d["reason"].split(" (")[0].split(" of ")[0]
+                               for x in shown for d in x["recipe"]["dropped"]),
             "recipes": [{"outing": s["recipe"]["outing"],
                          "recipeSha256": s["recipe"]["recipeSha256"],
                          "clips": len(s["recipe"]["clips"]),
@@ -203,15 +234,21 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
 def main(argv=None, *, transport=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("status", "reels", "run"):
+    for name in ("status", "reels", "run", "ab-score"):
         p = sub.add_parser(name)
         p.add_argument("--reports", type=Path, required=True)
+    sub.choices["ab-score"].add_argument("--answers", type=Path, required=True)
     for p in (sub.choices["reels"], sub.choices["run"]):
         p.add_argument("--target-seconds", type=float, default=60.0)
         p.add_argument("--order", choices=("clock", "rank"), default="clock")
         p.add_argument("--trusted-source-root", type=Path)
+        p.add_argument("--color", choices=compile_.COLOR_MODES, default="none")
+        p.add_argument("--similarity-threshold", type=float,
+                       default=compile_.SIMILARITY_THRESHOLD)
     sub.choices["reels"].add_argument("--approve", nargs="+", metavar="RECIPE_SHA256")
     sub.choices["reels"].add_argument("--master", action="store_true")
+    sub.choices["reels"].add_argument("--ab-color", action="store_true",
+                                      help="write a blind colour A/B deck")
     run = sub.choices["run"]
     run.add_argument("--roster", type=Path, required=True)
     run.add_argument("--through", choices=("judge", "stories", "reels"), default="reels")
@@ -229,10 +266,23 @@ def main(argv=None, *, transport=None) -> int:
         if args.command == "status":
             print(json.dumps(status(reports), indent=2))
             return 0
+        if args.command == "ab-score":
+            folder = reports / "highlights-v1" / "color-ab"
+            key = _read(folder / "key.json")
+            if key is None:
+                raise ValueError("No colour A/B deck; run reels --ab-color first")
+            result = compile_.color_ab_score(key, json.loads(args.answers.read_text(encoding="utf-8")))
+            n = len(list(folder.glob("result-*.json"))) + 1
+            _write(folder / f"result-{n:03d}.json", {**result, "answersFile": str(args.answers),
+                                                     "at": datetime.now(timezone.utc).isoformat()})
+            print(json.dumps(result, indent=2))
+            return 0
         if args.command == "reels":
             print(json.dumps(reels(reports, target_seconds=args.target_seconds, order=args.order,
                                    master=args.master, approve=args.approve or [],
-                                   trusted_root=args.trusted_source_root, log=log), indent=2))
+                                   trusted_root=args.trusted_source_root, log=log,
+                                   color_mode=args.color, ab_color=args.ab_color,
+                                   similarity_threshold=args.similarity_threshold), indent=2))
             return 0
         common = ["--reports", str(reports), "--roster", str(args.roster)]
         if not args.skip_judge:
@@ -254,8 +304,9 @@ def main(argv=None, *, transport=None) -> int:
         if args.through == "reels":
             log("stage: reels")
             print(json.dumps(reels(reports, target_seconds=args.target_seconds, order=args.order,
-                                   master=False, approve=[], trusted_root=None, log=log),
-                             indent=2))
+                                   master=False, approve=[], trusted_root=None, log=log,
+                                   color_mode=args.color,
+                                   similarity_threshold=args.similarity_threshold), indent=2))
         print(json.dumps(status(reports), indent=2))
     except (ValueError, KeyError, OSError, RuntimeError, PermissionError) as error:
         print(f"error: {error}", file=sys.stderr)

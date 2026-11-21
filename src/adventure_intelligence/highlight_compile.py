@@ -14,6 +14,17 @@ master   render_master: full quality from the camera originals, only for a recip
          SHA-256 the owner approved, only under the trusted source root, and only when
          each original still has its recorded size. Originals are only read.
 
+variety  Near-duplicates are dropped in rank order: a clip overlapping (or within
+         DUPLICATE_GAP_S of) a kept clip from the same recording, or whose stored SigLIP2
+         embedding (else a colour-thumbnail descriptor from the review clip) is at least
+         `similarity_threshold` cosine-similar to a kept clip. Thresholds are v1,
+         uncalibrated, and recorded with the recipe.
+colour   Underwater clips (judges agreed "underwater", else a measured red deficit) get a
+         proposed correction: red compensated from green (Ancuti et al. 2018, linear form)
+         then a gentle per-channel levels stretch. Parameters are measured per clip and
+         stored, so preview and master look the same. Applied only when the recipe's
+         colorMode is "underwater-v1"; an A/B deck (color_ab_*) decides whether it should be.
+
 Every recipe carries the story's model, harness status and packet SHA-256 and is marked
 a draft; nothing here publishes or approves anything.
 """
@@ -21,6 +32,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -37,6 +49,91 @@ DEFAULT_WINDOW = (3.0, 5.0)
 MIN_CLIP_S = 2.0
 FADE_SPORTS = {"snorkeling"}          # scenic dissolves; action sports hard-cut
 PREVIEW_SIZE = (960, 540)
+SIMILARITY_THRESHOLD = 0.92          # v1, uncalibrated
+DUPLICATE_GAP_S = 2.0
+COLOR = {  # v1, uncalibrated; recorded with every proposal
+    "redRatioUnderwater": 0.55,      # mean R / mean(G, B) below this reads as underwater
+    "alpha": 1.0,                    # Ancuti red compensation strength
+    "maxRedFromGreen": 0.6,
+    "percentiles": (1.0, 99.0), "strength": 0.8, "minRange": 0.4,
+}
+COLOR_MODES = ("none", "underwater-v1")
+
+
+def sample_rgb(proxy: Path, start_s: float, end_s: float, n: int = 4,
+               size=(320, 180)) -> list:
+    """RGB frames (uint8 HxWx3) evenly inside [start_s, end_s) of a review clip."""
+    import numpy as np
+    w, h = size
+    out = []
+    for i in range(n):
+        t = start_s + (end_s - start_s) * (i + 0.5) / n
+        job = subprocess.run(
+            [require_tool("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
+             "-ss", f"{t:.3f}", "-i", str(proxy), "-frames:v", "1",
+             "-vf", f"scale={w}:{h},format=rgb24", "-f", "rawvideo", "-"],
+            capture_output=True, timeout=30, check=False)
+        if job.returncode == 0 and len(job.stdout) == w * h * 3:
+            out.append(np.frombuffer(job.stdout, np.uint8).reshape(h, w, 3))
+    if not out:
+        raise ValueError(f"Could not sample frames from {proxy.name}")
+    return out
+
+
+def thumbnail_descriptor(frames: list):
+    """Unit vector of the mean 32x18 colour thumbnail, centred: a model-free look-alike test."""
+    import numpy as np
+    acc = []
+    for f in frames:
+        h, w, _ = f.shape
+        bh, bw = h // 18, w // 32
+        small = f[:bh * 18, :bw * 32].reshape(18, bh, 32, bw, 3).mean(axis=(1, 3))
+        acc.append(small.astype(np.float32).ravel())
+    v = np.mean(acc, axis=0)
+    v = v - v.mean()
+    n = float(np.linalg.norm(v))
+    return v / n if n > 1e-6 else None
+
+
+def color_proposal(frames: list, scene: dict, sport: str) -> dict:
+    """Whether a clip reads as underwater, and the measured correction if so."""
+    import numpy as np
+    rgb = np.concatenate([f.reshape(-1, 3) for f in frames]).astype(np.float32) / 255.0
+    r, g, b = rgb[:, 0].mean(), rgb[:, 1].mean(), rgb[:, 2].mean()
+    ratio = float(r / max(1e-6, (g + b) / 2))
+    base = {"redRatio": round(ratio, 3), "thresholds": COLOR}
+    if sport != "snorkeling":
+        return {**base, "applies": False, "why": f"not underwater footage ({sport})"}
+    if "underwater" in scene.get("factsNo", []):
+        return {**base, "applies": False, "why": "judges agreed: not underwater"}
+    if "underwater" in scene.get("factsYes", []):
+        why = "judges agreed: underwater"
+    elif ratio < COLOR["redRatioUnderwater"]:
+        why = f"measured red deficit (R/GB {ratio:.2f})"
+    else:
+        return {**base, "applies": False, "why": f"no red deficit (R/GB {ratio:.2f})"}
+    k = float(np.clip(COLOR["alpha"] * (g - r), 0.0, COLOR["maxRedFromGreen"]))
+    comp = rgb.copy()
+    comp[:, 0] = np.clip(comp[:, 0] + k * comp[:, 1], 0, 1)
+    lo_p, hi_p = COLOR["percentiles"]
+    lo = np.percentile(comp, lo_p, axis=0)
+    hi = np.percentile(comp, hi_p, axis=0)
+    st = COLOR["strength"]
+    lo, hi = st * lo, 1 - st * (1 - hi)
+    hi = np.maximum(hi, lo + COLOR["minRange"])
+    hi = np.minimum(hi, 1.0)
+    lo = np.minimum(lo, hi - COLOR["minRange"]).clip(0, 1)
+    params = {"redFromGreen": round(k, 4), "low": [round(float(x), 4) for x in lo],
+              "high": [round(float(x), 4) for x in hi]}
+    return {**base, "applies": True, "why": why, "params": params,
+            "filter": color_filter(params)}
+
+
+def color_filter(params: dict) -> str:
+    lo, hi = params["low"], params["high"]
+    return (f"format=rgb24,colorchannelmixer=rr=1:rg={params['redFromGreen']:.4f},"
+            f"colorlevels=rimin={lo[0]:.4f}:gimin={lo[1]:.4f}:bimin={lo[2]:.4f}:"
+            f"rimax={hi[0]:.4f}:gimax={hi[1]:.4f}:bimax={hi[2]:.4f}")
 
 
 def _digest(doc) -> str:
@@ -86,9 +183,19 @@ def window(at: float, length: float, sport: str) -> tuple[float, float]:
 
 
 def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
-              order: str = "clock") -> dict:
-    """Recipe from a story file ({record, packet}). `locate(sha, start, end)` returns
-    {"proxy": Path, "segment": dict | None, "motion": list} for a scene."""
+              order: str = "clock", embed=None, sampler=None,
+              similarity_threshold: float = SIMILARITY_THRESHOLD,
+              color_mode: str = "none") -> dict:
+    """Recipe from a story file ({record, packet}).
+
+    locate(sha, start, end) -> {"proxy": Path, "segment": dict | None, "motion": list}
+    embed(sha, start_ms, end_ms) -> unit vector or None   (stored SigLIP2 embeddings)
+    sampler(proxy, start_s, end_s) -> RGB frames           (colour and the fallback
+                                                            look-alike descriptor)
+    """
+    import numpy as np
+    if color_mode not in COLOR_MODES:
+        raise ValueError(f"color_mode must be one of {COLOR_MODES}")
     record, packet = story_doc["record"], story_doc["packet"]
     story = record.get("story")
     if not story or not story.get("shortlist"):
@@ -99,7 +206,7 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
     moment_of = {}
     for m in story.get("moments", []):
         moment_of.setdefault(m["scene"], m)
-    clips, used, dropped = [], 0.0, []
+    clips, used, dropped, vectors, methods = [], 0.0, [], [], set()
     for rank, sid in enumerate(story["shortlist"], 1):
         s = scenes[sid]
         if s["quality"]["verdict"] == "unusable":   # the harness already refuses this
@@ -111,20 +218,49 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
         if b - a < MIN_CLIP_S:
             dropped.append({"scene": sid, "reason": f"under {MIN_CLIP_S} s"})
             continue
+        o_in, o_out = s["startMs"] + int(a * 1000), s["startMs"] + int(b * 1000)
+        # Same recording, overlapping or nearly touching: the same moment twice.
+        twin = next((c for c in clips if c["sourceSha256"] == s["sourceSha256"]
+                     and o_in < c["originalOutMs"] + DUPLICATE_GAP_S * 1000
+                     and c["originalInMs"] < o_out + DUPLICATE_GAP_S * 1000), None)
+        if twin:
+            dropped.append({"scene": sid, "reason": f"overlaps {twin['scene']} in the same "
+                                                    "recording"})
+            continue
+        frames = sampler(where["proxy"], a, b) if sampler else None
+        vec, method = (embed(s["sourceSha256"], o_in, o_out) if embed else None), "siglip2"
+        if vec is None and frames:
+            vec, method = thumbnail_descriptor(frames), "thumbnail"
+        if vec is not None:
+            vec = np.asarray(vec, np.float32)
+            same = [(float(vec @ v), c) for v, m, c in vectors
+                    if m == method and v.shape == vec.shape]
+            best = max(same, key=lambda x: x[0], default=None)
+            if best and best[0] >= similarity_threshold:
+                dropped.append({"scene": sid, "reason": f"near-duplicate of {best[1]['scene']} "
+                                f"({method} cosine {best[0]:.3f})"})
+                continue
         if used + (b - a) > target_seconds and clips:
             dropped.append({"scene": sid, "reason": "over the duration budget"})
             continue
         used += b - a
         m = moment_of.get(sid, {})
-        clips.append({
+        clip = {
             "scene": sid, "rank": rank, "sourceSha256": s["sourceSha256"], "file": s["file"],
             "clockStart": s["clockStart"], "proxy": str(where["proxy"]),
             "proxyInSeconds": a, "proxyOutSeconds": b,
-            "originalInMs": s["startMs"] + int(a * 1000),
-            "originalOutMs": s["startMs"] + int(b * 1000),
+            "originalInMs": o_in, "originalOutMs": o_out,
             "anchorSeconds": round(at, 3), "anchor": why,
             "what": m.get("what"), "whyItMatters": m.get("whyItMatters"),
-            "quality": s["quality"]})
+            "quality": s["quality"], "lookalike": method if vec is not None else None,
+            "color": color_proposal(frames, s, packet["sport"]) if frames else
+            {"applies": False, "why": "not measured"}}
+        clips.append(clip)
+        if vec is not None:
+            vectors.append((vec, method, clip))
+            methods.add(method)
+    kept_sims = [float(v1 @ v2) for i, (v1, m1, _) in enumerate(vectors)
+                 for (v2, m2, _) in vectors[i + 1:] if m1 == m2 and v1.shape == v2.shape]
     if order == "clock":
         position = {s["id"]: i for i, s in enumerate(packet["scenes"])}
         clips.sort(key=lambda c: position[c["scene"]])
@@ -136,6 +272,11 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
         "story": {"model": record["model"], "harnessStatus": record["harnessStatus"],
                   "packetSha256": record["packetSha256"]},
         "windows": {"before/after seconds": WINDOWS.get(packet["sport"], DEFAULT_WINDOW)},
+        "variety": {"methods": sorted(methods) or ["none"],
+                    "similarityThreshold": similarity_threshold,
+                    "duplicateGapSeconds": DUPLICATE_GAP_S,
+                    "maxSimilarityKept": round(max(kept_sims), 3) if kept_sims else None},
+        "colorMode": color_mode,
         "isDraft": True, "publicationApproved": False,
         "isModelProposalNotOwnerJudgment": True}
     recipe["recipeSha256"] = _digest({k: v for k, v in recipe.items() if k != "recipeSha256"})
@@ -149,11 +290,14 @@ def _has_audio(path: Path) -> bool:
     return bool(out.stdout.strip())
 
 
-def _graph(n: int, durations: list[float], fade: bool, audio: bool, size) -> tuple[str, str, str | None, float]:
+def _graph(n: int, durations: list[float], fade: bool, audio: bool, size,
+           looks: list[str | None] | None = None) -> tuple[str, str, str | None, float]:
     w, h = size
     parts = []
+    looks = looks or [None] * n
     for i in range(n):
-        parts.append(f"[{i}:v]fps=30,scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        look = f"{looks[i]}," if looks[i] else ""
+        parts.append(f"[{i}:v]{look}fps=30,scale={w}:{h}:force_original_aspect_ratio=decrease,"
                      f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,"
                      f"setpts=PTS-STARTPTS[v{i}]")
         if audio:
@@ -178,8 +322,9 @@ def _graph(n: int, durations: list[float], fade: bool, audio: bool, size) -> tup
 
 
 def _encode(inputs: list[list[str]], durations: list[float], fade: bool, audio: bool,
-            target: Path, *, size, crf: int, preset: str, timeout: int) -> float:
-    graph, vout, aout, total = _graph(len(inputs), durations, fade, audio, size)
+            target: Path, *, size, crf: int, preset: str, timeout: int,
+            looks: list[str | None] | None = None) -> float:
+    graph, vout, aout, total = _graph(len(inputs), durations, fade, audio, size, looks)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(prefix=".klip-reel-", suffix=".mp4", dir=target.parent)
     os.close(fd)
@@ -198,6 +343,14 @@ def _encode(inputs: list[list[str]], durations: list[float], fade: bool, audio: 
     return total
 
 
+def _looks(recipe: dict) -> list[str | None]:
+    """The colour filter each clip gets: only in underwater-v1 mode, only where it applies."""
+    if recipe.get("colorMode", "none") == "none":
+        return [None] * len(recipe["clips"])
+    return [c["color"].get("filter") if c.get("color", {}).get("applies") else None
+            for c in recipe["clips"]]
+
+
 def render_preview(recipe: dict, target: Path) -> dict:
     """Draft reel from review clips only (960x540)."""
     clips = recipe["clips"]
@@ -212,10 +365,12 @@ def render_preview(recipe: dict, target: Path) -> dict:
     inputs = [["-ss", f'{c["proxyInSeconds"]:.3f}', "-t", f"{d:.3f}", "-i", str(p)]
               for c, d, p in zip(clips, durations, paths)]
     total = _encode(inputs, durations, recipe["transition"] == "crossfade", audio, target,
-                    size=PREVIEW_SIZE, crf=23, preset="veryfast", timeout=900)
+                    size=PREVIEW_SIZE, crf=23, preset="veryfast", timeout=900,
+                    looks=_looks(recipe))
     return {"version": VERSION, "kind": "preview", "recipeSha256": recipe["recipeSha256"],
             "path": str(target), "sha256": file_sha(target), "clips": len(clips),
             "estimatedSeconds": round(total, 2), "audio": audio, "originalVideoReads": 0,
+            "colorMode": recipe.get("colorMode", "none"),
             "isDraft": True, "publicationApproved": False}
 
 
@@ -248,7 +403,7 @@ def render_master(recipe: dict, target: Path, *, originals: dict[str, dict],
         paths.append(path)
     audio = all(_has_audio(p) for p in paths)
     total = _encode(inputs, durations, recipe["transition"] == "crossfade", audio, target,
-                    size=size, crf=18, preset="medium", timeout=3600)
+                    size=size, crf=18, preset="medium", timeout=3600, looks=_looks(recipe))
     return {"version": VERSION, "kind": "master", "recipeSha256": recipe["recipeSha256"],
             "path": str(target), "sha256": file_sha(target), "clips": len(paths),
             "estimatedSeconds": round(total, 2), "audio": audio,
@@ -277,3 +432,105 @@ def gallery(reels: list[dict]) -> str:
             "<style>body{font:15px system-ui;max-width:980px;margin:2em auto;padding:0 1em}"
             "video{width:100%;background:#000}section{margin-bottom:3em}</style>"
             "<h1>Highlight drafts</h1>" + "".join(rows))
+
+
+# ---------------------------------------------------------------- blind colour A/B
+
+def color_ab_deck(recipes: list[dict], folder: Path, *, max_pairs: int = 24,
+                  seed: str = "") -> dict:
+    """Same clip, original vs corrected, sides shuffled. The key stays in key.json, out of
+    the page; the page lets the owner pick left / right / same and download the answers."""
+    import random
+    import html as html_mod
+    rng = random.Random(seed or "klip-color-ab")
+    candidates = [(r, c) for r in recipes for c in r["clips"]
+                  if c.get("color", {}).get("applies")]
+    rng.shuffle(candidates)
+    folder.mkdir(parents=True, exist_ok=True)
+    pairs, key = [], {}
+    for n, (recipe, c) in enumerate(candidates[:max_pairs], 1):
+        pid = f"pair-{n:03d}"
+        corrected_left = rng.random() < 0.5
+        d = c["proxyOutSeconds"] - c["proxyInSeconds"]
+        for side, look in (("L", c["color"]["filter"] if corrected_left else None),
+                           ("R", None if corrected_left else c["color"]["filter"])):
+            target = folder / f"{pid}-{side}.mp4"
+            if not target.is_file():
+                _encode([["-ss", f'{c["proxyInSeconds"]:.3f}', "-t", f"{d:.3f}",
+                          "-i", c["proxy"]]], [d], False, False, target,
+                         size=PREVIEW_SIZE, crf=20, preset="veryfast", timeout=600,
+                         looks=[look])
+        key[pid] = {"corrected": "left" if corrected_left else "right",
+                    "recipeSha256": recipe["recipeSha256"], "outing": recipe["outing"],
+                    "scene": c["scene"], "color": c["color"]}
+        pairs.append(pid)
+    deck_id = _digest({"pairs": key})[:12]
+    (folder / "key.json").write_text(json.dumps({"version": VERSION, "deck": deck_id,
+                                                 "pairs": key}, indent=2), encoding="utf-8")
+    items = "".join(
+        f'<section data-pair="{p}"><h3>{i}</h3><div class="row">'
+        f'<video muted loop playsinline preload="metadata" src="{p}-L.mp4"></video>'
+        f'<video muted loop playsinline preload="metadata" src="{p}-R.mp4"></video></div>'
+        f'<div class="b"><button data-v="left">Left looks better</button>'
+        f'<button data-v="same">No difference</button>'
+        f'<button data-v="right">Right looks better</button></div></section>'
+        for i, p in enumerate(pairs, 1))
+    page = (
+        "<!doctype html><meta charset=utf-8><title>Colour A/B</title><style>"
+        "body{font:15px system-ui;max-width:1200px;margin:2em auto;padding:0 1em}"
+        ".row{display:flex;gap:8px}.row video{width:50%;background:#000}"
+        ".b{margin:.5em 0 2.5em}button{margin-right:.5em;padding:.4em .8em}"
+        "button.on{background:#2b6;color:#fff}</style>"
+        f"<h1>Which looks better?</h1><p>{len(pairs)} pairs. Each pair is the same clip; "
+        "judge colour and look only. Click a video pair to play both.</p>" + items +
+        f'<p><button id=dl>Download answers</button> <span id=n></span></p><script>'
+        f'const deck="{html_mod.escape(deck_id)}",a={{}};'
+        'document.querySelectorAll("section").forEach(s=>{const v=s.querySelectorAll("video");'
+        's.querySelector(".row").onclick=()=>{v.forEach(x=>{x.currentTime=0;x.play()})};'
+        's.querySelectorAll("button").forEach(b=>b.onclick=()=>{a[s.dataset.pair]=b.dataset.v;'
+        's.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));'
+        'document.getElementById("n").textContent=Object.keys(a).length+" answered"})});'
+        'document.getElementById("dl").onclick=()=>{const u=URL.createObjectURL(new Blob('
+        '[JSON.stringify({deck,answers:a},null,2)],{type:"application/json"}));'
+        'const l=document.createElement("a");l.href=u;l.download="color-ab-answers-"+deck+".json";'
+        'l.click()}</script>')
+    (folder / "index.html").write_text(page, encoding="utf-8")
+    return {"deck": deck_id, "pairs": len(pairs), "page": str(folder / "index.html")}
+
+
+def _sign_test(wins: int, losses: int) -> float:
+    """Exact two-sided binomial p for wins vs losses (ties excluded)."""
+    n = wins + losses
+    if n == 0:
+        return 1.0
+    k = min(wins, losses)
+    tail = sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n
+    return min(1.0, 2 * tail)
+
+
+def color_ab_score(key: dict, answers: dict) -> dict:
+    if answers.get("deck") != key["deck"]:
+        raise ValueError("These answers belong to a different A/B deck")
+    corrected = original = same = 0
+    for pid, choice in answers["answers"].items():
+        truth = key["pairs"].get(pid)
+        if truth is None or choice not in ("left", "right", "same"):
+            continue
+        if choice == "same":
+            same += 1
+        elif choice == truth["corrected"]:
+            corrected += 1
+        else:
+            original += 1
+    p = _sign_test(corrected, original)
+    decided = corrected + original
+    if decided < 10:
+        verdict = "too few decided pairs to conclude (need 10 or more)"
+    elif p < 0.05:
+        verdict = ("correction preferred: use --color underwater-v1" if corrected > original
+                   else "original preferred: keep --color none")
+    else:
+        verdict = "no clear preference: keep --color none"
+    return {"deck": key["deck"], "pairs": len(key["pairs"]), "answered": decided + same,
+            "preferCorrected": corrected, "preferOriginal": original, "noDifference": same,
+            "signTestP": round(p, 4), "verdict": verdict}
