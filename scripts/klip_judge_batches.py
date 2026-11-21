@@ -83,14 +83,20 @@ def _relabel(folder: Path, rows: list[dict], tagged: dict[str, str], roster_file
 
 
 def _seconds_per_call(folders: list[Path]) -> dict[str, dict]:
+    """Median time of answered calls only; abstentions (often instant refusals) are counted apart."""
     times: dict[str, list[float]] = {}
+    abstained: dict[str, int] = {}
     for folder in folders:
         for path in folder.glob("*/judgments/*.json"):
             for j in json.loads(path.read_text(encoding="utf-8"))["judgments"]:
-                if "elapsedSeconds" in j:
+                if j["status"] != "answered":
+                    abstained[j["model"]] = abstained.get(j["model"], 0) + 1
+                elif "elapsedSeconds" in j:
                     times.setdefault(j["model"], []).append(j["elapsedSeconds"])
-    return {m: {"calls": len(t), "medianSeconds": round(median(t), 1)}
-            for m, t in times.items()}
+    return {m: {"answered": len(times.get(m, [])),
+                "medianSeconds": round(median(times[m]), 1) if times.get(m) else None,
+                "abstained": abstained.get(m, 0)}
+            for m in sorted(set(times) | set(abstained))}
 
 
 def main(argv=None) -> int:
