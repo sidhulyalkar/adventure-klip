@@ -227,3 +227,179 @@ def test_unreadable_recording_fails_alone_and_the_run_continues(setup):
     assert source["failure"].startswith("CalledProcessError")
     assert report["totals"]["failedSources"] == 1
     assert (setup["out"] / "report.json").is_file()
+
+
+SCAN = ("verify", "motion", "audio", "segments", "proxies")
+
+
+def test_index_batch_reports_its_judge_backlog_instead_of_zeros(setup):
+    totals = go(setup, stages=SCAN)["totals"]
+    assert totals["judgeStageRequested"] is False and totals["judgedSegments"] == 0
+    assert totals["judgeCallsExpected"] == totals["segmentsForReview"] * 2 > 0
+    assert totals["judgeCallsLeft"] == totals["judgeCallsExpected"]
+
+
+def test_judge_only_pass_never_opens_originals_and_keeps_old_report(setup):
+    go(setup, stages=SCAN)
+    setup["clip"].unlink()  # the drive is gone: judging must still work from proxies
+    totals = go(setup, stages=("judge",))["totals"]
+    assert totals["failedSources"] == 0 and totals["judgeCallsLeft"] == 0
+    assert totals["judgePanelsComplete"] == totals["judgedSegments"] > 0
+    assert len(list((setup["out"] / "report-history").glob("report-*.json"))) == 1
+    report = json.loads((setup["out"] / "report.json").read_text())
+    assert "motion" in report["sources"][0]["timingSeconds"]  # scan timings kept
+
+
+def test_judge_only_pass_refuses_to_hash_an_unscanned_recording(setup):
+    report = go(setup, stages=("judge",))
+    assert "never scanned" in report["sources"][0]["failure"]
+
+
+def test_judging_is_model_major_budgeted_and_resumable(setup):
+    go(setup, stages=SCAN)
+    order = []
+
+    def transport(body):
+        order.append(body["model"])
+        assert body["options"]["num_ctx"] >= 8192
+        return answer(body)
+
+    first = go(setup, stages=("judge",), transport=transport, judge_budget=[1])["totals"]
+    assert len(order) == 1 and first["judgeCallsAnswered"] == 1
+    assert first["judgePanelsComplete"] == 0
+    go(setup, stages=("judge",), transport=transport)
+    n = len(order)
+    # every segment's first model before any segment's second model
+    assert order == sorted(order, key=lambda m: experiment.DEFAULTS["models"].index(m))
+    assert n == go(setup, stages=SCAN)["totals"]["judgeCallsExpected"]
+
+
+def test_judge_batches_cli_dry_run_then_pilot(setup, capsys, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "klip_judge_batches", Path(__file__).parents[1] / "scripts" / "klip_judge_batches.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    reports = setup["workspace"] / "reports"
+    folder = reports / "discovery-001"
+    folder.mkdir(parents=True)
+    shutil.copy(setup["sources"], folder / "sources.json")
+    go(setup, out=folder, stages=SCAN)
+    argv = ["--reports", str(reports), "--trusted-source-root", str(setup["footage"])]
+    assert cli.main(argv + ["--dry-run"]) == 0
+    backlog = json.loads(capsys.readouterr().out)
+    assert backlog["judgeCallsLeft"] == backlog["judgeCallsExpected"] > 0
+    monkeypatch.setattr(experiment, "missing_models", lambda models: [])
+    real_run = experiment.run
+    monkeypatch.setattr(experiment, "run",
+                        lambda *a, **k: real_run(*a, **{**k, "transport": answer}))
+    assert cli.main(argv + ["--max-calls", "1"]) == 0
+    assert '"judgeCallsAnswered": 1' in capsys.readouterr().out
+
+
+def test_judge_batches_cli_takes_sport_from_roster_without_editing_sources(setup, capsys,
+                                                                            monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from adventure_intelligence import outing_roster as roster
+    spec = importlib.util.spec_from_file_location(
+        "klip_judge_batches", Path(__file__).parents[1] / "scripts" / "klip_judge_batches.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    reports = setup["workspace"] / "reports"
+    folder = reports / "discovery-001"
+    folder.mkdir(parents=True)
+    unknown = [{**json.loads(setup["sources"].read_text())[0], "sport": "unknown"}]
+    (folder / "sources.json").write_text(json.dumps(unknown))
+    frozen = (folder / "sources.json").read_bytes()
+    go(setup, out=folder, stages=SCAN)
+    argv = ["--reports", str(reports), "--trusted-source-root", str(setup["footage"])]
+    assert cli.main(argv + ["--dry-run"]) == 0
+    assert json.loads(capsys.readouterr().out)["recordingsStillUnknown"] == 1
+    roster_file = setup["workspace"] / "roster.json"
+    roster_file.write_text(json.dumps({
+        "version": roster.VERSION, "status": next(iter(roster.STATUSES)),
+        "outings": [{"outing": "day1", "sources": [
+            {"sourceSha256": setup["sha"], "activity": "ski"}]}]}))
+    assert cli.main(argv + ["--roster", str(roster_file), "--dry-run"]) == 0
+    backlog = json.loads(capsys.readouterr().out)
+    assert backlog["recordingsRelabelledFromRoster"] == 1 and backlog["bySport"]["ski"]
+    monkeypatch.setattr(experiment, "missing_models", lambda models: [])
+    real_run = experiment.run
+    monkeypatch.setattr(experiment, "run",
+                        lambda *a, **k: real_run(*a, **{**k, "transport": answer}))
+    assert cli.main(argv + ["--roster", str(roster_file)]) == 0
+    capsys.readouterr()
+    assert (folder / "sources.json").read_bytes() == frozen
+    prov = json.loads((folder / "judge-sources.provenance.json").read_text())
+    assert prov["sportFrom"][setup["sha"]] == "roster"
+    report = json.loads((folder / "report.json").read_text())
+    assert report["totals"]["judgeCallsLeft"] == 0 and report["sources"][0]["sport"] == "ski"
+    assert cli.main(argv + ["--dry-run"]) == 0  # resumes with the relabelled list
+    assert json.loads(capsys.readouterr().out)["recordingsStillUnknown"] == 0
+
+
+def _guess_cli():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "klip_guess_activities", Path(__file__).parents[1] / "scripts" / "klip_guess_activities.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class _FakeStore:
+    def __init__(self, votes):
+        self.votes = votes
+
+    def activity(self, sha):
+        v = self.votes.get(sha)
+        return v and {"proposal": v[0], "share": v[1], "votes": {v[0]: v[1]}}
+
+
+def test_activity_guesses_are_tagged_conservative_and_refused_by_evaluation():
+    from adventure_intelligence import outing_roster as roster
+    g = _guess_cli()
+    sha = lambda c: c * 64
+    doc = {"version": roster.VERSION, "status": "provisional", "outings": [{
+        "outing": "d", "sources": [
+            {"sourceSha256": sha("a"), "activity": "ski"},   # owner tag, same day
+            {"sourceSha256": sha("b")}, {"sourceSha256": sha("c")}, {"sourceSha256": sha("d")},
+            {"sourceSha256": sha("e")}, {"sourceSha256": sha("f")}]}]}
+    names = {sha(x): f"DJI_20260301{i}_D.MP4" for i, x in enumerate("abcde")}
+    names[sha("f")] = "other.mp4"
+    store = _FakeStore({sha("b"): ("ski", 0.9), sha("c"): ("snorkeling", 0.4),
+                        sha("d"): ("accidental", 0.8), sha("f"): ("bike", 0.7)})
+    rec = g.guess(doc, names, store)
+    assert rec[sha("b")]["confidence"] == "high"
+    assert rec[sha("c")]["guess"] == "ski" and rec[sha("c")]["confidence"] == "low"
+    assert rec[sha("d")]["possibleAccidental"] and rec[sha("d")]["guess"] == "ski"
+    assert rec[sha("e")]["reason"].startswith("day only")
+    assert rec[sha("f")]["guess"] == "bike" and rec[sha("f")]["confidence"] == "medium"
+    before = json.dumps(doc)
+    out = g.apply(doc, rec)
+    assert json.dumps(doc) == before  # input untouched
+    assert roster.guessed_sources(out) == {sha(x) for x in "bcdef"}
+    assert all(r.get("activity") != "accidental" for o in out["outings"] for r in o["sources"])
+    with pytest.raises(ValueError, match="model-guessed"):
+        roster.refuse_guesses(out)
+    assert roster.refuse_guesses(doc) is doc
+    assert g.guess(out, names, store) == {}  # guesses are not re-guessed
+
+
+def test_judge_models_filter_runs_one_model_over_everything_first(setup):
+    go(setup, stages=SCAN)
+    order = []
+
+    def transport(body):
+        order.append(body["model"])
+        assert body["keep_alive"] == "30m"
+        return answer(body)
+
+    first, second = experiment.DEFAULTS["models"]
+    t = go(setup, stages=("judge",), transport=transport, judge_models=[second])["totals"]
+    assert set(order) == {second} and t["judgePanelsComplete"] == 0
+    t = go(setup, stages=("judge",), transport=transport, judge_models=[first])["totals"]
+    assert t["judgeCallsLeft"] == 0 and order.count(first) == order.count(second)
