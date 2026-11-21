@@ -99,6 +99,36 @@ def _seconds_per_call(folders: list[Path]) -> dict[str, dict]:
             for m in sorted(set(times) | set(abstained))}
 
 
+def _outcomes(folders: list[Path]) -> dict[str, dict]:
+    """Per question: how often both judges agreed yes/no, disputed, or were unclear."""
+    table: dict[str, dict] = {}
+    for folder in folders:
+        for path in folder.glob("*/judgments/*.json"):
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            if not doc.get("complete", False):
+                continue
+            for key, fact in doc["panel"]["facts"].items():
+                row = table.setdefault(f'{doc["panel"]["sport"]}:{key}', {})
+                row[fact["outcome"]] = row.get(fact["outcome"], 0) + 1
+    return dict(sorted(table.items()))
+
+
+def _usage(folders: list[Path]) -> dict[str, dict]:
+    """Median prompt tokens and prefill/generate seconds per model, where recorded."""
+    rows: dict[str, list[dict]] = {}
+    for folder in folders:
+        for path in folder.glob("*/judgments/*.json"):
+            for j in json.loads(path.read_text(encoding="utf-8"))["judgments"]:
+                if j.get("usage"):
+                    rows.setdefault(j["model"], []).append(j["usage"])
+    out = {}
+    for model, us in rows.items():
+        out[model] = {"calls": len(us), **{k: round(median(u[k] for u in us if u.get(k) is not None), 1)
+                      for k in ("promptTokens", "prefillSeconds", "generateSeconds", "loadSeconds")
+                      if any(u.get(k) is not None for u in us)}}
+    return out
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--reports", type=Path, required=True,
@@ -199,7 +229,9 @@ def main(argv=None) -> int:
                 print(json.dumps({"model": model, "folder": folder.name, **{k: t[k] for k in (
                     "judgeCallsAnswered", "judgeCallsLeft", "judgeAbstentions",
                     "judgeControlFailures", "segmentsWithDisputedFacts", "failedSources")}}))
-        print(json.dumps({"secondsPerCall": _seconds_per_call(folders)}, indent=2))
+        print(json.dumps({"secondsPerCall": _seconds_per_call(folders),
+                          "ollamaUsage": _usage(folders),
+                          "panelOutcomesByQuestion": _outcomes(folders)}, indent=2))
     except (ValueError, KeyError, OSError, RuntimeError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
