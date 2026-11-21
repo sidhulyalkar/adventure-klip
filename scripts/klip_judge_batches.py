@@ -101,6 +101,10 @@ def main(argv=None) -> int:
     parser.add_argument("--folders", nargs="+", help="only these batch folders")
     parser.add_argument("--dry-run", action="store_true", help="count the backlog only")
     parser.add_argument("--max-calls", type=int, help="stop after this many judge calls")
+    parser.add_argument("--timeout", type=int, default=600,
+                        help="seconds per judge call (default 600)")
+    parser.add_argument("--first-model", default="qwen3-vl:32b",
+                        help="judge to run over everything first")
     parser.add_argument("--roster", type=Path,
                         help="take sports from this roster for recordings frozen as unknown")
     args = parser.parse_args(argv)
@@ -169,22 +173,26 @@ def main(argv=None) -> int:
                              " && ".join(f"ollama pull {m}" for m in missing))
         budget = [args.max_calls] if args.max_calls is not None else None
         workspace = args.reports.expanduser().absolute().parent
-        for folder in folders:
-            if backlog[folder.name]["judgeCallsLeft"] == 0:
-                continue
-            if budget is not None and budget[0] <= 0:
-                break
-            print(f"[judge] {folder.name}: {backlog[folder.name]['judgeCallsLeft']} calls left",
-                  file=sys.stderr, flush=True)
-            report = experiment.run(
-                inputs[folder.name], folder, workspace=workspace,
-                trusted_root=args.trusted_source_root, allow_mounted=True,
-                stages=("judge",), judge_budget=budget,
-                log=lambda m: print("[judge]", m, file=sys.stderr, flush=True))
-            t = report["totals"]
-            print(json.dumps({"folder": folder.name, **{k: t[k] for k in (
-                "judgeCallsAnswered", "judgeCallsLeft", "judgeAbstentions",
-                "judgeControlFailures", "segmentsWithDisputedFacts", "failedSources")}}))
+        # Model-major across the whole pass: one model answers every folder before the
+        # next is loaded, so two ~20 GB models are never resident together (on a 64 GB
+        # Mac that pushes Ollama past the GPU memory limit and calls time out).
+        for model in sorted(models, key=lambda m: (m != args.first_model, m)):
+            for folder in folders:
+                if backlog[folder.name]["judgeCallsLeft"] == 0:
+                    continue
+                if budget is not None and budget[0] <= 0:
+                    break
+                print(f"[judge] {model} on {folder.name}", file=sys.stderr, flush=True)
+                report = experiment.run(
+                    inputs[folder.name], folder, workspace=workspace,
+                    trusted_root=args.trusted_source_root, allow_mounted=True,
+                    stages=("judge",), judge_budget=budget, judge_models=[model],
+                    judge_timeout=args.timeout,
+                    log=lambda m: print("[judge]", m, file=sys.stderr, flush=True))
+                t = report["totals"]
+                print(json.dumps({"model": model, "folder": folder.name, **{k: t[k] for k in (
+                    "judgeCallsAnswered", "judgeCallsLeft", "judgeAbstentions",
+                    "judgeControlFailures", "segmentsWithDisputedFacts", "failedSources")}}))
         print(json.dumps({"secondsPerCall": _seconds_per_call(folders)}, indent=2))
     except (ValueError, KeyError, OSError, RuntimeError, json.JSONDecodeError) as error:
         print(f"error: {error}", file=sys.stderr)

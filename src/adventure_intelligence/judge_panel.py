@@ -178,7 +178,7 @@ def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
                 "fingerprint": fingerprint(model, sport), "frames": len(images),
                 "options": options}
         body = {"model": model, "stream": False, "format": schema(sport),
-                "options": options,
+                "options": options, "keep_alive": "30m",  # stay loaded across the pass
                 "messages": [{"role": "user", "content": prompt(sport, stamps_ms),
                               "images": images}]}
         try:

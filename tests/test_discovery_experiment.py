@@ -387,3 +387,19 @@ def test_activity_guesses_are_tagged_conservative_and_refused_by_evaluation():
         roster.refuse_guesses(out)
     assert roster.refuse_guesses(doc) is doc
     assert g.guess(out, names, store) == {}  # guesses are not re-guessed
+
+
+def test_judge_models_filter_runs_one_model_over_everything_first(setup):
+    go(setup, stages=SCAN)
+    order = []
+
+    def transport(body):
+        order.append(body["model"])
+        assert body["keep_alive"] == "30m"
+        return answer(body)
+
+    first, second = experiment.DEFAULTS["models"]
+    t = go(setup, stages=("judge",), transport=transport, judge_models=[second])["totals"]
+    assert set(order) == {second} and t["judgePanelsComplete"] == 0
+    t = go(setup, stages=("judge",), transport=transport, judge_models=[first])["totals"]
+    assert t["judgeCallsLeft"] == 0 and order.count(first) == order.count(second)

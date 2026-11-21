@@ -93,7 +93,8 @@ def cut_proxy(source: Path, dest: Path, start_ms: int, end_ms: int, *, width: in
 
 def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, decode,
                    audio, cut, frames, transport, log, trusted_root: Path,
-                   judge_budget: list | None = None) -> dict:
+                   judge_budget: list | None = None, judge_models=None,
+                   judge_timeout: int = 300) -> dict:
     sha = row["sourceSha256"]
     timing: dict[str, float] = {}
 
@@ -179,6 +180,8 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
         # Each answer is written as soon as it arrives; only missing answers are asked
         # again, so an interrupted or budget-limited pass resumes where it stopped.
         for model in config["models"]:
+            if judge_models is not None and model not in judge_models:
+                continue
             for s in chosen:
                 name = f'{s["startMs"]}-{s["endMs"]}'
                 proxy = folder / "proxies" / (name + ".mp4")
@@ -201,7 +204,8 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
                 images = frames(proxy, times)
                 log(f"{sha[:12]} judging {name} ms with {model}")
                 asked = time.monotonic()
-                answer = panel.ask(model, row["sport"], images, times, transport=transport)
+                answer = panel.ask(model, row["sport"], images, times, transport=transport,
+                                   timeout=judge_timeout)
                 have[model] = {**answer, "elapsedSeconds": round(time.monotonic() - asked, 2)}
                 if judge_budget is not None:
                     judge_budget[0] -= 1
@@ -329,9 +333,12 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
         allow_mounted: bool = False, overrides: dict | None = None,
         stages=STAGES, ledger_file: Path | None = None, decode=None, audio=None,
         cut=cut_proxy, frames=None, transport=None, log=lambda message: None,
-        before=None, after=None, judge_budget: list | None = None) -> dict:
+        before=None, after=None, judge_budget: list | None = None,
+        judge_models=None, judge_timeout: int = 300) -> dict:
     """judge_budget: [n] caps how many judge calls this invocation makes (a timing
-    pilot); it is not part of the frozen settings, and a rerun continues the work."""
+    pilot); judge_models limits which frozen judges are asked this time (so a pass can
+    run one model over every recording before loading the next); judge_timeout is the
+    per-call limit. None of these is a frozen setting; a rerun continues the work."""
     rows = load_sources(sources_file)
     config = _config(overrides)
     if not set(stages) <= set(STAGES):
@@ -369,7 +376,8 @@ def run(sources_file: Path, output: Path, *, workspace: Path, trusted_root: Path
             timings[sha] = _source_stages(
                 row, output / sha, config, stages, resolve=resolve, decode=decode,
                 audio=audio, cut=cut, trusted_root=trusted, frames=frames, transport=transport, log=log,
-                judge_budget=judge_budget)["timingSeconds"]
+                judge_budget=judge_budget, judge_models=judge_models,
+                judge_timeout=judge_timeout)["timingSeconds"]
         except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
             # SubprocessError covers ffprobe/ffmpeg failures (an unreadable or
             # truncated file, a drive that went away) as well as timeouts.
