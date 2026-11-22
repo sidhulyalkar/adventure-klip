@@ -270,8 +270,8 @@ def test_colour_ab_deck_is_blind_and_scored_with_a_sign_test(world, tmp_path):
     key = json.loads((ab / "key.json").read_text())
     page = (ab / "index.html").read_text()
     assert len(key["pairs"]) == 1 and "corrected" not in page and "underwater" not in page
-    assert (ab / "pair-001-L.mp4").is_file() and (ab / "pair-001-R.mp4").is_file()
-    truth = key["pairs"]["pair-001"]["corrected"]
+    assert len(list(ab.glob("clip-*.mp4"))) == 2
+    truth = key["pairs"]["pair-001"]["variant"]
     answers = tmp_path / "answers.json"
     answers.write_text(json.dumps({"deck": key["deck"], "answers": {"pair-001": truth}}))
     assert pipe.main(["ab-score", *base, "--answers", str(answers)]) == 0
@@ -279,7 +279,8 @@ def test_colour_ab_deck_is_blind_and_scored_with_a_sign_test(world, tmp_path):
     assert result["preferCorrected"] == 1 and result["verdict"].startswith("too few")
     answers.write_text(json.dumps({"deck": "other", "answers": {}}))
     assert pipe.main(["ab-score", *base, "--answers", str(answers)]) == 2
-    many = {"deck": "d", "pairs": {f"p{i}": {"corrected": "left"} for i in range(16)}}
+    many = {"deck": "d", "variant": "corrected", "baseline": "original",
+            "pairs": {f"p{i}": {"variant": "left"} for i in range(16)}}
     picks = {"deck": "d", "answers": {f"p{i}": ("left" if i < 13 else "right") for i in range(16)}}
     s = hc.color_ab_score(many, picks)
     assert (s["preferCorrected"], s["preferOriginal"]) == (13, 3) and s["signTestP"] < 0.05
@@ -328,3 +329,34 @@ def test_trim_handles_import_labels_and_score_boundaries(world, tmp_path):
     bad = tmp_path / "other.json"
     bad.write_text(json.dumps({"deck": "nope", "boundaries": {}}))
     assert pipe.main(["import-trims", *base, "--answers", str(bad)]) == 2
+
+
+def test_story_vs_baseline_reels_blind_deck(world, tmp_path):
+    from adventure_intelligence import holdout
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    assert pipe.main(["reels", *base, "--ab-reels", "motionPeak"]) == 0
+    ab = world["reports"] / "highlights-v1" / "reel-ab"
+    key = json.loads((ab / "key.json").read_text())
+    page = (ab / "index.html").read_text()
+    assert key["variant"] == "story" and key["baseline"] == "baseline:motionPeak"
+    assert len(key["pairs"]) == 1
+    assert "preview" not in page and "baseline" not in page            # nothing names a side
+    assert len(list(ab.glob("reel-*.mp4"))) == 2
+    baseline = json.loads(next(ab.glob("reel-*.recipe.json")).read_text())
+    assert baseline["story"]["model"] == "baseline:motionPeak"
+    assert all(c["anchor"] != "observation 1" for c in baseline["clips"])  # no story evidence
+    truth = key["pairs"]["outing-001"]["variant"]
+    f = tmp_path / "a.json"
+    f.write_text(json.dumps({"deck": key["deck"], "answers": {"outing-001": truth}}))
+    assert pipe.main(["ab-score", *base, "--deck", "reel-ab", "--answers", str(f)]) == 0
+    holdout.freeze(world["reports"], [("2024-12-26", "snorkeling")])
+    import shutil as _s
+    _s.rmtree(ab)
+    assert pipe.main(["reels", *base, "--ab-reels", "motionPeak"]) == 0
+    assert not (ab / "key.json").exists()                               # held-out: no deck
