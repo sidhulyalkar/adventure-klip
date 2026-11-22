@@ -25,3 +25,28 @@ def sample_frames(proxy: Path, times_ms: list[int], *, width: int = 448) -> list
                 raise ValueError(f"Could not decode a frame at {t} ms")
             out.append(base64.b64encode(target.read_bytes()).decode("ascii"))
     return out
+
+
+def video_span(proxy: Path) -> int | None:
+    """Milliseconds of decodable video in a review clip: 0 when it has no video frames
+    (an audio-only tail of an interrupted recording), None when it cannot be probed."""
+    try:
+        job = subprocess.run(
+            [require_tool("ffprobe"), "-v", "error", "-select_streams", "v:0", "-count_packets",
+             "-show_entries", "stream=nb_read_packets,duration:format=duration",
+             "-of", "json", str(proxy)], capture_output=True, text=True, timeout=60, check=False)
+        import json
+        doc = json.loads(job.stdout or "{}")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    streams = doc.get("streams") or []
+    if job.returncode != 0:
+        return None
+    if not streams or int(streams[0].get("nb_read_packets") or 0) == 0:
+        return 0
+    for value in (streams[0].get("duration"), (doc.get("format") or {}).get("duration")):
+        try:
+            return int(float(value) * 1000)
+        except (TypeError, ValueError):
+            continue
+    return None
