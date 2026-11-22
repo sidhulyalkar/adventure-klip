@@ -123,3 +123,58 @@ def test_cli_samples_frames_from_a_synthetic_clip_and_requires_two_families(tmp_
     assert cli.main(["--proxy", str(clip), "--sport", "ski",
                      "--models", "qwen3-vl:32b", "qwen3-vl:8b"]) == 2
     assert "two different families" in capsys.readouterr().err
+
+
+def test_ollama_http_error_reason_is_kept_on_the_abstention(monkeypatch):
+    import io
+    from urllib.error import HTTPError
+    from adventure_intelligence import adaptive_judge_v2, judge_panel as jp
+
+    def refuse(req, timeout):
+        raise HTTPError(req.full_url, 500, "x", {},
+                        io.BytesIO(b'{"error":"unknown model architecture: \\u0027qwen3vl\\u0027"}'))
+
+    monkeypatch.setattr(adaptive_judge_v2, "urlopen", refuse)
+    out = jp.ask("qwen3-vl:32b", "ski", ["aGk="], [0])
+    assert out["status"] == "abstained"
+    assert out["failureDetail"] == "Local Ollama HTTP 500: unknown model architecture: 'qwen3vl'"
+
+
+def test_context_refusal_is_retried_once_with_a_window_that_fits(monkeypatch):
+    monkeypatch.setattr(panel, "_CTX_BY_MODEL", {})
+    sent = []
+
+    def ollama(body):
+        sent.append(body["options"]["num_ctx"])
+        if body["options"]["num_ctx"] < 16921:
+            raise RuntimeError('Local Ollama HTTP 400: {"error":{"message":"request (16921 '
+                               'tokens) exceeds the available context size (8192 tokens)",'
+                               '"type":"exceed_context_size_error","n_prompt_tokens":16921}}')
+        return reply("ski")
+
+    first = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert first["status"] == "answered" and first["options"]["num_ctx"] == 20480
+    panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert sent == [8192, 20480, 20480]  # the model's window is remembered
+
+
+def test_context_beyond_the_bound_is_an_abstention(monkeypatch):
+    monkeypatch.setattr(panel, "_CTX_BY_MODEL", {})
+
+    def ollama(body):
+        raise RuntimeError('exceed_context_size_error "n_prompt_tokens":90000')
+
+    out = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert out["status"] == "abstained" and "90000" in out["failureDetail"]
+
+
+def test_ollama_counters_are_kept_as_usage():
+    def ollama(body):
+        return {**reply("ski"), "prompt_eval_count": 16921, "prompt_eval_duration": 4.2e11,
+                "eval_count": 180, "eval_duration": 3.1e10, "load_duration": 9e9,
+                "total_duration": 4.6e11}
+
+    out = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    assert out["usage"] == {"promptTokens": 16921, "outputTokens": 180, "loadSeconds": 9.0,
+                            "prefillSeconds": 420.0, "generateSeconds": 31.0,
+                            "totalSeconds": 460.0}
