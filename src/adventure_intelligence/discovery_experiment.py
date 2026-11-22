@@ -19,6 +19,7 @@ import time
 
 from . import evidence_ledger as ledger
 from . import judge_panel as panel
+from .panel_frames import video_span
 from . import timeline_segments as ts
 from .full_archive_campaign import (MOTION_VERSION, _atomic_json, _hash_verified,
                                     _require_local_path)
@@ -31,6 +32,8 @@ AUDIO_VERSION = "klip-discovery-audio-timeline-v1"
 # Motion, audio, segments and proxies do not depend on sport; only the judge
 # panel's questions do, so an untagged recording skips the judge stage.
 UNKNOWN_SPORT = "unknown"
+MIN_VIDEO_MS = 500      # a review clip with less decodable video than this is not judged
+FRAME_MARGIN_MS = 50
 DEFAULTS = {"fps": 2, "budgetFraction": 0.25, "controls": 2, "minSegmentMs": 4000,
             "sensitivity": 3.0, "maxFrames": 16, "proxyWidth": 960, "proxyAudio": True,
             "models": ["qwen3-vl:32b", "gemma3:27b"]}
@@ -194,14 +197,38 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
                     continue
                 if judge_budget is not None and judge_budget[0] <= 0:
                     break
+                marker = folder / "unjudgeable" / (name + ".json")
+                if marker.is_file():
+                    continue
                 if previous:
                     times = previous["frameTimesMs"]  # every judge sees the same frames
                 else:
+                    # Plan inside the clip's real video, not the segment's nominal length:
+                    # an interrupted recording can leave a clip with a short or no picture.
+                    length = s["endMs"] - s["startMs"]
+                    span = video_span(proxy)
+                    if span is not None and span < MIN_VIDEO_MS:
+                        marker.parent.mkdir(exist_ok=True)
+                        _atomic_json(marker, {"version": VERSION, "sourceSha256": sha,
+                                              "segment": name, "videoMs": span,
+                                              "reason": "review clip has no usable video"})
+                        log(f"{sha[:12]} {name} ms has no usable video; not judged")
+                        continue
+                    if span is not None:
+                        length = min(length, span - FRAME_MARGIN_MS)
                     times = panel.frame_plan(
-                        0, s["endMs"] - s["startMs"],
-                        [t - s["startMs"] for t in s["eventCandidatesMs"]],
+                        0, length, [t - s["startMs"] for t in s["eventCandidatesMs"]],
                         max_frames=config["maxFrames"])
-                images = frames(proxy, times)
+                try:
+                    images = frames(proxy, times)
+                except ValueError as error:
+                    # One undecodable clip must not cost the recording its other clips.
+                    marker.parent.mkdir(exist_ok=True)
+                    _atomic_json(marker, {"version": VERSION, "sourceSha256": sha,
+                                          "segment": name, "frameTimesMs": times,
+                                          "reason": str(error)[:200]})
+                    log(f"{sha[:12]} {name} ms not judged: {error}")
+                    continue
                 log(f"{sha[:12]} judging {name} ms with {model}")
                 asked = time.monotonic()
                 answer = panel.ask(model, row["sport"], images, times, transport=transport,
@@ -229,7 +256,8 @@ def judge_workload(output: Path, rows: list[dict], models: list[str]) -> dict:
     instead of zeros.
     """
     work = {"segmentsForReview": 0, "segmentsSkippedUnknownSport": 0,
-            "segmentsMissingProxy": 0, "judgeCallsExpected": 0, "judgeCallsAnswered": 0,
+            "segmentsMissingProxy": 0, "segmentsUnjudgeable": 0,
+            "judgeCallsExpected": 0, "judgeCallsAnswered": 0,
             "judgeCallsAbstained": 0, "panelsComplete": 0, "bySport": {}}
     for row in rows:
         folder = output / row["sourceSha256"]
@@ -245,6 +273,9 @@ def judge_workload(output: Path, rows: list[dict], models: list[str]) -> dict:
             name = f'{s["startMs"]}-{s["endMs"]}'
             if not (folder / "proxies" / (name + ".mp4")).is_file():
                 work["segmentsMissingProxy"] += 1
+                continue
+            if (folder / "unjudgeable" / (name + ".json")).is_file():
+                work["segmentsUnjudgeable"] += 1
                 continue
             work["judgeCallsExpected"] += len(models)
             sport = work["bySport"].setdefault(row["sport"], {"segments": 0, "callsLeft": 0})
@@ -320,6 +351,7 @@ def build_report(output: Path, rows: list[dict], config: dict, failures: dict,
             "segmentsForReview": work["segmentsForReview"],
             "segmentsSkippedUnknownSport": work["segmentsSkippedUnknownSport"],
             "segmentsMissingProxy": work["segmentsMissingProxy"],
+            "segmentsUnjudgeable": work["segmentsUnjudgeable"],
             "segmentsWithDisputedFacts": len(queue),
             "sourcesWithOwnerSpans": sum("comparison" in s for s in sources),
         },

@@ -182,6 +182,7 @@ def main(argv=None) -> int:
                                           "reviewSegments": chosen})
         total = {k: sum(b[k] for b in backlog.values()) for k in
                  ("segmentsForReview", "segmentsSkippedUnknownSport", "segmentsMissingProxy",
+                  "segmentsUnjudgeable",
                   "judgeCallsExpected", "judgeCallsAnswered", "judgeCallsLeft")}
         by_sport: dict[str, dict] = {}
         for b in backlog.values():
