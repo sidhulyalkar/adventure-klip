@@ -270,9 +270,14 @@ def build_packet(outing: str, sport: str, scenes: list[dict], *, footage_ms: int
             "clockStart": datetime.fromtimestamp(start).strftime("%H:%M:%S") if start else None,
             "partOfDay": part_of_day(datetime.fromtimestamp(start).hour) if start else None,
             "quality": {"verdict": s["quality"]["verdict"], "flags": s["quality"]["flags"]},
-            "factsYes": sorted(k for k, v in facts.items() if v["outcome"] == "agreed_yes"),
-            "factsNo": sorted(k for k, v in facts.items() if v["outcome"] == "agreed_no"),
+            "factsYes": sorted(k for k, v in facts.items()
+                               if v["outcome"] in ("agreed_yes", "resolved_yes")),
+            "factsNo": sorted(k for k, v in facts.items()
+                              if v["outcome"] in ("agreed_no", "resolved_no")),
             "factsDisputed": sorted(k for k, v in facts.items() if v["outcome"] == "disputed"),
+            # Settled by owner-calibrated judge reliability, not by agreement: kept visible.
+            "factsResolved": sorted(k for k, v in facts.items()
+                                    if v["outcome"] in ("resolved_yes", "resolved_no")),
             "summary": d.get("summary"), "subjects": d.get("subjects", []),
             "setting": d.get("setting"), "cameraMotion": d.get("cameraMotion"),
             "observations": [f'{o["atSeconds"]:.1f}s: {o["text"]}'
@@ -358,7 +363,9 @@ def story_prompt(packet: dict, shortlist_max: int) -> str:
             + (f" ({', '.join(s['quality']['flags'])})" if s["quality"]["flags"] else ""))
         lines.append(f"  yes: {', '.join(s['factsYes']) or '-'} | no: "
                      f"{', '.join(s['factsNo']) or '-'} | disputed: "
-                     f"{', '.join(s['factsDisputed']) or '-'}")
+                     f"{', '.join(s['factsDisputed']) or '-'}"
+                     + (f" | settled by measured judge reliability: {', '.join(s['factsResolved'])}"
+                        if s.get("factsResolved") else ""))
         if s["summary"]:
             lines.append(f"  summary: {s['summary']}")
         if s["subjects"]:

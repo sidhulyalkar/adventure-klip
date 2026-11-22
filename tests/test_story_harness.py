@@ -250,3 +250,22 @@ def test_clip_without_video_is_unusable_and_not_described(reports, tmp_path):
         assert len(asked) == 1   # the black clip and the no-video clip are both skipped
     finally:
         bad.write_bytes(backup)
+
+
+def test_reliability_settled_fact_is_citable_and_marked():
+    from datetime import datetime
+    scene = {"file": NAME, "sourceSha256": SHA, "startMs": 0, "endMs": 10000,
+             "capture": datetime(2026, 3, 1, 10, 0), "quality": {"verdict": "usable", "flags": []},
+             "facts": {"crash_or_fall_visible": {"outcome": "resolved_yes", "pYes": 0.93}},
+             "description": {"summary": "The skier falls in deep snow.", "subjects": ["skier"],
+                             "setting": "slope", "cameraMotion": "shaky", "observations": []},
+             "signals": {}}
+    p = h.build_packet("o", "ski", [scene], footage_ms=10000)
+    s = p["scenes"][0]
+    assert s["factsYes"] == ["crash_or_fall_visible"] and s["factsResolved"] == ["crash_or_fall_visible"]
+    assert "settled by measured judge reliability" in h.story_prompt(p, 3)
+    story = {"beats": [{"text": "A fall in deep snow.", "scenes": ["S01"]}],
+             "moments": [{"scene": "S01", "what": "The skier falls", "whyItMatters": "a real crash",
+                          "evidence": ["fact:crash_or_fall_visible"], "confidence": "medium"}],
+             "shortlist": ["S01"], "excluded": []}
+    assert h.check_story(story, p, 3) == []

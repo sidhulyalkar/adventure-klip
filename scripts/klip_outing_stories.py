@@ -28,6 +28,7 @@ from statistics import median
 import sys
 
 from adventure_intelligence import judge_panel as panel
+from adventure_intelligence import judge_reliability
 from adventure_intelligence import outing_roster as roster
 from adventure_intelligence import run_lock
 from adventure_intelligence import story_harness as harness
@@ -186,12 +187,20 @@ def groups(items: list[dict]) -> dict[tuple[str, str], list[dict]]:
     return dict(out)
 
 
+def _facts(it: dict, reliability: dict | None) -> dict | None:
+    """Panel facts, with disputes settled where measured judge reliability allows."""
+    facts = (it["judged"] or {}).get("panel", {}).get("facts")
+    if facts and reliability:
+        return judge_reliability.apply(facts, it["sport"], reliability)
+    return facts
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()[:80]
 
 
 def run_story(items: list[dict], out: Path, model: str, budget: list | None, timeout: int,
-              log, transport=None) -> int:
+              log, transport=None, reliability: dict | None = None) -> int:
     done = 0
     for (outing, sport), members in sorted(groups(items).items()):
         scenes, footage = [], {}
@@ -205,7 +214,8 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
             scenes.append({
                 "file": it["file"], "sourceSha256": it["sourceSha256"],
                 "startMs": s["startMs"], "endMs": s["endMs"], "capture": it["capture"],
-                "quality": quality, "facts": (it["judged"] or {}).get("panel", {}).get("facts"),
+                "quality": quality,
+                "facts": _facts(it, reliability),
                 "description": described.get("result") if described.get("status") in (
                     "accepted", "repaired") else None,
                 "signals": {k: v for k, v in (("motionPeak", s.get("peakChange")),
@@ -292,8 +302,9 @@ def main(argv=None, *, transport=None) -> int:
                 result["described"] = run_describe(items, out, args.describe_model, budget,
                                                    args.timeout, log, transport)
             if "story" in args.stages:
+                rel = _read(args.reports.expanduser() / "judge-reliability.json")
                 result["stories"] = run_story(items, out, args.story_model, budget,
-                                              args.timeout, log, transport)
+                                              args.timeout, log, transport, reliability=rel)
         status = defaultdict(int)
         for f in (out / "stories").glob("*.json"):
             doc = _read(f)
