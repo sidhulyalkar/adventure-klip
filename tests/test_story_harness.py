@@ -217,10 +217,36 @@ def test_cli_end_to_end_with_fake_models(reports, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["descriptionsToMake"] == 3
     assert cli.main(argv, transport=transport) == 0
     capsys.readouterr()
-    assert calls == ["qwen3-vl:32b"] * 3 + ["gemma3:27b"]  # describe all, then tell
+    assert calls == ["qwen3-vl:32b"] * 2 + ["gemma3:27b"]  # the black clip is not described
     story = json.loads((out / "stories" / "day-2026-03-01--ski.json").read_text())
     assert story["record"]["harnessStatus"] == "accepted"
     assert story["record"]["story"]["shortlist"] == ["S01"]
     assert (out / "stories" / "day-2026-03-01--ski.md").read_text().startswith("# day-2026-03-01")
     assert cli.main(argv, transport=transport) == 0  # resumable: nothing asked again
-    assert len(calls) == 4
+    assert len(calls) == 3
+
+
+def test_clip_without_video_is_unusable_and_not_described(reports, tmp_path):
+    cli = _cli()
+    bad = reports / "discovery-001" / SHA / "proxies" / "20000-30000.mp4"
+    backup = bad.read_bytes()
+    try:
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "sine=frequency=300:sample_rate=48000", "-t", "2", "-c:a", "aac",
+                        "-y", str(bad)], check=True)
+        items = cli.collect(reports, {})
+        cli.run_quality(items, tmp_path, lambda m: None)
+        q = json.loads((tmp_path / "segments" / SHA / "20000-30000.quality.json").read_text())
+        assert q["verdict"] == "unusable" and q["flags"] == ["no_usable_video"]
+        asked = []
+        desc = {"observations": [{"atSeconds": 2.5, "text": "x"}], "summary": "x",
+                "subjects": [], "setting": "x", "cameraMotion": "steady",
+                "filming": {"inFocus": "yes", "exposureOk": "yes", "lensClear": "yes"}}
+
+        def transport(body):
+            asked.append(1)
+            return {"message": {"content": json.dumps(desc)}}
+        cli.run_describe(items, tmp_path, "qwen3-vl:32b", None, 60, lambda m: None, transport)
+        assert len(asked) == 1   # the black clip and the no-video clip are both skipped
+    finally:
+        bad.write_bytes(backup)

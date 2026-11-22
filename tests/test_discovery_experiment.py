@@ -403,3 +403,33 @@ def test_judge_models_filter_runs_one_model_over_everything_first(setup):
     assert set(order) == {second} and t["judgePanelsComplete"] == 0
     t = go(setup, stages=("judge",), transport=transport, judge_models=[first])["totals"]
     assert t["judgeCallsLeft"] == 0 and order.count(first) == order.count(second)
+
+
+def test_clip_without_video_is_marked_unjudgeable_and_spares_the_recording(setup):
+    import subprocess
+    go(setup, stages=SCAN)
+    proxies = sorted((setup["out"] / setup["sha"] / "proxies").glob("*.mp4"))
+    assert len(proxies) >= 2
+    bad = proxies[0]
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "sine=frequency=300:sample_rate=48000", "-t", "2", "-c:a", "aac",
+                    "-y", str(bad)], check=True)                    # audio only: no picture
+    t = go(setup, stages=("judge",))["totals"]
+    assert t["failedSources"] == 0 and t["segmentsUnjudgeable"] == 1
+    assert t["judgeCallsLeft"] == 0 and t["judgedSegments"] == len(proxies) - 1
+    marker = bad.parent.parent / "unjudgeable" / (bad.stem + ".json")
+    assert json.loads(marker.read_text())["videoMs"] == 0
+
+
+def test_undecodable_frames_mark_one_segment_not_the_recording(setup):
+    go(setup, stages=SCAN)
+    calls = []
+
+    def frames(proxy, times):
+        calls.append(proxy.name)
+        if len(calls) == 1:
+            raise ValueError("Could not decode a frame at 43 ms")
+        return ["aGk="] * len(times)
+
+    t = go(setup, stages=("judge",), frames=frames)["totals"]
+    assert t["failedSources"] == 0 and t["segmentsUnjudgeable"] == 1 and t["judgeCallsLeft"] == 0
