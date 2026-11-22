@@ -284,3 +284,47 @@ def test_colour_ab_deck_is_blind_and_scored_with_a_sign_test(world, tmp_path):
     s = hc.color_ab_score(many, picks)
     assert (s["preferCorrected"], s["preferOriginal"]) == (13, 3) and s["signTestP"] < 0.05
     assert s["verdict"].startswith("correction preferred")
+
+
+def test_trim_handles_import_labels_and_score_boundaries(world, tmp_path):
+    import os
+    from adventure_intelligence import holdout, owner_labels
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    hl = world["reports"] / "highlights-v1"
+    page = (hl / "index.html").read_text()
+    key = json.loads((hl / "boundary-deck.json").read_text())
+    ids = sorted(key["clips"])
+    assert len(ids) == 2 and all(f'data-id="{i}"' in page for i in ids)
+    rel = os.path.relpath(key["clips"][ids[0]]["proxy"], hl)
+    assert f'src="{rel}"' in page and "/Volumes" not in page      # relative paths only
+    c0, c1 = key["clips"][ids[0]], key["clips"][ids[1]]
+    answers = {"deck": key["deck"], "boundaries": {
+        ids[0]: {"in": c0["proposedIn"], "out": c0["proposedOut"] + 1.5, "verdict": "adjusted"},
+        ids[1]: {"in": c1["proposedIn"], "out": c1["proposedOut"], "verdict": "ok"}}}
+    f = tmp_path / "trims.json"
+    f.write_text(json.dumps(answers))
+    assert pipe.main(["import-trims", *base, "--answers", str(f)]) == 0
+    assert pipe.main(["import-trims", *base, "--answers", str(f)]) == 0   # idempotent
+    labels = owner_labels.load(world["reports"], "boundary")
+    assert len(labels) == 2 and {l["reviewer"] for l in labels} == {"owner"}
+    adj = next(l for l in labels if l["verdict"] == "adjusted")
+    assert adj["owner"]["originalOutMs"] - adj["owner"]["originalInMs"] == \
+        int(round((c0["proposedOut"] + 1.5 - c0["proposedIn"]) * 1000))
+    assert pipe.main(["eval-trims", *base]) == 0
+    res = json.loads(next((world["reports"] / "evaluations").glob("trims-*.json")).read_text())
+    dev = res["methods"]["fixed"]["development"]
+    assert dev["clips"] == 2 and dev["truncationRate"] == 0.5 and dev["slackRate"] == 0
+    assert res["methods"]["fixed"]["heldOut"]["clips"] == 0
+    holdout.freeze(world["reports"], [("2024-12-26", "snorkeling")])
+    assert pipe.main(["eval-trims", *base]) == 0
+    res = json.loads(sorted((world["reports"] / "evaluations").glob("trims-*.json"))[-1].read_text())
+    assert res["methods"]["fixed"]["heldOut"]["clips"] == 2
+    bad = tmp_path / "other.json"
+    bad.write_text(json.dumps({"deck": "nope", "boundaries": {}}))
+    assert pipe.main(["import-trims", *base, "--answers", str(bad)]) == 2

@@ -7,6 +7,8 @@
              deck; --color underwater-v1 applies the correction; --approve RECIPE_SHA
              --master renders full quality from the camera originals for approved recipes
     ab-score score a downloaded colour A/B answers file (exact sign test)
+    import-trims  import the gallery's downloaded trim answers as owner boundary labels
+    eval-trims    score boundary methods against those labels (development vs held-out)
     run      judge pass -> stories (quality, describe, story) -> reels, each resumable
 
 Stages and where they write (all new files; originals and earlier reports are not edited):
@@ -30,6 +32,7 @@ import argparse
 from collections import Counter
 from contextlib import nullcontext
 from datetime import datetime, timezone
+import hashlib
 import importlib.util
 import json
 import os
@@ -38,7 +41,9 @@ import sys
 
 from adventure_intelligence import discovery_experiment as experiment
 from adventure_intelligence import highlight_compile as compile_
+from adventure_intelligence import boundary_review
 from adventure_intelligence import holdout
+from adventure_intelligence import owner_labels
 from adventure_intelligence import run_lock
 
 HERE = Path(__file__).resolve().parent
@@ -218,7 +223,9 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
                 made["masters"] += 1
         shown.append({"recipe": recipe, "preview": meta})
         made["recipes"] += 1
-    _write(hl / "index.html", compile_.gallery(shown))
+    key = boundary_review.deck_key(shown)
+    _write(hl / "boundary-deck.json", key)
+    _write(hl / "index.html", boundary_review.page(shown, key, hl))
     ab = None
     if ab_color:
         banned = holdout.held_out(reports)   # never tune the look on held-out days
@@ -240,9 +247,10 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
 def main(argv=None, *, transport=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("status", "reels", "run", "ab-score"):
+    for name in ("status", "reels", "run", "ab-score", "import-trims", "eval-trims"):
         p = sub.add_parser(name)
         p.add_argument("--reports", type=Path, required=True)
+    sub.choices["import-trims"].add_argument("--answers", type=Path, required=True)
     sub.choices["ab-score"].add_argument("--answers", type=Path, required=True)
     for p in (sub.choices["reels"], sub.choices["run"]):
         p.add_argument("--target-seconds", type=float, default=60.0)
@@ -271,6 +279,21 @@ def main(argv=None, *, transport=None) -> int:
         reports = args.reports.expanduser()
         if args.command == "status":
             print(json.dumps(status(reports), indent=2))
+            return 0
+        if args.command == "import-trims":
+            key = _read(reports / "highlights-v1" / "boundary-deck.json")
+            if key is None:
+                raise ValueError("No gallery yet; run reels first")
+            raw = args.answers.read_bytes()
+            print(json.dumps(boundary_review.import_answers(
+                reports, key, json.loads(raw), hashlib.sha256(raw).hexdigest()), indent=2))
+            return 0
+        if args.command == "eval-trims":
+            result = boundary_review.evaluate(owner_labels.load(reports, "boundary"),
+                                              held_out=holdout.held_out(reports))
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            _write(reports / "evaluations" / f"trims-{stamp}.json", result)
+            print(json.dumps(result, indent=2))
             return 0
         if args.command == "ab-score":
             folder = reports / "highlights-v1" / "color-ab"
