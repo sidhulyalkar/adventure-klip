@@ -250,3 +250,10 @@ def test_clip_without_video_is_unusable_and_not_described(reports, tmp_path):
         assert len(asked) == 1   # the black clip and the no-video clip are both skipped
     finally:
         bad.write_bytes(backup)
+
+
+def test_judges_lens_view_degrades_but_never_drops_a_scene():
+    frames = [{"sharpness": 200.0, "meanLuma": 120.0, "lumaStd": 40.0, "darkShare": 0.0,
+               "clippedShare": 0.0}] * 4
+    q = h.segment_quality(frames, 200.0, 1.0, {"lens_obstructed": {"outcome": "agreed_yes"}})
+    assert q["verdict"] == "degraded" and q["flags"] == ["lens_obstructed_by_judges"]
