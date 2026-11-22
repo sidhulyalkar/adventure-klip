@@ -20,6 +20,7 @@ import sys
 import time
 
 from adventure_intelligence import judge_panel as panel
+from adventure_intelligence import run_lock
 from adventure_intelligence.media import require_tool
 from adventure_intelligence.panel_frames import sample_frames
 
@@ -42,6 +43,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         length = _duration_ms(args.clip)
+        lock = run_lock.exclusive(wait=False)   # timings under contention are meaningless
+        lock.__enter__()
         for model in args.models:
             for width in args.widths:
                 for n in args.frames:

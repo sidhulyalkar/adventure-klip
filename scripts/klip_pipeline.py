@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -37,6 +38,7 @@ import sys
 
 from adventure_intelligence import discovery_experiment as experiment
 from adventure_intelligence import highlight_compile as compile_
+from adventure_intelligence import run_lock
 
 HERE = Path(__file__).resolve().parent
 
@@ -285,6 +287,8 @@ def main(argv=None, *, transport=None) -> int:
                                    similarity_threshold=args.similarity_threshold), indent=2))
             return 0
         common = ["--reports", str(reports), "--roster", str(args.roster)]
+        lock = run_lock.exclusive(log=log) if transport is None else nullcontext()
+        lock.__enter__()   # held for the whole run; released when the process ends
         if not args.skip_judge:
             if args.trusted_source_root is None:
                 raise ValueError("The judge pass needs --trusted-source-root (or --skip-judge)")

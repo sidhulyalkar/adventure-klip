@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,7 @@ import sys
 
 from adventure_intelligence import judge_panel as panel
 from adventure_intelligence import outing_roster as roster
+from adventure_intelligence import run_lock
 from adventure_intelligence import story_harness as harness
 from adventure_intelligence.discovery_experiment import FRAME_MARGIN_MS, MIN_VIDEO_MS
 from adventure_intelligence.panel_frames import video_span
@@ -284,12 +286,14 @@ def main(argv=None, *, transport=None) -> int:
         result = {}
         if "quality" in args.stages:
             result["qualityMeasured"] = run_quality(items, out, log)
-        if "describe" in args.stages:
-            result["described"] = run_describe(items, out, args.describe_model, budget,
-                                               args.timeout, log, transport)
-        if "story" in args.stages:
-            result["stories"] = run_story(items, out, args.story_model, budget, args.timeout,
-                                          log, transport)
+        uses_models = {"describe", "story"} & set(args.stages)
+        with run_lock.exclusive(log=log) if uses_models and transport is None else nullcontext():
+            if "describe" in args.stages:
+                result["described"] = run_describe(items, out, args.describe_model, budget,
+                                                   args.timeout, log, transport)
+            if "story" in args.stages:
+                result["stories"] = run_story(items, out, args.story_model, budget,
+                                              args.timeout, log, transport)
         status = defaultdict(int)
         for f in (out / "stories").glob("*.json"):
             doc = _read(f)
