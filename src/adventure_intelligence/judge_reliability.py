@@ -155,7 +155,33 @@ def reliability(labels: list[dict]) -> dict:
                     "sensitivity": round((c["truePos"] + 1) / (pos + 2), 3),
                     "specificity": round((c["trueNeg"] + 1) / (neg + 2), 3),
                     "accuracy": round((c["truePos"] + c["trueNeg"]) / max(1, c["n"] - c["unclear"]), 3)})
+    overall: dict[str, dict] = {}
+    for r in out:
+        o = overall.setdefault(r["model"], {"n": 0, "correct": 0, "falseYes": 0, "falseNo": 0,
+                                            "unclear": 0})
+        for k in ("n", "falseYes", "falseNo", "unclear"):
+            o[k] += r[k]
+        o["correct"] += r["truePos"] + r["trueNeg"]
+    for o in overall.values():
+        decided = o["n"] - o["unclear"]
+        o["accuracy"] = round(o["correct"] / decided, 3) if decided else None
+    on_disputes: dict[str, list] = defaultdict(list)
+    for l in labels:
+        if l["answer"] in ("yes", "no") and l.get("outcome") == "disputed":
+            for model, said in (l.get("votes") or {}).items():
+                if said in ("yes", "no"):
+                    on_disputes[model].append(said == l["answer"])
     return {"version": VERSION, "labels": len(labels),
+            "byModel": overall,
+            # who is right when the two judges disagree: the number that matters most
+            "byModelOnDisputes": {m: {"n": len(v), "right": sum(v),
+                                      "accuracy": round(sum(v) / len(v), 3) if v else None}
+                                  for m, v in sorted(on_disputes.items())},
+            "agreedFactsOwnerConfirmed": {
+                "n": sum(1 for l in labels if l["answer"] in ("yes", "no")
+                         and l.get("outcome") in ("agreed_yes", "agreed_no")),
+                "right": sum(1 for l in labels if l["answer"] in ("yes", "no")
+                             and l.get("outcome") == f"agreed_{l['answer']}")},
             "baseRate": {f"{s}:{q}": round((sum(v) + 1) / (len(v) + 2), 3)
                          for (s, q), v in sorted(base.items())},
             "byModelQuestion": out, "minLabels": MIN_LABELS, "resolveAt": RESOLVE_AT,

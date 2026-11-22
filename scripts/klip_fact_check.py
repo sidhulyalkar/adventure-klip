@@ -153,8 +153,13 @@ def main(argv=None, *, sampler=None) -> int:
             result = jr.reliability(labels)
             _write(reports / "evaluations" / f"judge-reliability-{jr.stamp()}.json", result)
             _write(reports / "judge-reliability.json", result)
-            print(json.dumps({k: result[k] for k in ("labels", "smallSampleCaution")} | {
-                "cells": len(result["byModelQuestion"])}, indent=2))
+            print(json.dumps({k: result[k] for k in (
+                "labels", "byModel", "byModelOnDisputes", "agreedFactsOwnerConfirmed",
+                "smallSampleCaution")} | {"cells": len(result["byModelQuestion"])}, indent=2))
+            for r in result["byModelQuestion"]:
+                print(f'{r["sport"]:<11} {r["question"]:<24} {r["model"]:<14} n={r["n"]} '
+                      f'right={r["truePos"] + r["trueNeg"]} falseYes={r["falseYes"]} '
+                      f'falseNo={r["falseNo"]}', file=sys.stderr)
         else:
             result = jr.simulate_cascade(jr.panels(reports), fast=args.fast, slow=args.slow,
                                          threshold=args.threshold)

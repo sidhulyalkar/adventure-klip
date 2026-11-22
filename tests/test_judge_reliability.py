@@ -120,3 +120,17 @@ def test_weak_questions_are_demoted_before_reliability_settles_them(tmp_path):
     settled = jr.apply({"crash_or_fall_visible": {**d["crash_or_fall_visible"],
                                                   "votes": {FAST: "yes", SLOW: "no"}}}, "ski", rel)
     assert settled["crash_or_fall_visible"]["outcome"] == "resolved_no"
+
+
+def test_reliability_reports_who_is_right_on_disputes_and_agreed_facts():
+    labels = [{"sport": "ski", "question": "airborne_visible", "answer": "no", "outcome": "disputed",
+               "votes": {FAST: "yes", SLOW: "no"}}] * 5 + \
+             [{"sport": "ski", "question": "airborne_visible", "answer": "no", "outcome": "agreed_no",
+               "votes": {FAST: "no", SLOW: "no"}}] * 3 + \
+             [{"sport": "ski", "question": "wide_scenic_view", "answer": "no", "outcome": "agreed_yes",
+               "votes": {FAST: "yes", SLOW: "yes"}}]
+    r = jr.reliability(labels)
+    assert r["byModelOnDisputes"][SLOW] == {"n": 5, "right": 5, "accuracy": 1.0}
+    assert r["byModelOnDisputes"][FAST]["accuracy"] == 0.0
+    assert r["agreedFactsOwnerConfirmed"] == {"n": 4, "right": 3}
+    assert r["byModel"][FAST]["falseYes"] == 6 and r["byModel"][SLOW]["accuracy"] == round(8 / 9, 3)
