@@ -269,3 +269,8 @@ def test_reliability_settled_fact_is_citable_and_marked():
                           "evidence": ["fact:crash_or_fall_visible"], "confidence": "medium"}],
              "shortlist": ["S01"], "excluded": []}
     assert h.check_story(story, p, 3) == []
+def test_judges_lens_view_degrades_but_never_drops_a_scene():
+    frames = [{"sharpness": 200.0, "meanLuma": 120.0, "lumaStd": 40.0, "darkShare": 0.0,
+               "clippedShare": 0.0}] * 4
+    q = h.segment_quality(frames, 200.0, 1.0, {"lens_obstructed": {"outcome": "agreed_yes"}})
+    assert q["verdict"] == "degraded" and q["flags"] == ["lens_obstructed_by_judges"]

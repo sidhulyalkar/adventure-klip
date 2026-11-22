@@ -114,8 +114,11 @@ def segment_quality(frames: list[dict], recording_sharpness: float | None,
     if shake_ratio is not None and shake_ratio > q["shakyVsRecording"]:
         degraded.append("shaky")
     facts = facts or {}
+    # Judges' view of the lens only degrades a scene: on owner footage the two judges
+    # agreed "obstructed" on 15 snorkeling scenes while disputing the question 39% of the
+    # time (likely underwater haze), too weak to drop a scene from every reel.
     if facts.get("lens_obstructed", {}).get("outcome") == "agreed_yes":
-        unusable.append("lens_obstructed_by_judges")
+        degraded.append("lens_obstructed_by_judges")
     if facts.get("camera_steady", {}).get("outcome") == "agreed_no":
         degraded.append("unsteady_by_judges")
     flags = unusable + degraded
