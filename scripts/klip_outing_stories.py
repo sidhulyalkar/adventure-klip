@@ -28,7 +28,10 @@ from statistics import median
 import sys
 
 from adventure_intelligence import judge_panel as panel
+from adventure_intelligence import evidence_ledger as ledger
+from adventure_intelligence import holdout
 from adventure_intelligence import judge_reliability
+from adventure_intelligence import owner_examples
 from adventure_intelligence import outing_roster as roster
 from adventure_intelligence import run_lock
 from adventure_intelligence import story_harness as harness
@@ -199,9 +202,37 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()[:80]
 
 
+def _names(reports: Path) -> dict[str, str]:
+    out = {}
+    for f in reports.glob("discovery-*/sources.json"):
+        for row in _read(f) or []:
+            out[row["sourceSha256"]] = Path(row["path"]).name
+    return out
+
+
+def _embedder(reports: Path):
+    folder = reports / "evidence"
+    if not (folder / "vocabulary.json").is_file():
+        return None
+    try:
+        from adventure_intelligence.moment_evidence import Store
+        store = Store(folder)
+    except (ValueError, OSError):
+        return None
+
+    def embed(sha, a, b):
+        got = store.interval(sha, a, b)
+        return None if got is None else got.get("embedding")
+    return embed
+
+
 def run_story(items: list[dict], out: Path, model: str, budget: list | None, timeout: int,
-              log, transport=None, reliability: dict | None = None) -> int:
+              log, transport=None, reliability: dict | None = None,
+              ledger_rows: list[dict] | None = None, reports: Path | None = None,
+              embed=None) -> int:
     done = 0
+    names = _names(reports) if (ledger_rows and reports) else {}
+    banned = holdout.held_out(reports) if reports else set()
     for (outing, sport), members in sorted(groups(items).items()):
         scenes, footage = [], {}
         for it in members:
@@ -223,8 +254,12 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
                                               ("distinctiveness", s.get("distinctiveness")))
                             if v is not None}})
             footage[it["sourceSha256"]] = it["durationMs"]
+        examples = owner_examples.select(
+            [{"sourceSha256": sc["sourceSha256"], "startMs": sc["startMs"],
+              "endMs": sc["endMs"], "file": sc["file"]} for sc in scenes],
+            ledger_rows, embed=embed, names=names, held_out=banned) if ledger_rows else []
         packet = harness.build_packet(f"{outing} / {sport}", sport, scenes,
-                                      footage_ms=sum(footage.values()))
+                                      footage_ms=sum(footage.values()), examples=examples)
         target = out / "stories" / f"{_slug(outing)}--{sport}.json"
         previous = _read(target)
         if (previous and previous["record"]["packetSha256"] == harness.packet_digest(packet)
@@ -256,6 +291,9 @@ def main(argv=None, *, transport=None) -> int:
     parser.add_argument("--max-calls", type=int, help="stop after this many model calls")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--ledger", type=Path,
+                        help="owner evidence ledger: similar past keep/skip judgments become "
+                             "story examples (never held-out or same-day ones)")
     args = parser.parse_args(argv)
 
     def log(message):
@@ -303,8 +341,11 @@ def main(argv=None, *, transport=None) -> int:
                                                    args.timeout, log, transport)
             if "story" in args.stages:
                 rel = _read(args.reports.expanduser() / "judge-reliability.json")
-                result["stories"] = run_story(items, out, args.story_model, budget,
-                                              args.timeout, log, transport, reliability=rel)
+                rows = ledger.load(args.ledger.expanduser()) if args.ledger else None
+                result["stories"] = run_story(
+                    items, out, args.story_model, budget, args.timeout, log, transport,
+                    reliability=rel, ledger_rows=rows, reports=args.reports.expanduser(),
+                    embed=_embedder(args.reports.expanduser()) if rows else None)
         status = defaultdict(int)
         for f in (out / "stories").glob("*.json"):
             doc = _read(f)
@@ -318,4 +359,5 @@ def main(argv=None, *, transport=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from adventure_intelligence import run_records
+    raise SystemExit(run_records.main_recorded(main, "klip_outing_stories"))

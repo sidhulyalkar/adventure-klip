@@ -242,4 +242,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from adventure_intelligence import run_records
+    raise SystemExit(run_records.main_recorded(main, "klip_judge_batches"))

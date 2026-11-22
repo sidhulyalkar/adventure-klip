@@ -7,6 +7,8 @@
              deck; --color underwater-v1 applies the correction; --approve RECIPE_SHA
              --master renders full quality from the camera originals for approved recipes
     ab-score score a downloaded colour A/B answers file (exact sign test)
+    profile  what the library holds per capture day and sport (dataset-profile.json/.md)
+    runs     the run records; --export writes a redacted table for logs/experiments/
     import-trims  import the gallery's downloaded trim answers as owner boundary labels
     eval-trims    score boundary methods against those labels (development vs held-out)
     run      judge pass -> stories (quality, describe, story) -> reels, each resumable
@@ -44,6 +46,9 @@ from adventure_intelligence import discovery_experiment as experiment
 from adventure_intelligence import highlight_compile as compile_
 from adventure_intelligence import blind_ab
 from adventure_intelligence import boundary_review
+from adventure_intelligence import dataset_profile
+from adventure_intelligence import evidence_ledger as ledger
+from adventure_intelligence import run_records
 from adventure_intelligence import holdout
 from adventure_intelligence import owner_labels
 from adventure_intelligence import run_lock
@@ -298,10 +303,14 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
 def main(argv=None, *, transport=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("status", "reels", "run", "ab-score", "import-trims", "eval-trims"):
+    for name in ("status", "reels", "run", "ab-score", "import-trims", "eval-trims",
+                 "profile", "runs"):
         p = sub.add_parser(name)
         p.add_argument("--reports", type=Path, required=True)
     sub.choices["import-trims"].add_argument("--answers", type=Path, required=True)
+    sub.choices["profile"].add_argument("--ledger", type=Path)
+    sub.choices["runs"].add_argument("--export", type=Path,
+                                     help="write a redacted markdown table here")
     sub.choices["ab-score"].add_argument("--answers", type=Path, required=True)
     for p in (sub.choices["reels"], sub.choices["run"]):
         p.add_argument("--target-seconds", type=float, default=60.0)
@@ -325,6 +334,7 @@ def main(argv=None, *, transport=None) -> int:
     run.add_argument("--timeout", type=int, default=600)
     run.add_argument("--describe-model", default="qwen3-vl:32b")
     run.add_argument("--story-model", default="gemma3:27b")
+    run.add_argument("--ledger", type=Path, help="owner evidence ledger for story examples")
     args = parser.parse_args(argv)
 
     def log(message):
@@ -334,6 +344,22 @@ def main(argv=None, *, transport=None) -> int:
         reports = args.reports.expanduser()
         if args.command == "status":
             print(json.dumps(status(reports), indent=2))
+            return 0
+        if args.command == "profile":
+            rows = ledger.load(args.ledger.expanduser()) if args.ledger else None
+            doc = dataset_profile.profile(reports, rows)
+            _write(reports / "dataset-profile.json", doc)
+            _write(reports / "dataset-profile.md", dataset_profile.markdown(doc))
+            print(json.dumps({"bySport": doc["bySport"], "days": len(doc["days"]),
+                              "heldOutDays": doc["heldOutDays"],
+                              "table": str(reports / "dataset-profile.md")}, indent=2))
+            return 0
+        if args.command == "runs":
+            records = run_records.load(reports)
+            table = run_records.export_markdown(records)
+            if args.export:
+                _write(args.export.expanduser(), table)
+            print(table)
             return 0
         if args.command == "import-trims":
             key = _read(reports / "highlights-v1" / "boundary-deck.json")
@@ -387,7 +413,8 @@ def main(argv=None, *, transport=None) -> int:
             log("stage: stories (quality, describe, story)")
             code = _script("klip_outing_stories").main(
                 common + ["--timeout", str(args.timeout), "--describe-model", args.describe_model,
-                          "--story-model", args.story_model], transport=transport)
+                          "--story-model", args.story_model]
+                + (["--ledger", str(args.ledger)] if args.ledger else []), transport=transport)
             if code:
                 return code
         if args.through == "reels":
@@ -404,4 +431,5 @@ def main(argv=None, *, transport=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from adventure_intelligence import run_records
+    raise SystemExit(run_records.main_recorded(main, "klip_pipeline"))
