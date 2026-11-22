@@ -32,7 +32,10 @@ AUDIO_VERSION = "klip-discovery-audio-timeline-v1"
 # Motion, audio, segments and proxies do not depend on sport; only the judge
 # panel's questions do, so an untagged recording skips the judge stage.
 UNKNOWN_SPORT = "unknown"
-MIN_VIDEO_MS = 500      # a review clip with less decodable video than this is not judged
+# A review clip with less decodable video than this is not judged: accidental button
+# presses leave recordings of 0.2-1 s, too short to hold a moment (and no reel clip is
+# shorter than highlight_compile.MIN_CLIP_S = 2 s).
+MIN_VIDEO_MS = 2000
 FRAME_MARGIN_MS = 50
 DEFAULTS = {"fps": 2, "budgetFraction": 0.25, "controls": 2, "minSegmentMs": 4000,
             "sensitivity": 3.0, "maxFrames": 16, "proxyWidth": 960, "proxyAudio": True,
@@ -211,8 +214,9 @@ def _source_stages(row: dict, folder: Path, config: dict, stages, *, resolve, de
                         marker.parent.mkdir(exist_ok=True)
                         _atomic_json(marker, {"version": VERSION, "sourceSha256": sha,
                                               "segment": name, "videoMs": span,
-                                              "reason": "review clip has no usable video"})
-                        log(f"{sha[:12]} {name} ms has no usable video; not judged")
+                                              "reason": f"review clip has {span} ms of video, "
+                                                        f"under {MIN_VIDEO_MS} ms"})
+                        log(f"{sha[:12]} {name} ms: only {span} ms of video; not judged")
                         continue
                     if span is not None:
                         length = min(length, span - FRAME_MARGIN_MS)
