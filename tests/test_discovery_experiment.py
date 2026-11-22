@@ -433,3 +433,16 @@ def test_undecodable_frames_mark_one_segment_not_the_recording(setup):
 
     t = go(setup, stages=("judge",), frames=frames)["totals"]
     assert t["failedSources"] == 0 and t["segmentsUnjudgeable"] == 1 and t["judgeCallsLeft"] == 0
+
+
+def test_accidental_micro_clip_is_not_judged(setup):
+    import subprocess
+    go(setup, stages=SCAN)
+    bad = sorted((setup["out"] / setup["sha"] / "proxies").glob("*.mp4"))[0]
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=320x180:rate=30", "-t", "0.2", "-pix_fmt", "yuv420p",
+                    "-y", str(bad)], check=True)                      # a 0.2 s button press
+    t = go(setup, stages=("judge",))["totals"]
+    assert t["failedSources"] == 0 and t["segmentsUnjudgeable"] == 1 and t["judgeCallsLeft"] == 0
+    marker = json.loads((bad.parent.parent / "unjudgeable" / (bad.stem + ".json")).read_text())
+    assert 150 <= marker["videoMs"] <= 250 and "under 2000 ms" in marker["reason"]
