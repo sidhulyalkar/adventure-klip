@@ -49,8 +49,11 @@ def world(tmp_path):
     (rec / "segments.json").write_text(json.dumps({"segments": segs}))
     (rec / "motion.json").write_text(json.dumps(
         {"series": [{"t_ms": t, "change": 1.0 if t == 12000 else 0.1} for t in range(0, 40000, 500)]}))
-    for s in segs:
-        _make(rec / "proxies" / f'{s["startMs"]}-{s["endMs"]}.mp4', 20)
+    looks = ["testsrc2=size=640x360:rate=30",
+             # a blue-green "underwater" scene: red absorbed
+             "smptebars=size=640x360:rate=30,colorchannelmixer=rr=0.25:gg=0.9:bb=1.0"]
+    for s, look in zip(segs, looks):
+        _make(rec / "proxies" / f'{s["startMs"]}-{s["endMs"]}.mp4', 20, look)
     return {"reports": reports, "ssd": ssd, "original": original}
 
 
@@ -166,3 +169,118 @@ def test_master_only_for_an_approved_unchanged_recipe_from_verified_originals(wo
         hc.render_master(recipe, hl / "y.mp4", trusted_root=world["ssd"],
                          approved={recipe["recipeSha256"]},
                          originals={SHA: {"path": str(world["original"]), "sizeBytes": 1}})
+
+
+def test_identical_scenes_are_dropped_as_near_duplicates(world):
+    rec = world["reports"] / "discovery-001" / SHA / "proxies"
+    shutil.copy(rec / "0-20000.mp4", rec / "20000-40000.mp4")   # the same footage twice
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    assert pipe.main(["run", "--reports", str(world["reports"]), "--roster", str(roster),
+                      "--skip-judge"], transport=_fake) == 0
+    recipe = json.loads(next((world["reports"] / "highlights-v1").glob("*.recipe.json")).read_text())
+    assert [c["scene"] for c in recipe["clips"]] == ["S01"]
+    assert recipe["dropped"][0]["reason"].startswith("near-duplicate of S01 (thumbnail cosine")
+    assert recipe["variety"]["methods"] == ["thumbnail"]
+
+
+def test_stored_embeddings_win_and_same_recording_overlap_is_a_duplicate():
+    import numpy as np
+    scenes = [{"id": f"S0{i}", "file": NAME, "sourceSha256": SHA, "startMs": a, "endMs": b,
+               "clockStart": None, "quality": {"verdict": "usable", "flags": []},
+               "observations": [], "factsYes": [], "factsNo": []}
+              for i, (a, b) in enumerate([(0, 10000), (10200, 18000), (40000, 60000)], 1)]
+    doc = {"record": {"model": "m", "harnessStatus": "accepted", "packetSha256": "x",
+                      "story": {"shortlist": ["S01", "S02", "S03"], "moments": []}},
+           "packet": {"outing": "o", "sport": "ski", "scenes": scenes}}
+    locate = lambda sha, a, b: {"proxy": Path("/nonexistent.mp4"), "segment": None, "motion": []}
+    vec = {0: np.array([1.0, 0]), 40000: np.array([0.0, 1])}
+    rec = hc.plan_reel(doc, locate, embed=lambda sha, a, b: vec.get(a - a % 40000))
+    reasons = [d["reason"] for d in rec["dropped"]]
+    assert [c["scene"] for c in rec["clips"]] == ["S01", "S03"]
+    assert reasons == ["overlaps S01 in the same recording"]
+    same = lambda sha, a, b: np.array([1.0, 0])
+    rec = hc.plan_reel(doc, locate, embed=same)
+    assert [c["scene"] for c in rec["clips"]] == ["S01"] and "siglip2 cosine 1.000" in rec["dropped"][1]["reason"]
+
+
+def _rgb(r, g, b, n=2):
+    import numpy as np
+    rng = np.random.default_rng(0)
+    base = np.stack([np.full((180, 320), c, np.float32) for c in (r, g, b)], -1)
+    return [np.clip(base + rng.normal(0, 18, base.shape), 0, 255).astype(np.uint8) for _ in range(n)]
+
+
+def test_colour_correction_applies_only_to_underwater_snorkeling_clips():
+    blue = _rgb(40, 140, 170)
+    scene = {"factsYes": [], "factsNo": []}
+    p = hc.color_proposal(blue, scene, "snorkeling")
+    assert p["applies"] and p["why"].startswith("measured red deficit") and p["params"]["redFromGreen"] > 0.2
+    assert not hc.color_proposal(blue, scene, "ski")["applies"]                       # never on snow
+    assert not hc.color_proposal(blue, {"factsYes": [], "factsNo": ["underwater"]}, "snorkeling")["applies"]
+    neutral = _rgb(120, 125, 130)
+    assert not hc.color_proposal(neutral, scene, "snorkeling")["applies"]             # surface shot
+    assert hc.color_proposal(neutral, {"factsYes": ["underwater"], "factsNo": []},
+                             "snorkeling")["why"] == "judges agreed: underwater"
+
+
+def _ratio(path: Path) -> tuple[float, float]:
+    frames = hc.sample_rgb(path, 0.5, 4.5)
+    import numpy as np
+    rgb = np.concatenate([f.reshape(-1, 3) for f in frames]).astype(float)
+    return rgb[:, 0].mean() / ((rgb[:, 1].mean() + rgb[:, 2].mean()) / 2), float((rgb >= 254).mean())
+
+
+def test_underwater_mode_restores_red_in_preview_and_changes_the_recipe(world):
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    hl = world["reports"] / "highlights-v1"
+    plain = json.loads(next(hl.glob("*.recipe.json")).read_text())
+    blue = next(c for c in plain["clips"] if c["scene"] == "S02")
+    assert blue["color"]["applies"] and not next(c for c in plain["clips"] if c["scene"] == "S01")["color"]["applies"]
+    single = {**plain, "clips": [blue]}
+    before, _ = _ratio(hc.render_preview({**single, "colorMode": "none"}, hl / "a.mp4") and hl / "a.mp4")
+    after, clipped = _ratio(hc.render_preview({**single, "colorMode": "underwater-v1"}, hl / "b.mp4") and hl / "b.mp4")
+    assert after > before + 0.25 and clipped < 0.05
+    assert pipe.main(["reels", *base, "--color", "underwater-v1"]) == 0
+    corrected = json.loads(next(hl.glob("*.recipe.json")).read_text())
+    assert corrected["colorMode"] == "underwater-v1"
+    assert corrected["recipeSha256"] != plain["recipeSha256"]   # an approval binds the look
+    assert list((hl / "history").glob("*.recipe.json"))         # the plain recipe is kept
+
+
+def test_colour_ab_deck_is_blind_and_scored_with_a_sign_test(world, tmp_path):
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    assert pipe.main(["reels", *base, "--ab-color"]) == 0
+    ab = world["reports"] / "highlights-v1" / "color-ab"
+    key = json.loads((ab / "key.json").read_text())
+    page = (ab / "index.html").read_text()
+    assert len(key["pairs"]) == 1 and "corrected" not in page and "underwater" not in page
+    assert (ab / "pair-001-L.mp4").is_file() and (ab / "pair-001-R.mp4").is_file()
+    truth = key["pairs"]["pair-001"]["corrected"]
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({"deck": key["deck"], "answers": {"pair-001": truth}}))
+    assert pipe.main(["ab-score", *base, "--answers", str(answers)]) == 0
+    result = json.loads(next(ab.glob("result-*.json")).read_text())
+    assert result["preferCorrected"] == 1 and result["verdict"].startswith("too few")
+    answers.write_text(json.dumps({"deck": "other", "answers": {}}))
+    assert pipe.main(["ab-score", *base, "--answers", str(answers)]) == 2
+    many = {"deck": "d", "pairs": {f"p{i}": {"corrected": "left"} for i in range(16)}}
+    picks = {"deck": "d", "answers": {f"p{i}": ("left" if i < 13 else "right") for i in range(16)}}
+    s = hc.color_ab_score(many, picks)
+    assert (s["preferCorrected"], s["preferOriginal"]) == (13, 3) and s["signTestP"] < 0.05
+    assert s["verdict"].startswith("correction preferred")
