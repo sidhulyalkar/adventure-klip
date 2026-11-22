@@ -49,7 +49,7 @@ Score held-out days once a method is settled, not while tuning it.
 
 | Question | Measurement | Command | Rule |
 |---|---|---|---|
-| Can the judges be trusted per question? | Agreement and Cohen's kappa per question, no owner input | `klip_fact_check.py agreement` | Questions with kappa < 0.4 or > 40% disputed are not used as story evidence until owner labels settle them |
+| Can the judges be trusted per question? | Agreement and Cohen's kappa per question, no owner input | `klip_fact_check.py agreement` | A question disputed on more than 40% of clips, or with kappa < 0.4 *and* more than 20% disputed, is weak. Its agreed answers count as uncertain in stories and in the quality gate (computed fresh from the panels on every run), until owner labels settle the individual facts. Kappa alone is not used: it collapses when one answer dominates (underwater: 96% agreement, kappa 0.0) |
 | Which judge is right when they disagree? | Owner yes/no on disputed facts plus agreed controls | `klip_fact_check.py deck` → `import` → `reliability` | A dispute is settled only when each voting model has at least 8 labels on that question and the reliability-weighted P(yes) is ≥ 0.85 or ≤ 0.15. It is marked *resolved*, never *agreed* |
 | Can the slow judge be skipped? | Calls saved vs disputes hidden | `klip_fact_check.py cascade` | Adopt only if, on owner-labelled facts, the fast-only panel is not less accurate than the two-judge panel |
 | Did a prompt or model change make judging worse? | Accuracy on the frozen owner-checked facts | `klip_regression_set.py build`, then `score --model M` | A drop of more than 5 points against the same model's last score under a different prompt exits 1: don't ship it |

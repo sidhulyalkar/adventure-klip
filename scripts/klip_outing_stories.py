@@ -103,7 +103,7 @@ def _times(item: dict, max_frames: int) -> list[int]:
                             max_frames=max_frames)
 
 
-def run_quality(items: list[dict], out: Path, log) -> int:
+def run_quality(items: list[dict], out: Path, log, weak: dict | None = None) -> int:
     done = 0
     by_rec = defaultdict(list)
     for it in items:
@@ -139,7 +139,7 @@ def run_quality(items: list[dict], out: Path, log) -> int:
                 continue
             times, ms = metrics[it["key"]]
             j = harness.jitter(series, it["segment"]["startMs"], it["segment"]["endMs"])
-            facts = (it["judged"] or {}).get("panel", {}).get("facts")
+            facts = _facts(it, None, weak)
             q = harness.segment_quality(ms, sharp, j / jit_median if j and jit_median else None,
                                         facts)
             _write(out / "segments" / sha / f'{it["key"]}.quality.json',
@@ -190,12 +190,21 @@ def groups(items: list[dict]) -> dict[tuple[str, str], list[dict]]:
     return dict(out)
 
 
-def _facts(it: dict, reliability: dict | None) -> dict | None:
-    """Panel facts, with disputes settled where measured judge reliability allows."""
+def _facts(it: dict, reliability: dict | None, weak: dict | None = None) -> dict | None:
+    """Panel facts: answers to questions the judges can't answer consistently count as
+    uncertain; then disputes are settled where owner-measured reliability allows."""
     facts = (it["judged"] or {}).get("panel", {}).get("facts")
+    if facts and weak:
+        facts = judge_reliability.demote(facts, it["sport"], weak)
     if facts and reliability:
-        return judge_reliability.apply(facts, it["sport"], reliability)
+        facts = judge_reliability.apply(facts, it["sport"], reliability)
     return facts
+
+
+def weak_questions(reports: Path) -> dict:
+    """Computed from the panels now, so it can never be stale."""
+    return judge_reliability.weak_questions(
+        judge_reliability.agreement(judge_reliability.panels(reports)))
 
 
 def _slug(text: str) -> str:
@@ -229,7 +238,7 @@ def _embedder(reports: Path):
 def run_story(items: list[dict], out: Path, model: str, budget: list | None, timeout: int,
               log, transport=None, reliability: dict | None = None,
               ledger_rows: list[dict] | None = None, reports: Path | None = None,
-              embed=None) -> int:
+              embed=None, weak: dict | None = None) -> int:
     done = 0
     names = _names(reports) if (ledger_rows and reports) else {}
     banned = holdout.held_out(reports) if reports else set()
@@ -246,7 +255,7 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
                 "file": it["file"], "sourceSha256": it["sourceSha256"],
                 "startMs": s["startMs"], "endMs": s["endMs"], "capture": it["capture"],
                 "quality": quality,
-                "facts": _facts(it, reliability),
+                "facts": _facts(it, reliability, weak),
                 "description": described.get("result") if described.get("status") in (
                     "accepted", "repaired") else None,
                 "signals": {k: v for k, v in (("motionPeak", s.get("peakChange")),
@@ -260,6 +269,8 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
             ledger_rows, embed=embed, names=names, held_out=banned) if ledger_rows else []
         packet = harness.build_packet(f"{outing} / {sport}", sport, scenes,
                                       footage_ms=sum(footage.values()), examples=examples)
+        packet["weakQuestions"] = sorted(f"{q}: {why}" for (sp, q), why in (weak or {}).items()
+                                         if sp == sport)
         target = out / "stories" / f"{_slug(outing)}--{sport}.json"
         previous = _read(target)
         if (previous and previous["record"]["packetSha256"] == harness.packet_digest(packet)
@@ -333,7 +344,8 @@ def main(argv=None, *, transport=None) -> int:
         budget = [args.max_calls] if args.max_calls is not None else None
         result = {}
         if "quality" in args.stages:
-            result["qualityMeasured"] = run_quality(items, out, log)
+            result["qualityMeasured"] = run_quality(items, out, log,
+                                                    weak_questions(args.reports.expanduser()))
         uses_models = {"describe", "story"} & set(args.stages)
         with run_lock.exclusive(log=log) if uses_models and transport is None else nullcontext():
             if "describe" in args.stages:
@@ -345,7 +357,8 @@ def main(argv=None, *, transport=None) -> int:
                 result["stories"] = run_story(
                     items, out, args.story_model, budget, args.timeout, log, transport,
                     reliability=rel, ledger_rows=rows, reports=args.reports.expanduser(),
-                    embed=_embedder(args.reports.expanduser()) if rows else None)
+                    embed=_embedder(args.reports.expanduser()) if rows else None,
+                    weak=weak_questions(args.reports.expanduser()))
         status = defaultdict(int)
         for f in (out / "stories").glob("*.json"):
             doc = _read(f)

@@ -103,3 +103,20 @@ def test_cli_deck_import_reliability(tmp_path, capsys):
     assert cli.main(["reliability", *base]) == 0
     assert json.loads((tmp_path / "judge-reliability.json").read_text())["labels"] == 8
     assert cli.main(["agreement", *base]) == 0 and cli.main(["cascade", *base]) == 0
+
+
+def test_weak_questions_are_demoted_before_reliability_settles_them(tmp_path):
+    _panels(tmp_path)
+    doc = jr.agreement(jr.panels(tmp_path))
+    weak = jr.weak_questions(doc, max_disputed=0.3)
+    assert ("ski", "crash_or_fall_visible") in weak and ("ski", "airborne_visible") not in weak
+    facts = {"crash_or_fall_visible": {"outcome": "agreed_no", "votes": {FAST: "no", SLOW: "no"}},
+             "airborne_visible": {"outcome": "agreed_yes", "votes": {FAST: "yes", SLOW: "yes"}}}
+    d = jr.demote(facts, "ski", weak)
+    assert d["crash_or_fall_visible"]["outcome"] == "disputed"
+    assert d["crash_or_fall_visible"]["agreedAs"] == "agreed_no"
+    assert d["airborne_visible"] is facts["airborne_visible"]
+    rel = jr.reliability(_labels(10))                       # owner evidence can still settle it
+    settled = jr.apply({"crash_or_fall_visible": {**d["crash_or_fall_visible"],
+                                                  "votes": {FAST: "yes", SLOW: "no"}}}, "ski", rel)
+    assert settled["crash_or_fall_visible"]["outcome"] == "resolved_no"

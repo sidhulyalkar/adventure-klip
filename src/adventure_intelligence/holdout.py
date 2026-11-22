@@ -53,20 +53,24 @@ def inventory(reports: Path) -> dict[tuple[str, str], dict]:
 
 
 def propose(reports: Path, *, sports=("ski", "snorkeling"), min_segments: int = 8,
-            avoid_folders=("discovery-011",)) -> list[dict]:
-    """For each sport, the day with the most review segments, avoiding days already used
-    in pilots (folders in avoid_folders). A proposal only; nothing is written."""
+            target_share: float = 0.2, avoid_folders=("discovery-011",)) -> list[dict]:
+    """For each sport, the day whose share of that sport's review segments is closest to
+    target_share (enough to test on, without starving development), with at least
+    min_segments, avoiding days already used in pilots. A proposal only; nothing is written."""
     inv = inventory(reports)
     picks = []
     for sport in sports:
+        total = sum(u["reviewSegments"] for (d, sp), u in inv.items() if sp == sport)
         days = [(d, u) for (d, sp), u in inv.items()
                 if sp == sport and u["reviewSegments"] >= min_segments
                 and not (u["folders"] & set(avoid_folders))]
-        if not days:
+        if not days or not total:
             continue
-        day, unit = max(days, key=lambda x: (x[1]["reviewSegments"], x[0]))
+        day, unit = min(days, key=lambda x: (abs(x[1]["reviewSegments"] / total - target_share),
+                                             x[0]))
         picks.append({"day": day, "sport": sport, "recordings": len(unit["recordings"]),
-                      "reviewSegments": unit["reviewSegments"]})
+                      "reviewSegments": unit["reviewSegments"],
+                      "shareOfSport": round(unit["reviewSegments"] / total, 3)})
     return picks
 
 

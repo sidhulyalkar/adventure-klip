@@ -27,11 +27,12 @@ def _world(tmp_path):
     return reports
 
 
-def test_propose_picks_the_biggest_day_per_sport_outside_pilot_folders(tmp_path):
+def test_propose_targets_a_share_of_each_sport_outside_pilot_folders(tmp_path):
     reports = _world(tmp_path)
-    picks = {p["sport"]: p for p in holdout.propose(reports)}
+    picks = {p["sport"]: p for p in holdout.propose(reports, target_share=0.3)}
     assert picks["snorkeling"]["day"] == "2024-12-26"   # 2024-12-23 is in the pilot folder
-    assert picks["ski"]["day"] == "2026-03-11" and picks["ski"]["reviewSegments"] == 20
+    assert picks["ski"]["day"] == "2026-03-09"          # 11/31, not the biggest day (20/31)
+    assert picks["ski"]["shareOfSport"] == round(11 / 31, 3)
     assert not (reports / holdout.FILE).exists()        # proposing writes nothing
 
 
@@ -62,5 +63,5 @@ def test_cli_freeze_proposed(tmp_path, capsys):
     reports = _world(tmp_path)
     assert cli.main(["freeze", "--reports", str(reports), "--proposed"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert {u["day"] for u in out["units"]} == {"2024-12-26", "2026-03-11"}
+    assert {u["day"] for u in out["units"]} == {"2024-12-26", "2026-03-09"}
     assert cli.main(["freeze", "--reports", str(reports), "--day", "bad"]) == 2

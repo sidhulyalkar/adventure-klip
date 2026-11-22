@@ -44,15 +44,16 @@ def panels(reports: Path) -> list[dict]:
     out = []
     for path in sorted(Path(reports).glob("discovery-*/*/judgments/*.json")):
         doc = _read(path)
-        if not doc or "panel" not in doc:
-            continue
+        if not doc or not isinstance(doc.get("panel"), dict) or "sport" not in doc["panel"] \
+                or not isinstance(doc["panel"].get("facts"), dict):
+            continue          # incomplete or foreign file: not a panel to learn from
         folder, sha = path.parents[2].name, path.parents[1].name
         out.append({"id": f"{folder}/{sha}/{path.stem}", "folder": folder, "sourceSha256": sha,
                     "segment": path.stem, "sport": doc["panel"]["sport"],
                     "facts": doc["panel"]["facts"], "frameTimesMs": doc.get("frameTimesMs", []),
                     "proxy": str(path.parents[1] / "proxies" / f"{path.stem}.mp4"),
-                    "models": sorted({j["model"] for j in doc["judgments"]
-                                      if j["status"] == "answered"})})
+                    "models": sorted({j["model"] for j in doc.get("judgments", [])
+                                      if j.get("status") == "answered"})})
     return out
 
 
@@ -229,3 +230,37 @@ def simulate_cascade(all_panels: list[dict], *, fast: str, slow: str,
 
 def stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+MAX_DISPUTED = 0.4
+MIN_KAPPA = 0.4
+KAPPA_NEEDS_DISPUTED = 0.2   # kappa collapses when one answer dominates (underwater: 96%
+                             # agreement, kappa 0.0), so it only counts alongside disagreement
+
+
+def weak_questions(agreement_doc: dict, *, max_disputed: float = MAX_DISPUTED,
+                   min_kappa: float = MIN_KAPPA) -> dict[tuple[str, str], str]:
+    """(sport, question) -> why, for questions the judges cannot answer consistently."""
+    out = {}
+    for r in agreement_doc["byQuestion"]:
+        if r["disputedShare"] > max_disputed:
+            out[(r["sport"], r["question"])] = f"disputed on {r['disputedShare']:.0%} of clips"
+        elif (r["kappa"] is not None and r["kappa"] < min_kappa
+              and r["disputedShare"] > KAPPA_NEEDS_DISPUTED):
+            out[(r["sport"], r["question"])] = (f"kappa {r['kappa']} with "
+                                                f"{r['disputedShare']:.0%} disputed")
+    return out
+
+
+def demote(facts: dict, sport: str, weak: dict[tuple[str, str], str]) -> dict:
+    """A copy of panel facts where answers to weak questions count as uncertain, even when
+    the judges agreed: agreement on a question they usually disagree on is not evidence."""
+    out = {}
+    for key, fact in facts.items():
+        why = weak.get((sport, key))
+        if why and fact["outcome"] in ("agreed_yes", "agreed_no"):
+            out[key] = {**fact, "outcome": "disputed", "agreedAs": fact["outcome"],
+                        "demotedBy": f"low judge agreement on this question ({why})"}
+        else:
+            out[key] = fact
+    return out
