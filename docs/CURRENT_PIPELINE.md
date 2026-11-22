@@ -1,6 +1,6 @@
 # Klip current architecture and next modeling strategy
 
-**Current canonical design:** [Research mission](KLIP_RESEARCH_MISSION.md) · [V3 contracts](KLIP_ARCHITECTURE_V3.md) · [Roadmap](KLIP_IMPLEMENTATION_ROADMAP.md) · [Experiment evidence](../logs/README.md). The code inventory below records implemented, historical and partial components; it is **not** a claim of complete source-wide temporal scene discovery.
+**Run the pipeline:** [KLIP_PIPELINE.md](KLIP_PIPELINE.md) · **Current canonical design:** [Research mission](KLIP_RESEARCH_MISSION.md) · [V3 contracts](KLIP_ARCHITECTURE_V3.md) · [Roadmap](KLIP_IMPLEMENTATION_ROADMAP.md) · [Experiment evidence](../logs/README.md). The code inventory below records implemented, historical and partial components; it is **not** a claim of complete source-wide temporal scene discovery.
 
 
 **Active research track:** full-timeline scene discovery → temporal/story
@@ -26,6 +26,10 @@ older versioned experiment reports. Older docs are historical evidence.
 | Fact judge panel | judge_panel.py, scripts/klip_judge_panel.py | Checkable per-sport questions, control questions, two-family rule, owner calibration; fake-transport tests only, no model run |
 | Automated discovery experiment | discovery_experiment.py, scripts/klip_discovery_experiment.py | One resumable run over at most 12 listed recordings: SHA verify, motion, audio, segments, proxies, judge panel, report; tested on generated video with a fake judge |
 | Within-outing value learning | outing_roster.py, value_features.py, value_pairs.py, value_head.py, value_eval.py, scripts/klip_value_experiment.py | Owner-confirmed outings, blind tap deck, Bradley–Terry head on evidence, leave-one-outing-out ladder against chance and single measurements; `index` scans and describes the library with one disk read per recording (library_index.py); `cards` adds VLM scene cards (scene_cards.py); system map in [KLIP_VALUE_SYSTEM.md](KLIP_VALUE_SYSTEM.md); see [runbook](KLIP_VALUE_LEARNING_RUNBOOK.md) |
+| **End-to-end pipeline** | scripts/klip_pipeline.py (status, run, reels); [KLIP_PIPELINE.md](KLIP_PIPELINE.md) | One entry point from index batches to reels; synthetic CI passed |
+| Judge pass over index batches | scripts/klip_judge_batches.py, scripts/klip_guess_activities.py, scripts/klip_vlm_bench.py | Backlog, roster relabelling with provenance, model-major order, Ollama usage; running on owner footage (2026-11-21) |
+| Grounded outing stories | story_harness.py, scripts/klip_outing_stories.py; [KLIP_GROUNDED_OUTING_STORIES_V1.md](KLIP_GROUNDED_OUTING_STORIES_V1.md) | Quality gate, VLM descriptions, code-validated LLM stories; synthetic CI passed only |
+| Highlight compile | highlight_compile.py | Recipes from validated shortlists, preview from review clips, approval-gated master from originals; synthetic CI passed only |
 | K-MOMENT / K-TIDE research | main branch scripts and offline cache | Eight dense windows; no proven ranking advantage |
 
 Core contracts: **Asset → Observation → Candidate Moment → Owner-reviewed
