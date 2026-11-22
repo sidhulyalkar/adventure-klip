@@ -38,6 +38,7 @@ import sys
 
 from adventure_intelligence import discovery_experiment as experiment
 from adventure_intelligence import highlight_compile as compile_
+from adventure_intelligence import holdout
 from adventure_intelligence import run_lock
 
 HERE = Path(__file__).resolve().parent
@@ -220,7 +221,10 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
     _write(hl / "index.html", compile_.gallery(shown))
     ab = None
     if ab_color:
-        ab = compile_.color_ab_deck([x["recipe"] for x in shown], hl / "color-ab",
+        banned = holdout.held_out(reports)   # never tune the look on held-out days
+        tunable = [{**x["recipe"], "clips": [c for c in x["recipe"]["clips"]
+                                             if c["sourceSha256"] not in banned]} for x in shown]
+        ab = compile_.color_ab_deck(tunable, hl / "color-ab",
                                     seed="|".join(sorted(x["recipe"]["recipeSha256"] for x in shown)))
         log(f"colour A/B deck: {ab['pairs']} pairs -> {ab['page']}")
     return {**dict(made), "gallery": str(hl / "index.html"), "colorAB": ab,
