@@ -29,6 +29,8 @@ import sys
 from adventure_intelligence import judge_panel as panel
 from adventure_intelligence import outing_roster as roster
 from adventure_intelligence import story_harness as harness
+from adventure_intelligence.discovery_experiment import FRAME_MARGIN_MS, MIN_VIDEO_MS
+from adventure_intelligence.panel_frames import video_span
 
 STAGES = ("quality", "describe", "story")
 SKIP_SPORTS = {"unknown"}
@@ -85,8 +87,13 @@ def _times(item: dict, max_frames: int) -> list[int]:
     if judged and judged.get("frameTimesMs"):
         return judged["frameTimesMs"]
     s = item["segment"]
-    return panel.frame_plan(0, s["endMs"] - s["startMs"],
-                            [t - s["startMs"] for t in s["eventCandidatesMs"]],
+    length = s["endMs"] - s["startMs"]
+    span = video_span(item["proxy"])   # plan inside the clip's real video
+    if span is not None:
+        if span < MIN_VIDEO_MS:
+            raise ValueError(f"review clip has no usable video ({span} ms)")
+        length = min(length, span - FRAME_MARGIN_MS)
+    return panel.frame_plan(0, length, [t - s["startMs"] for t in s["eventCandidatesMs"]],
                             max_frames=max_frames)
 
 
@@ -100,17 +107,30 @@ def run_quality(items: list[dict], out: Path, log) -> int:
         if not todo:
             continue
         log(f"{sha[:12]} measuring quality of {len(rec_items)} segments")
-        metrics = {}
+        metrics, broken = {}, {}
         for it in rec_items:  # the whole recording, so 'soft' is relative to it
-            times = _times(it, 8)
-            metrics[it["key"]] = (times, [harness.frame_metrics(g)
-                                          for g in harness.decode_gray(it["proxy"], times)])
-        sharp = median(m["sharpness"] for _, ms in metrics.values() for m in ms)
+            try:
+                times = _times(it, 8)
+                metrics[it["key"]] = (times, [harness.frame_metrics(g)
+                                              for g in harness.decode_gray(it["proxy"], times)])
+            except ValueError as error:   # one bad clip is unusable, not a failed stage
+                broken[it["key"]] = str(error)[:200]
+        values = [m["sharpness"] for _, ms in metrics.values() for m in ms]
+        sharp = median(values) if values else 0.0
         series = rec_items[0]["motion"]
         jit = [harness.jitter(series, s["startMs"], s["endMs"])
                for s in rec_items[0]["allSegments"]]
         jit_median = median([j for j in jit if j]) if any(jit) else None
         for it in todo:
+            if it["key"] in broken:
+                _write(out / "segments" / sha / f'{it["key"]}.quality.json',
+                       {"version": harness.VERSION, "sourceSha256": sha, "segment": it["key"],
+                        "verdict": "unusable", "flags": ["no_usable_video"],
+                        "reason": broken[it["key"]], "thresholds": harness.QUALITY,
+                        "isMeasurementNotOwnerJudgment": True})
+                log(f"{sha[:12]} {it['key']} ms unusable: {broken[it['key']]}")
+                done += 1
+                continue
             times, ms = metrics[it["key"]]
             j = harness.jitter(series, it["segment"]["startMs"], it["segment"]["endMs"])
             facts = (it["judged"] or {}).get("panel", {}).get("facts")
@@ -129,6 +149,9 @@ def run_describe(items: list[dict], out: Path, model: str, budget: list | None,
     done = 0
     for it in items:
         target = out / "segments" / it["sourceSha256"] / f'{it["key"]}.description.json'
+        quality = _read(target.with_name(f'{it["key"]}.quality.json'))
+        if quality and quality.get("verdict") == "unusable":
+            continue   # never shortlisted, so not worth a VLM call
         previous = _read(target)
         if previous and previous.get("status") in ("accepted", "repaired") \
                 and previous.get("model") == model:
@@ -237,8 +260,13 @@ def main(argv=None, *, transport=None) -> int:
         items = [it for it in everything if it["sport"] not in SKIP_SPORTS]
         missing_q = sum(not (out / "segments" / it["sourceSha256"] / f'{it["key"]}.quality.json').is_file()
                         for it in items)
-        missing_d = sum((_read(out / "segments" / it["sourceSha256"] / f'{it["key"]}.description.json')
-                         or {}).get("status") not in ("accepted", "repaired") for it in items)
+        def _needs_description(it):
+            base = out / "segments" / it["sourceSha256"]
+            if (_read(base / f'{it["key"]}.quality.json') or {}).get("verdict") == "unusable":
+                return False
+            return (_read(base / f'{it["key"]}.description.json') or {}).get("status") not in (
+                "accepted", "repaired")
+        missing_d = sum(_needs_description(it) for it in items)
         summary = {"segments": len(items), "skippedUnknownSport": len(everything) - len(items),
                    "outings": len(groups(items)), "qualityToMeasure": missing_q,
                    "descriptionsToMake": missing_d, "output": str(out)}
