@@ -175,9 +175,12 @@ def test_ollama_counters_are_kept_as_usage():
                 "total_duration": 4.6e11}
 
     out = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
-    assert out["usage"] == {"promptTokens": 16921, "outputTokens": 180, "loadSeconds": 9.0,
-                            "prefillSeconds": 420.0, "generateSeconds": 31.0,
-                            "totalSeconds": 460.0}
+    u = out["usage"]
+    assert {k: u[k] for k in ("promptTokens", "outputTokens", "loadSeconds", "prefillSeconds",
+                              "generateSeconds", "totalSeconds")} == {
+        "promptTokens": 16921, "outputTokens": 180, "loadSeconds": 9.0,
+        "prefillSeconds": 420.0, "generateSeconds": 31.0, "totalSeconds": 460.0}
+    assert u["answerChars"] > 0 and u["thinkingChars"] == 0
 
 
 def test_thinking_switch_is_sent_only_when_asked_and_dropped_if_unsupported(monkeypatch):

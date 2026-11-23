@@ -79,8 +79,13 @@ def _context_needed(error: Exception) -> int | None:
 def usage(reply: dict) -> dict:
     """Where the time went, from Ollama's own counters (prefill vs generation)."""
     ns = 1e9
+    msg = reply.get("message") or {}
+    content, thinking = msg.get("content") or "", msg.get("thinking") or ""
     out = {"promptTokens": reply.get("prompt_eval_count"),
-           "outputTokens": reply.get("eval_count")}
+           "outputTokens": reply.get("eval_count"),
+           # where output tokens went: the answer, hidden reasoning, or JSON whitespace
+           "answerChars": len(content), "whitespaceChars": sum(c.isspace() for c in content),
+           "thinkingChars": len(thinking)}
     for key, name in (("load_duration", "loadSeconds"), ("prompt_eval_duration", "prefillSeconds"),
                       ("eval_duration", "generateSeconds"), ("total_duration", "totalSeconds")):
         if isinstance(reply.get(key), (int, float)):
