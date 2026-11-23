@@ -174,8 +174,10 @@ def run_describe(items: list[dict], out: Path, model: str, budget: list | None,
         answer = harness.call_json(
             model, [{"role": "user", "content": harness.describe_prompt(it["sport"], times, length),
                      "images": images}],
-            schema=harness.describe_schema(), transport=transport, timeout=timeout,
+            schema=harness.describe_schema(len(times)), transport=transport, timeout=timeout,
             check=lambda d: harness.check_description(d, length, times), think=think)
+        if answer.get("result"):
+            answer = {**answer, "result": harness.with_times(answer["result"], times)}
         if budget is not None:
             budget[0] -= 1
         _write(target, {"version": harness.VERSION, "sourceSha256": it["sourceSha256"],

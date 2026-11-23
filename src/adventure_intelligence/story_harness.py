@@ -186,7 +186,9 @@ def call_json(model: str, messages: list[dict], *, schema: dict, check, transpor
 CAMERA = ("steady", "moving_smoothly", "shaky", "unclear")
 
 
-def describe_schema() -> dict:
+def describe_schema(n_frames: int = 8) -> dict:
+    """Observations name a frame NUMBER from a closed list, so a valid time is guaranteed by
+    the output grammar; the harness converts it to seconds (with_times)."""
     yn = {"type": "string", "enum": ["yes", "no", "unclear"]}
     return {"type": "object", "additionalProperties": False,
             "required": ["observations", "summary", "subjects", "setting", "cameraMotion",
@@ -194,8 +196,9 @@ def describe_schema() -> dict:
             "properties": {
                 "observations": {"type": "array", "minItems": 1, "maxItems": 8, "items": {
                     "type": "object", "additionalProperties": False,
-                    "required": ["atSeconds", "text"],
-                    "properties": {"atSeconds": {"type": "number"},
+                    "required": ["frame", "text"],
+                    "properties": {"frame": {"type": "integer",
+                                             "enum": list(range(1, max(1, n_frames) + 1))},
                                    "text": {"type": "string", "maxLength": 200}}}},
                 "summary": {"type": "string", "maxLength": 300},
                 "subjects": {"type": "array", "maxItems": 8,
@@ -209,32 +212,49 @@ def describe_schema() -> dict:
 
 
 def describe_prompt(sport: str, stamps_ms: list[int], duration_ms: int) -> str:
-    times = ", ".join(f"{t / 1000:.1f}s" for t in stamps_ms)
+    frames = ", ".join(f"frame {i} at {t / 1000:.1f}s" for i, t in enumerate(stamps_ms, 1))
     return (
-        f"These are frames, in time order, from one {duration_ms / 1000:.0f}-second clip of "
-        f"a first-person action camera during {sport}. They were taken at: {times}.\n"
-        "Describe only what is visible. For each observation give the second (from the "
-        "list above) at which it is visible. Do not guess what happens between frames, "
-        "do not invent animals, people or tricks, and do not say whether the clip is good. "
-        "List the subjects you can see, the setting, how the camera moves, and whether the "
-        "frames are in focus, well exposed and taken through a clear lens.")
+        f"These are {len(stamps_ms)} frames, in time order, from one "
+        f"{duration_ms / 1000:.0f}-second clip of a first-person action camera during "
+        f"{sport}: {frames}.\n"
+        "Describe only what is visible. For each observation give the number of the frame "
+        f"(1 to {len(stamps_ms)}) in which it is visible. Do not guess what happens between "
+        "frames, do not invent animals, people or tricks, and do not say whether the clip is "
+        "good. Keep each observation to one short sentence. List the subjects you can see, "
+        "the setting, how the camera moves, and whether the frames are in focus, well "
+        "exposed and taken through a clear lens.")
 
 
 def check_description(d: dict, duration_ms: int, stamps_ms: list[int]) -> list[str]:
     out = []
+    n = len(stamps_ms)
     allowed = {round(t / 1000, 1) for t in stamps_ms}
     for i, o in enumerate(d.get("observations", [])):
-        at = o.get("atSeconds")
-        if not isinstance(at, (int, float)) or not 0 <= at <= duration_ms / 1000 + 0.5:
-            out.append(f"observation {i} is at {at}s, outside the clip (0-"
-                       f"{duration_ms / 1000:.1f}s)")
-        elif min(abs(at - a) for a in allowed) > 1.0:
-            out.append(f"observation {i} is at {at}s, which is not one of the frame times")
+        if "frame" in o:
+            if not isinstance(o["frame"], int) or not 1 <= o["frame"] <= n:
+                out.append(f"observation {i} names frame {o['frame']}; frames are 1 to {n}")
+        else:   # descriptions written before frame numbers
+            at = o.get("atSeconds")
+            if not isinstance(at, (int, float)) or not 0 <= at <= duration_ms / 1000 + 0.5:
+                out.append(f"observation {i} is at {at}s, outside the clip (0-"
+                           f"{duration_ms / 1000:.1f}s)")
+            elif min(abs(at - a) for a in allowed) > 1.0:
+                out.append(f"observation {i} is at {at}s, which is not one of the frame times")
         if not o.get("text", "").strip():
             out.append(f"observation {i} is empty")
     if not d.get("summary", "").strip():
         out.append("summary is empty")
     return out
+
+
+def with_times(d: dict, stamps_ms: list[int]) -> dict:
+    """A description whose observations also carry atSeconds, from their frame numbers."""
+    obs = []
+    for o in d.get("observations", []):
+        if "frame" in o and isinstance(o["frame"], int) and 1 <= o["frame"] <= len(stamps_ms):
+            o = {**o, "atSeconds": round(stamps_ms[o["frame"] - 1] / 1000, 3)}
+        obs.append(o)
+    return {**d, "observations": obs}
 
 
 # ---------------------------------------------------------------- packet

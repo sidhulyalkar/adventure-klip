@@ -187,19 +187,20 @@ def test_unusable_scene_is_excluded_by_the_harness_if_the_model_forgets():
 
 
 def test_description_times_outside_the_clip_are_sent_back():
-    bad = {"observations": [{"atSeconds": 42.0, "text": "a jump"}], "summary": "a jump",
+    bad = {"observations": [{"frame": 9, "text": "a jump"}], "summary": "a jump",
            "subjects": [], "setting": "slope", "cameraMotion": "steady",
            "filming": {"inFocus": "yes", "exposureOk": "yes", "lensClear": "yes"}}
-    good = {**bad, "observations": [{"atSeconds": 2.5, "text": "a jump"}]}
+    good = {**bad, "observations": [{"frame": 2, "text": "a jump"}]}
     out = h.call_json("qwen3-vl:32b", [{"role": "user", "content": "x"}],
-                      schema=h.describe_schema(), transport=_replies(bad, good),
+                      schema=h.describe_schema(3), transport=_replies(bad, good),
                       check=lambda d: h.check_description(d, 10000, [500, 2500, 4500]))
-    assert out["status"] == "repaired" and out["result"]["observations"][0]["atSeconds"] == 2.5
+    assert out["status"] == "repaired"
+    assert h.with_times(out["result"], [500, 2500, 4500])["observations"][0]["atSeconds"] == 2.5
 
 
 def test_cli_end_to_end_with_fake_models(reports, tmp_path, capsys):
     cli = _cli()
-    desc = {"observations": [{"atSeconds": 2.5, "text": "skier in the air above the snow"}],
+    desc = {"observations": [{"frame": 2, "text": "skier in the air above the snow"}],
             "summary": "A skier leaves the snow off a small jump.", "subjects": ["skier"],
             "setting": "ski slope", "cameraMotion": "moving_smoothly",
             "filming": {"inFocus": "yes", "exposureOk": "yes", "lensClear": "yes"}}
@@ -239,7 +240,7 @@ def test_clip_without_video_is_unusable_and_not_described(reports, tmp_path):
         q = json.loads((tmp_path / "segments" / SHA / "20000-30000.quality.json").read_text())
         assert q["verdict"] == "unusable" and q["flags"] == ["no_usable_video"]
         asked = []
-        desc = {"observations": [{"atSeconds": 2.5, "text": "x"}], "summary": "x",
+        desc = {"observations": [{"frame": 1, "text": "x"}], "summary": "x",
                 "subjects": [], "setting": "x", "cameraMotion": "steady",
                 "filming": {"inFocus": "yes", "exposureOk": "yes", "lensClear": "yes"}}
 
@@ -286,3 +287,16 @@ def test_story_and_description_calls_ask_for_the_answer_without_reasoning():
     rec = h.tell(_packet(), "gemma3:27b", transport=transport)
     assert bodies[0]["think"] is False and rec["think"] is False
     assert rec["usage"]["outputTokens"] == 120
+
+
+def test_frame_numbers_are_enforced_by_the_schema_and_converted_to_times():
+    schema = h.describe_schema(4)
+    frame = schema["properties"]["observations"]["items"]["properties"]["frame"]
+    assert frame["enum"] == [1, 2, 3, 4]
+    d = {"observations": [{"frame": 3, "text": "a turtle"}], "summary": "s"}
+    assert h.check_description(d, 10000, [500, 2500, 4500, 6500]) == []
+    assert h.with_times(d, [500, 2500, 4500, 6500])["observations"][0] == {
+        "frame": 3, "text": "a turtle", "atSeconds": 4.5}
+    assert "frame 1 at 0.5s" in h.describe_prompt("ski", [500, 2500], 3000)
+    legacy = {"observations": [{"atSeconds": 2.5, "text": "x"}], "summary": "s"}
+    assert h.check_description(legacy, 10000, [500, 2500]) == []          # older files still read

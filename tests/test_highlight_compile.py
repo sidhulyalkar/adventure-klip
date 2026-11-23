@@ -75,11 +75,11 @@ STORY = {"beats": [{"text": "Over the reef a turtle swims past.", "scenes": ["S0
 def _fake(body):
     if "images" in body["messages"][0]:
         import re
-        # like a real describer, report what it saw at a frame time it was shown
-        times = [float(t) for t in re.findall(r"([0-9]+\.[0-9])s",
-                                              body["messages"][0]["content"].split("taken at:")[1])]
-        at = min(times, key=lambda t: abs(t - 14.5))
-        desc = {**DESC, "observations": [{**DESC["observations"][0], "atSeconds": at}]}
+        # like a real describer: name the frame (from the list it was shown) nearest 14.5 s
+        times = [float(t) for t in re.findall(r"frame \d+ at ([0-9]+\.[0-9])s",
+                                              body["messages"][0]["content"])]
+        frame = min(range(len(times)), key=lambda i: abs(times[i] - 14.5)) + 1
+        desc = {**DESC, "observations": [{"frame": frame, "text": DESC["observations"][0]["text"]}]}
         return {"message": {"content": json.dumps(desc)}}
     return {"message": {"content": json.dumps(STORY)}}
 
