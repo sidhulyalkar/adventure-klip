@@ -132,7 +132,7 @@ def segment_quality(frames: list[dict], recording_sharpness: float | None,
 # ---------------------------------------------------------------- bounded JSON calls
 
 def call_json(model: str, messages: list[dict], *, schema: dict, check, transport=None,
-              timeout: int = 600, repairs: int = 1) -> dict:
+              timeout: int = 600, repairs: int = 1, think: bool | None = False) -> dict:
     """One schema-constrained call, checked by `check(parsed) -> [violations]`.
 
     Violations are sent back `repairs` times. The result says whether the answer was
@@ -144,18 +144,22 @@ def call_json(model: str, messages: list[dict], *, schema: dict, check, transpor
     while True:
         attempts += 1
         options = {"temperature": 0, "num_ctx": ctx}
-        body = {"model": model, "stream": False, "format": schema, "options": options,
-                "keep_alive": "30m", "messages": history}
+        body = panel.with_think({"model": model, "stream": False, "format": schema,
+                                 "options": options, "keep_alive": "30m",
+                                 "messages": history}, think)
         try:
             reply = _send_local(body, timeout=timeout, transport=transport)
             text = reply["message"]["content"]
             parsed = json.loads(text)
         except (RuntimeError, ValueError, KeyError, TypeError) as error:
+            if think is not None and panel.think_unsupported(error) and attempts <= 3:
+                think = None
+                continue
             bigger = panel._context_needed(error)
             if bigger and bigger > ctx and attempts <= 3:
                 ctx = bigger
                 continue
-            return {"status": "failed", "model": model, "options": options,
+            return {"status": "failed", "model": model, "options": options, "think": think,
                     "attempts": attempts, "failure": type(error).__name__,
                     "failureDetail": str(error)[:300], "result": last,
                     "violations": violations}
@@ -163,11 +167,12 @@ def call_json(model: str, messages: list[dict], *, schema: dict, check, transpor
         last, violations = parsed, check(parsed)
         if not violations:
             return {"status": "accepted" if attempts == 1 else "repaired", "model": model,
-                    "options": options, "attempts": attempts, "result": parsed,
-                    "violations": []}
+                    "options": options, "think": think, "usage": panel.usage(reply),
+                    "attempts": attempts, "result": parsed, "violations": []}
         if repairs <= 0:
             return {"status": "violating", "model": model, "options": options,
-                    "attempts": attempts, "result": parsed, "violations": violations}
+                    "think": think, "usage": panel.usage(reply), "attempts": attempts,
+                    "result": parsed, "violations": violations}
         repairs -= 1
         history = history + [
             {"role": "assistant", "content": text},
@@ -533,7 +538,7 @@ def prune(story: dict, packet: dict, shortlist_max: int) -> tuple[dict, list[str
 
 
 def tell(packet: dict, model: str, *, transport=None, timeout: int = 600,
-         shortlist_max: int | None = None) -> dict:
+         shortlist_max: int | None = None, think: bool | None = False) -> dict:
     """Story for one outing, validated, repaired once, then pruned. Always returns a record."""
     ids = [s["id"] for s in packet["scenes"]]
     if not ids:
@@ -545,10 +550,11 @@ def tell(packet: dict, model: str, *, transport=None, timeout: int = 600,
           "action-camera footage. You never invent what the evidence does not show."},
          {"role": "user", "content": story_prompt(packet, limit)}],
         schema=story_schema(ids), transport=transport, timeout=timeout,
-        check=lambda s: check_story(s, packet, limit))
+        check=lambda s: check_story(s, packet, limit), think=think)
     record = {"version": VERSION, "outing": packet["outing"], "sport": packet["sport"],
               "packetSha256": packet_digest(packet), "model": model,
-              "options": answer["options"], "harnessStatus": answer["status"],
+              "options": answer["options"], "think": answer.get("think"),
+              "usage": answer.get("usage"), "harnessStatus": answer["status"],
               "attempts": answer["attempts"], "shortlistMax": limit,
               "violationsBeforePruning": answer["violations"],
               "isModelProposalNotOwnerJudgment": True}

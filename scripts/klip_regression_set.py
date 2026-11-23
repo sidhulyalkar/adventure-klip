@@ -80,7 +80,7 @@ def build(reports: Path, size: int, *, replace: bool = False, reason: str | None
 
 
 def score(reports: Path, model: str, *, tolerance: float, timeout: int, transport=None,
-          frames=None) -> dict:
+          frames=None, think: bool | None = None) -> dict:
     if frames is None:
         from adventure_intelligence.panel_frames import sample_frames as frames
     doc = _read(reports / FILE)
@@ -100,7 +100,7 @@ def score(reports: Path, model: str, *, tolerance: float, timeout: int, transpor
             failed += len(items)
             continue
         out = panel.ask(model, first["sport"], images, first["frameTimesMs"],
-                        transport=transport, timeout=timeout)
+                        transport=transport, timeout=timeout, think=think)
         fingerprints.add(out["fingerprint"])
         if out["status"] != "answered":
             failed += len(items)
@@ -118,7 +118,8 @@ def score(reports: Path, model: str, *, tolerance: float, timeout: int, transpor
                 wrong += 1
     decided = right + wrong
     acc = round(right / decided, 3) if decided else None
-    result = {"version": VERSION, "model": model, "fingerprints": sorted(fingerprints),
+    result = {"version": VERSION, "model": model, "think": think,
+              "fingerprints": sorted(fingerprints),
               "items": len(doc["items"]), "right": right, "wrong": wrong, "unclear": unclear,
               "failed": failed, "accuracy": acc,
               "byQuestion": {q: {"right": r, "n": n} for q, (r, n) in sorted(per_q.items())},
@@ -126,7 +127,8 @@ def score(reports: Path, model: str, *, tolerance: float, timeout: int, transpor
     previous = None
     for f in sorted((reports / "evaluations").glob("regression-*.json"), reverse=True):
         old = _read(f)
-        if old and old["model"] == model and old["fingerprints"] != result["fingerprints"]:
+        if (old and old["model"] == model and old.get("think") == think
+                and old["fingerprints"] != result["fingerprints"]):
             previous = old
             break
     if previous and previous.get("accuracy") is not None and acc is not None:
@@ -154,6 +156,7 @@ def main(argv=None, *, transport=None, frames=None) -> int:
     s.add_argument("--model", required=True)
     s.add_argument("--tolerance", type=float, default=0.05)
     s.add_argument("--timeout", type=int, default=1500)
+    s.add_argument("--think", choices=("off", "on", "default"), default="default")
     args = parser.parse_args(argv)
     try:
         reports = args.reports.expanduser()
@@ -163,7 +166,8 @@ def main(argv=None, *, transport=None, frames=None) -> int:
             return 0
         with run_lock.exclusive() if transport is None else _null():
             result = score(reports, args.model, tolerance=args.tolerance, timeout=args.timeout,
-                           transport=transport, frames=frames)
+                           transport=transport, frames=frames,
+                           think={"off": False, "on": True, "default": None}[args.think])
         print(json.dumps(result, indent=2))
         return 1 if (result.get("comparedWith") or {}).get("regression") else 0
     except (ValueError, OSError, KeyError, RuntimeError) as error:

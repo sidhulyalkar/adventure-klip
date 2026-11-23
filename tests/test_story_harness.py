@@ -274,3 +274,15 @@ def test_judges_lens_view_degrades_but_never_drops_a_scene():
                "clippedShare": 0.0}] * 4
     q = h.segment_quality(frames, 200.0, 1.0, {"lens_obstructed": {"outcome": "agreed_yes"}})
     assert q["verdict"] == "degraded" and q["flags"] == ["lens_obstructed_by_judges"]
+
+
+def test_story_and_description_calls_ask_for_the_answer_without_reasoning():
+    bodies = []
+
+    def transport(body):
+        bodies.append(body)
+        return {"message": {"content": json.dumps(GOOD)}, "eval_count": 120,
+                "prompt_eval_count": 900}
+    rec = h.tell(_packet(), "gemma3:27b", transport=transport)
+    assert bodies[0]["think"] is False and rec["think"] is False
+    assert rec["usage"]["outputTokens"] == 120

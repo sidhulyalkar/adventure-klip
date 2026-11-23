@@ -39,6 +39,7 @@ from adventure_intelligence.discovery_experiment import FRAME_MARGIN_MS, MIN_VID
 from adventure_intelligence.panel_frames import video_span
 
 STAGES = ("quality", "describe", "story")
+THINK = {"off": False, "on": True, "default": None}
 SKIP_SPORTS = {"unknown"}
 
 
@@ -150,7 +151,8 @@ def run_quality(items: list[dict], out: Path, log, weak: dict | None = None) -> 
 
 
 def run_describe(items: list[dict], out: Path, model: str, budget: list | None,
-                 timeout: int, log, transport=None) -> int:
+                 timeout: int, log, transport=None, frames: int = 8,
+                 think: bool | None = False) -> int:
     from adventure_intelligence.panel_frames import sample_frames
     done = 0
     for it in items:
@@ -166,14 +168,14 @@ def run_describe(items: list[dict], out: Path, model: str, budget: list | None,
             break
         s = it["segment"]
         length = s["endMs"] - s["startMs"]
-        times = _times(it, 16)
+        times = _times(it, frames)
         log(f'{it["sourceSha256"][:12]} describing {it["key"]} ms with {model}')
         images = sample_frames(it["proxy"], times)
         answer = harness.call_json(
             model, [{"role": "user", "content": harness.describe_prompt(it["sport"], times, length),
                      "images": images}],
             schema=harness.describe_schema(), transport=transport, timeout=timeout,
-            check=lambda d: harness.check_description(d, length, times))
+            check=lambda d: harness.check_description(d, length, times), think=think)
         if budget is not None:
             budget[0] -= 1
         _write(target, {"version": harness.VERSION, "sourceSha256": it["sourceSha256"],
@@ -238,7 +240,7 @@ def _embedder(reports: Path):
 def run_story(items: list[dict], out: Path, model: str, budget: list | None, timeout: int,
               log, transport=None, reliability: dict | None = None,
               ledger_rows: list[dict] | None = None, reports: Path | None = None,
-              embed=None, weak: dict | None = None) -> int:
+              embed=None, weak: dict | None = None, think: bool | None = False) -> int:
     done = 0
     names = _names(reports) if (ledger_rows and reports) else {}
     banned = holdout.held_out(reports) if reports else set()
@@ -282,7 +284,7 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
             n = len(list((out / "stories" / "history").glob(f"{target.stem}.*.json"))) + 1
             _write(out / "stories" / "history" / f"{target.stem}.{n:03d}.json", previous)
         log(f"story for {outing} / {sport}: {len(scenes)} scenes with {model}")
-        record = harness.tell(packet, model, transport=transport, timeout=timeout)
+        record = harness.tell(packet, model, transport=transport, timeout=timeout, think=think)
         if budget is not None:
             budget[0] -= 1
         _write(target, {"record": record, "packet": packet})
@@ -302,6 +304,11 @@ def main(argv=None, *, transport=None) -> int:
     parser.add_argument("--max-calls", type=int, help="stop after this many model calls")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--describe-frames", type=int, default=8,
+                        help="frames per description (each costs ~1,060 prompt tokens)")
+    parser.add_argument("--think", choices=tuple(THINK), default="off",
+                        help="model reasoning before answering: off (default, much faster), "
+                             "on, or the model's default")
     parser.add_argument("--ledger", type=Path,
                         help="owner evidence ledger: similar past keep/skip judgments become "
                              "story examples (never held-out or same-day ones)")
@@ -350,7 +357,8 @@ def main(argv=None, *, transport=None) -> int:
         with run_lock.exclusive(log=log) if uses_models and transport is None else nullcontext():
             if "describe" in args.stages:
                 result["described"] = run_describe(items, out, args.describe_model, budget,
-                                                   args.timeout, log, transport)
+                                                   args.timeout, log, transport,
+                                                   frames=args.describe_frames, think=THINK[args.think])
             if "story" in args.stages:
                 rel = _read(args.reports.expanduser() / "judge-reliability.json")
                 rows = ledger.load(args.ledger.expanduser()) if args.ledger else None
@@ -358,7 +366,7 @@ def main(argv=None, *, transport=None) -> int:
                     items, out, args.story_model, budget, args.timeout, log, transport,
                     reliability=rel, ledger_rows=rows, reports=args.reports.expanduser(),
                     embed=_embedder(args.reports.expanduser()) if rows else None,
-                    weak=weak_questions(args.reports.expanduser()))
+                    weak=weak_questions(args.reports.expanduser()), think=THINK[args.think])
         status = defaultdict(int)
         for f in (out / "stories").glob("*.json"):
             doc = _read(f)

@@ -335,6 +335,8 @@ def main(argv=None, *, transport=None) -> int:
     run.add_argument("--describe-model", default="qwen3-vl:32b")
     run.add_argument("--story-model", default="gemma3:27b")
     run.add_argument("--ledger", type=Path, help="owner evidence ledger for story examples")
+    run.add_argument("--describe-frames", type=int, default=8)
+    run.add_argument("--think", choices=("off", "on", "default"), default="off")
     args = parser.parse_args(argv)
 
     def log(message):
@@ -413,7 +415,8 @@ def main(argv=None, *, transport=None) -> int:
             log("stage: stories (quality, describe, story)")
             code = _script("klip_outing_stories").main(
                 common + ["--timeout", str(args.timeout), "--describe-model", args.describe_model,
-                          "--story-model", args.story_model]
+                          "--story-model", args.story_model,
+                          "--describe-frames", str(args.describe_frames), "--think", args.think]
                 + (["--ledger", str(args.ledger)] if args.ledger else []), transport=transport)
             if code:
                 return code

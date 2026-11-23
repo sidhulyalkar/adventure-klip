@@ -74,7 +74,13 @@ STORY = {"beats": [{"text": "Over the reef a turtle swims past.", "scenes": ["S0
 
 def _fake(body):
     if "images" in body["messages"][0]:
-        return {"message": {"content": json.dumps(DESC)}}
+        import re
+        # like a real describer, report what it saw at a frame time it was shown
+        times = [float(t) for t in re.findall(r"([0-9]+\.[0-9])s",
+                                              body["messages"][0]["content"].split("taken at:")[1])]
+        at = min(times, key=lambda t: abs(t - 14.5))
+        desc = {**DESC, "observations": [{**DESC["observations"][0], "atSeconds": at}]}
+        return {"message": {"content": json.dumps(desc)}}
     return {"message": {"content": json.dumps(STORY)}}
 
 
@@ -118,8 +124,10 @@ def test_end_to_end_stories_to_preview_reel_and_gallery(world):
     recipe = json.loads(next(hl.glob("*.recipe.json")).read_text())
     assert [c["scene"] for c in recipe["clips"]] == ["S01", "S02"]          # clock order
     first = recipe["clips"][0]
-    assert first["anchor"] == "observation 1" and first["anchorSeconds"] == 14.5
-    assert (first["proxyInSeconds"], first["proxyOutSeconds"]) == (10.0, 20.0)
+    assert first["anchor"] == "observation 1" and 13 < first["anchorSeconds"] < 16
+    at = first["anchorSeconds"]                      # snorkeling: 4 s lead-in, 6 s after
+    assert (first["proxyInSeconds"], first["proxyOutSeconds"]) == hc.window(at, 20.0, "snorkeling")
+    assert first["proxyOutSeconds"] - first["proxyInSeconds"] == 10.0
     assert recipe["isDraft"] and not recipe["publicationApproved"]
     preview = next(hl.glob("*.preview.mp4"))
     meta = json.loads(next(hl.glob("*.preview.json")).read_text())

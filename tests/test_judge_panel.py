@@ -178,3 +178,24 @@ def test_ollama_counters_are_kept_as_usage():
     assert out["usage"] == {"promptTokens": 16921, "outputTokens": 180, "loadSeconds": 9.0,
                             "prefillSeconds": 420.0, "generateSeconds": 31.0,
                             "totalSeconds": 460.0}
+
+
+def test_thinking_switch_is_sent_only_when_asked_and_dropped_if_unsupported(monkeypatch):
+    monkeypatch.setattr(panel, "_CTX_BY_MODEL", {})
+    seen = []
+
+    def ollama(body):
+        seen.append(body.get("think", "absent"))
+        return reply("ski")
+    panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama)
+    out = panel.ask("qwen3-vl:32b", "ski", ["aGk="], [0], transport=ollama, think=False)
+    assert seen == ["absent", False] and out["think"] is False
+    seen.clear()
+
+    def no_switch(body):
+        seen.append(body.get("think", "absent"))
+        if "think" in body:
+            raise RuntimeError('Local Ollama HTTP 400: "gemma3:27b" does not support thinking')
+        return reply("ski")
+    out = panel.ask("gemma3:27b", "ski", ["aGk="], [0], transport=no_switch, think=False)
+    assert out["status"] == "answered" and seen == [False, "absent"] and out["think"] is None

@@ -174,8 +174,19 @@ def validate(raw: object, sport: str) -> dict:
     return raw
 
 
+def with_think(body: dict, think: bool | None) -> dict:
+    """Ollama's reasoning switch. None leaves the model's default (the first judge pass
+    ran that way, so its answers stay comparable); False asks for the answer only."""
+    return body if think is None else {**body, "think": bool(think)}
+
+
+def think_unsupported(error: Exception) -> bool:
+    text = str(error).lower()
+    return "think" in text and ("support" in text or "invalid" in text)
+
+
 def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
-        transport=None, timeout: int = 300) -> dict:
+        transport=None, timeout: int = 300, think: bool | None = None) -> dict:
     """One judge, one segment. Any failure is recorded as an abstention."""
     from .adaptive_judge_v2 import _send_local
     if len(images) != len(stamps_ms) or not images:
@@ -184,22 +195,25 @@ def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
     # (qwen3-vl spends ~1,050 tokens per frame, gemma3 256), so a refusal is retried once
     # with a window that fits, and the window used is recorded with the judgment.
     ctx = _CTX_BY_MODEL.get(model, NUM_CTX)
-    for attempt in (1, 2):
+    for attempt in (1, 2, 3):
         options = {"temperature": 0, "num_ctx": ctx}
         base = {"model": model, "family": family(model), "sport": sport,
                 "fingerprint": fingerprint(model, sport), "frames": len(images),
-                "options": options}
-        body = {"model": model, "stream": False, "format": schema(sport),
-                "options": options, "keep_alive": "30m",  # stay loaded across the pass
-                "messages": [{"role": "user", "content": prompt(sport, stamps_ms),
-                              "images": images}]}
+                "options": options, "think": think}
+        body = with_think({"model": model, "stream": False, "format": schema(sport),
+                           "options": options, "keep_alive": "30m",  # stay loaded
+                           "messages": [{"role": "user", "content": prompt(sport, stamps_ms),
+                                         "images": images}]}, think)
         try:
             reply = _send_local(body, timeout=timeout, transport=transport)
             parsed = validate(json.loads(reply["message"]["content"]), sport)
             _CTX_BY_MODEL[model] = ctx
             break
         except (RuntimeError, ValueError, KeyError, TypeError) as error:
-            bigger = _context_needed(error) if attempt == 1 else None
+            if think is not None and think_unsupported(error):
+                think = None          # a model without the switch: ask it plainly
+                continue
+            bigger = _context_needed(error) if attempt < 3 else None
             if bigger and bigger > ctx:
                 ctx = bigger
                 continue
