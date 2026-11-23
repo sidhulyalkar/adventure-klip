@@ -346,3 +346,18 @@ def test_unparseable_reply_is_recorded_with_its_stop_reason():
     rec = h.tell(_packet(), "gemma3:27b", transport=ollama)
     assert rec["story"] is None and rec["reply"]["doneReason"] == "stop"
     assert rec["reply"]["contentChars"] == 0 and rec["reply"]["outputTokens"] == 1444
+
+
+def test_describer_thins_judged_frames_and_names_the_reasoning_failure(reports):
+    cli = _cli()
+    item = {"judged": {"frameTimesMs": list(range(0, 16000, 1000))},
+            "segment": {"startMs": 0, "endMs": 16000, "eventCandidatesMs": []}}
+    times = cli._times(item, 8)
+    assert len(times) == 8 and times == sorted(times) and set(times) <= set(range(0, 16000, 1000))
+
+    def thinker(body):
+        return {"message": {"content": "", "thinking": "x" * 8684}, "done_reason": "length",
+                "eval_count": 2048}
+    out = h.call_json("qwen3-vl:8b", [{"role": "user", "content": "x"}],
+                      schema=h.describe_schema(2), check=lambda d: [], transport=thinker)
+    assert out["status"] == "failed" and "-instruct" in out["failureDetail"]

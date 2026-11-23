@@ -92,7 +92,11 @@ def collect(reports: Path, outing_of: dict[str, str]) -> list[dict]:
 def _times(item: dict, max_frames: int) -> list[int]:
     judged = item["judged"]
     if judged and judged.get("frameTimesMs"):
-        return judged["frameTimesMs"]
+        times = judged["frameTimesMs"]       # the frames the judges saw, thinned to max_frames
+        if len(times) > max_frames:
+            step = len(times) / max_frames
+            times = [times[int(i * step + step / 2)] for i in range(max_frames)]
+        return times
     s = item["segment"]
     length = s["endMs"] - s["startMs"]
     span = video_span(item["proxy"])   # plan inside the clip's real video

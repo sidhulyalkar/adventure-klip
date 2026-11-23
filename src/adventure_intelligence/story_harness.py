@@ -203,9 +203,14 @@ def call_json(model: str, messages: list[dict], *, schema: dict, check, transpor
                 budget, grown = budget * 2, True          # cut off: once, with more room
                 ctx = max(ctx, context_for(history, budget))
                 continue
+            detail = str(error)[:300]
+            if not tail.get("contentChars") and tail.get("thinkingChars"):
+                detail = ("the model spent its whole answer budget on hidden reasoning "
+                          f"({tail['thinkingChars']} characters) and wrote no answer, despite "
+                          "think=false: use a non-reasoning variant (e.g. an '-instruct' tag)")
             return {"status": "failed", "model": model, "options": options, "think": think,
                     "attempts": attempts, "failure": type(error).__name__,
-                    "failureDetail": str(error)[:300], "reply": tail, "result": last,
+                    "failureDetail": detail, "reply": tail, "result": last,
                     "violations": violations}
         panel._CTX_BY_MODEL[model] = max(panel._CTX_BY_MODEL.get(model, 0), ctx)
         if normalize:
