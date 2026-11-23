@@ -175,7 +175,8 @@ def run_describe(items: list[dict], out: Path, model: str, budget: list | None,
             model, [{"role": "user", "content": harness.describe_prompt(it["sport"], times, length),
                      "images": images}],
             schema=harness.describe_schema(len(times)), transport=transport, timeout=timeout,
-            check=lambda d: harness.check_description(d, length, times), think=think)
+            check=lambda d: harness.check_description(d, length, times), think=think,
+            output_budget=harness.DESCRIBE_OUTPUT_TOKENS)
         if answer.get("result"):
             answer = {**answer, "result": harness.with_times(answer["result"], times)}
         if budget is not None:

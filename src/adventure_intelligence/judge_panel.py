@@ -85,7 +85,7 @@ def usage(reply: dict) -> dict:
            "outputTokens": reply.get("eval_count"),
            # where output tokens went: the answer, hidden reasoning, or JSON whitespace
            "answerChars": len(content), "whitespaceChars": sum(c.isspace() for c in content),
-           "thinkingChars": len(thinking)}
+           "thinkingChars": len(thinking), "doneReason": reply.get("done_reason")}
     for key, name in (("load_duration", "loadSeconds"), ("prompt_eval_duration", "prefillSeconds"),
                       ("eval_duration", "generateSeconds"), ("total_duration", "totalSeconds")):
         if isinstance(reply.get(key), (int, float)):

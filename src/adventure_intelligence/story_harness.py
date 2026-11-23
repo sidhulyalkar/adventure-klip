@@ -131,22 +131,61 @@ def segment_quality(frames: list[dict], recording_sharpness: float | None,
 
 # ---------------------------------------------------------------- bounded JSON calls
 
+STORY_OUTPUT_TOKENS = 3072
+DESCRIBE_OUTPUT_TOKENS = 1024
+TOKENS_PER_IMAGE = 1100     # measured on qwen3-vl (Ollama resizes every image to its grid)
+CHARS_PER_TOKEN = 3.0       # conservative for English prompts and JSON
+CTX_STEP, MAX_CTX = 4096, 32768
+
+
+def estimate_prompt_tokens(messages: list[dict]) -> int:
+    text = sum(len(m.get("content") or "") for m in messages)
+    images = sum(len(m.get("images") or []) for m in messages)
+    return int(text / CHARS_PER_TOKEN) + images * TOKENS_PER_IMAGE
+
+
+def context_for(messages: list[dict], output_budget: int) -> int:
+    """A window that holds the prompt and the whole answer: Ollama stops at the window,
+    and a JSON answer cut there is unparseable (the first owner run lost 108 of 145
+    descriptions and one story this way)."""
+    need = estimate_prompt_tokens(messages) + output_budget + 256
+    return min(MAX_CTX, -(-need // CTX_STEP) * CTX_STEP)
+
+
+def _reply_tail(reply: dict | None) -> dict:
+    """What came back when it could not be parsed: Ollama's stop reason and the ends."""
+    if not isinstance(reply, dict):
+        return {}
+    msg = reply.get("message") or {}
+    content = msg.get("content") or ""
+    return {"doneReason": reply.get("done_reason"), "contentChars": len(content),
+            "thinkingChars": len(msg.get("thinking") or ""),
+            "contentHead": content[:200], "contentTail": content[-200:],
+            "outputTokens": reply.get("eval_count"), "promptTokens": reply.get("prompt_eval_count")}
+
+
 def call_json(model: str, messages: list[dict], *, schema: dict, check, transport=None,
-              timeout: int = 600, repairs: int = 1, think: bool | None = False) -> dict:
+              timeout: int = 600, repairs: int = 1, think: bool | None = False,
+              output_budget: int = 1024, normalize=None) -> dict:
     """One schema-constrained call, checked by `check(parsed) -> [violations]`.
 
-    Violations are sent back `repairs` times. The result says whether the answer was
-    accepted as given, repaired, or still violating (the caller then prunes or drops it).
+    The context is sized for the prompt plus `output_budget`, and the answer is capped at
+    that budget (num_predict) so a runaway answer ends instead of filling the window. An
+    answer cut by a length limit is retried once with twice the room. Violations are sent
+    back `repairs` times. `normalize(parsed)` may fix harmless spelling first. The result
+    says accepted, repaired, violating or failed, with Ollama's stop reason.
     """
     from .adaptive_judge_v2 import _send_local
-    ctx = panel._CTX_BY_MODEL.get(model, panel.NUM_CTX)
     history, attempts, last, violations = list(messages), 0, None, []
+    budget, grown, repaired = output_budget, False, False
+    ctx = max(panel._CTX_BY_MODEL.get(model, 0), context_for(history, budget))
     while True:
         attempts += 1
-        options = {"temperature": 0, "num_ctx": ctx}
+        options = {"temperature": 0, "num_ctx": ctx, "num_predict": budget}
         body = panel.with_think({"model": model, "stream": False, "format": schema,
                                  "options": options, "keep_alive": "30m",
                                  "messages": history}, think)
+        reply = None
         try:
             reply = _send_local(body, timeout=timeout, transport=transport)
             text = reply["message"]["content"]
@@ -159,26 +198,36 @@ def call_json(model: str, messages: list[dict], *, schema: dict, check, transpor
             if bigger and bigger > ctx and attempts <= 3:
                 ctx = bigger
                 continue
+            tail = _reply_tail(reply)
+            if tail.get("doneReason") == "length" and not grown and attempts <= 3:
+                budget, grown = budget * 2, True          # cut off: once, with more room
+                ctx = max(ctx, context_for(history, budget))
+                continue
             return {"status": "failed", "model": model, "options": options, "think": think,
                     "attempts": attempts, "failure": type(error).__name__,
-                    "failureDetail": str(error)[:300], "result": last,
+                    "failureDetail": str(error)[:300], "reply": tail, "result": last,
                     "violations": violations}
-        panel._CTX_BY_MODEL[model] = ctx
+        panel._CTX_BY_MODEL[model] = max(panel._CTX_BY_MODEL.get(model, 0), ctx)
+        if normalize:
+            parsed = normalize(parsed)
         last, violations = parsed, check(parsed)
+        usage = {**panel.usage(reply), "doneReason": reply.get("done_reason")}
         if not violations:
-            return {"status": "accepted" if attempts == 1 else "repaired", "model": model,
-                    "options": options, "think": think, "usage": panel.usage(reply),
+            return {"status": "repaired" if repaired else "accepted", "model": model,
+                    "options": options, "think": think, "usage": usage,
                     "attempts": attempts, "result": parsed, "violations": []}
         if repairs <= 0:
             return {"status": "violating", "model": model, "options": options,
-                    "think": think, "usage": panel.usage(reply), "attempts": attempts,
+                    "think": think, "usage": usage, "attempts": attempts,
                     "result": parsed, "violations": violations}
         repairs -= 1
+        repaired = True
         history = history + [
             {"role": "assistant", "content": text},
             {"role": "user", "content": "Your answer breaks these rules:\n- " +
              "\n- ".join(violations[:30]) + "\nReturn the full answer again with only "
              "these problems fixed. Do not add claims that are not in the evidence."}]
+        ctx = max(ctx, context_for(history, budget))
 
 
 # ---------------------------------------------------------------- describe (VLM)
@@ -324,8 +373,58 @@ def packet_digest(packet: dict) -> str:
 
 # ---------------------------------------------------------------- story (LLM)
 
-def story_schema(scene_ids: list[str]) -> dict:
+def evidence_refs(packet: dict) -> list[str]:
+    """Every citation a story may use, across the outing's scenes."""
+    refs = set()
+    for s in packet["scenes"]:
+        refs |= {f"fact:{k}" for k in s["factsYes"]}
+        refs |= {f"obs:{i}" for i in range(1, len(s["observations"]) + 1)}
+        refs |= {f"subject:{x}" for x in s["subjects"]}
+        refs |= {f"signal:{k}" for k in s["signals"]}
+        refs |= {f"quality:{f}" for f in s["quality"]["flags"]}
+    return sorted(refs)
+
+
+_FACT_FORMS = (re.compile(r"^(?:yes|fact|facts)\s*:\s*([a-z_]+)$"),
+               re.compile(r"^([a-z_]+)\s*:\s*yes$"))
+_OBS_FORM = re.compile(r"^(?:obs|observation)\s*[:#\s]\s*<?\s*(\d+)\s*>?$")
+
+
+def normalize_ref(ref: str, scene: dict | None) -> str | None:
+    """A citation in its canonical form, or None when it cites nothing (a bare scene id)."""
+    r = (ref or "").strip()
+    low = r.lower()
+    if re.fullmatch(r"s\d+", low):
+        return None
+    for form in _FACT_FORMS:
+        m = form.match(low)
+        if m:
+            return f"fact:{m.group(1)}"
+    m = _OBS_FORM.match(low)
+    if m:
+        return f"obs:{int(m.group(1))}"
+    if scene and low in scene.get("factsYes", []):
+        return f"fact:{low}"
+    return r
+
+
+def normalize_story(story: dict, packet: dict) -> dict:
+    scenes = {s["id"]: s for s in packet["scenes"]}
+    out = json.loads(json.dumps(story))
+    for m in out.get("moments", []):
+        refs = []
+        for ref in m.get("evidence", []):
+            n = normalize_ref(ref, scenes.get(m.get("scene")))
+            if n and n not in refs:
+                refs.append(n)
+        m["evidence"] = refs
+    return out
+
+
+def story_schema(scene_ids: list[str], refs: list[str] | None = None) -> dict:
     sid = {"type": "string", "enum": scene_ids}
+    ref_item = ({"type": "string", "enum": refs} if refs
+                else {"type": "string", "maxLength": 60})
     return {"type": "object", "additionalProperties": False,
             "required": ["beats", "moments", "shortlist", "excluded"],
             "properties": {
@@ -342,7 +441,7 @@ def story_schema(scene_ids: list[str]) -> dict:
                         "what": {"type": "string", "maxLength": 240},
                         "whyItMatters": {"type": "string", "maxLength": 300},
                         "evidence": {"type": "array", "minItems": 1, "maxItems": 6,
-                                     "items": {"type": "string", "maxLength": 60}},
+                                     "items": ref_item},
                         "confidence": {"type": "string", "enum": ["high", "medium", "low"]}}}},
                 "shortlist": {"type": "array", "items": sid},
                 "excluded": {"type": "array", "items": {
@@ -441,8 +540,11 @@ def scene_words(scene: dict, sport: str) -> set[str]:
     return _words(text.replace("_", " "))
 
 
-def check_story(story: dict, packet: dict, shortlist_max: int) -> list[str]:
-    """Every violation, as a sentence the model can act on. Empty means grounded."""
+def check_story(story: dict, packet: dict, shortlist_max: int,
+                warnings: list[str] | None = None) -> list[str]:
+    """Every violation, as a sentence the model can act on. Empty means grounded.
+    'first'/'last' about scenes that are not first/last is only a warning (collected in
+    `warnings`): it removed many plausible claims in the first owner run."""
     scenes = {s["id"]: s for s in packet["scenes"]}
     order = [s["id"] for s in packet["scenes"]]
     seen = {k: scene_words(v, packet["sport"]) for k, v in scenes.items()}
@@ -460,10 +562,11 @@ def check_story(story: dict, packet: dict, shortlist_max: int) -> list[str]:
             if part in words and None not in parts and part not in parts:
                 out.append(f"{where} says '{part}' but its scenes are in the "
                            f"{', '.join(sorted(parts))}")
+        soft = warnings if warnings is not None else []
         if words & _FIRST and order and order[0] not in ids:
-            out.append(f"{where} says 'first' but does not include the first scene {order[0]}")
+            soft.append(f"{where} says 'first' but does not include the first scene {order[0]}")
         if words & _LAST and order and order[-1] not in ids:
-            out.append(f"{where} says 'last' but does not include the last scene {order[-1]}")
+            soft.append(f"{where} says 'last' but does not include the last scene {order[-1]}")
 
     last_pos = -1
     for b, beat in enumerate(story.get("beats", []), 1):
@@ -569,8 +672,9 @@ def tell(packet: dict, model: str, *, transport=None, timeout: int = 600,
         [{"role": "system", "content": "You write grounded, factual recaps of outdoor "
           "action-camera footage. You never invent what the evidence does not show."},
          {"role": "user", "content": story_prompt(packet, limit)}],
-        schema=story_schema(ids), transport=transport, timeout=timeout,
-        check=lambda s: check_story(s, packet, limit), think=think)
+        schema=story_schema(ids, evidence_refs(packet)), transport=transport,
+        timeout=timeout, check=lambda s: check_story(s, packet, limit), think=think,
+        output_budget=STORY_OUTPUT_TOKENS, normalize=lambda s: normalize_story(s, packet))
     record = {"version": VERSION, "outing": packet["outing"], "sport": packet["sport"],
               "packetSha256": packet_digest(packet), "model": model,
               "options": answer["options"], "think": answer.get("think"),
@@ -580,7 +684,10 @@ def tell(packet: dict, model: str, *, transport=None, timeout: int = 600,
               "isModelProposalNotOwnerJudgment": True}
     if answer["result"] is None:
         return {**record, "story": None, "removedByHarness": [],
-                "failureDetail": answer.get("failureDetail")}
+                "failureDetail": answer.get("failureDetail"), "reply": answer.get("reply")}
+    warned: list[str] = []
+    check_story(answer["result"], packet, limit, warnings=warned)
+    record["warnings"] = warned
     kept, removed = prune(answer["result"], packet, limit) if answer["violations"] else (
         answer["result"], [])
     if not answer["violations"]:
@@ -613,6 +720,9 @@ def markdown(record: dict, packet: dict) -> str:
               f"{by_id[sid]['endMs'] / 1000:.0f}s" for i, sid in enumerate(story["shortlist"], 1)]
     lines += ["", "## Excluded"]
     lines += [f"- {e['scene']}: {e['reason']}" for e in story["excluded"]]
+    if record.get("warnings"):
+        lines += ["", "## Worth a look (kept, but the wording may overreach)"]
+        lines += [f"- {w}" for w in record["warnings"]]
     if record["removedByHarness"]:
         lines += ["", "## Removed by the harness (claims the evidence did not support)"]
         lines += [f"- {r}" for r in record["removedByHarness"]]

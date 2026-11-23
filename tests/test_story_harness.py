@@ -125,8 +125,6 @@ def test_grounded_story_passes_and_scenes_are_in_clock_order():
     (lambda s: s["beats"].reverse(), "out of clock order"),
     (lambda s: s["moments"][0].update(evidence=["fact:landing_visible"]), "disputed fact"),
     (lambda s: s["moments"][0].update(evidence=["obs:7"]), "not in S01's evidence"),
-    (lambda s: s["beats"][1].update(text="The last run ends in a crash.", scenes=["S02"]),
-     "says 'last'"),
     (lambda s: s["beats"][1].update(text="A crash on the slope.", scenes=["S02"]),
      "mentions crash"),
 ])
@@ -300,3 +298,51 @@ def test_frame_numbers_are_enforced_by_the_schema_and_converted_to_times():
     assert "frame 1 at 0.5s" in h.describe_prompt("ski", [500, 2500], 3000)
     legacy = {"observations": [{"atSeconds": 2.5, "text": "x"}], "summary": "s"}
     assert h.check_description(legacy, 10000, [500, 2500]) == []          # older files still read
+
+
+def test_first_and_last_are_warnings_not_removals():
+    story = json.loads(json.dumps(GOOD))
+    story["beats"][1].update(text="The last stretch of the day.", scenes=["S02"])
+    warned = []
+    assert h.check_story(story, _packet(), 3, warnings=warned) == []
+    assert any("says 'last'" in w for w in warned)
+    rec = h.tell(_packet(), "gemma3:27b", transport=_replies(story))
+    assert rec["harnessStatus"] == "accepted" and rec["warnings"]
+    assert "Worth a look" in h.markdown(rec, _packet())
+
+
+def test_citation_slips_are_normalised_and_the_schema_lists_valid_citations():
+    p = _packet()
+    refs = h.evidence_refs(p)
+    assert "fact:airborne_visible" in refs and "obs:1" in refs and "subject:skier" in refs
+    schema = h.story_schema([s["id"] for s in p["scenes"]], refs)
+    assert schema["properties"]["moments"]["items"]["properties"]["evidence"]["items"]["enum"] == refs
+    story = json.loads(json.dumps(GOOD))
+    story["moments"][0]["evidence"] = ["yes: airborne_visible", "obs:<1>", "S01",
+                                       "airborne_visible:yes", "airborne_visible"]
+    fixed = h.normalize_story(story, p)
+    assert fixed["moments"][0]["evidence"] == ["fact:airborne_visible", "obs:1"]
+    assert h.check_story(fixed, p, 3) == []
+
+
+def test_context_is_sized_for_prompt_and_answer_and_a_cut_answer_gets_more_room():
+    msgs = [{"role": "user", "content": "x" * 3000, "images": ["a"] * 8}]
+    assert h.context_for(msgs, 1024) == 12288          # 1000 + 8800 + 1024 + 256 -> 12288
+    sent = []
+
+    def ollama(body):
+        sent.append((body["options"]["num_ctx"], body["options"]["num_predict"]))
+        if len(sent) == 1:
+            return {"message": {"content": '{"beats": [{"text": "cut'}, "done_reason": "length"}
+        return {"message": {"content": json.dumps(GOOD)}, "done_reason": "stop"}
+    rec = h.tell(_packet(), "gemma3:27b", transport=ollama)
+    assert rec["harnessStatus"] == "accepted"        # more room is not a repair
+    assert sent[1][1] == 2 * sent[0][1] and sent[1][0] >= sent[0][0]
+
+
+def test_unparseable_reply_is_recorded_with_its_stop_reason():
+    def ollama(body):
+        return {"message": {"content": ""}, "done_reason": "stop", "eval_count": 1444}
+    rec = h.tell(_packet(), "gemma3:27b", transport=ollama)
+    assert rec["story"] is None and rec["reply"]["doneReason"] == "stop"
+    assert rec["reply"]["contentChars"] == 0 and rec["reply"]["outputTokens"] == 1444
