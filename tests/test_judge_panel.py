@@ -202,3 +202,17 @@ def test_thinking_switch_is_sent_only_when_asked_and_dropped_if_unsupported(monk
         return reply("ski")
     out = panel.ask("gemma3:27b", "ski", ["aGk="], [0], transport=no_switch, think=False)
     assert out["status"] == "answered" and seen == [False, "absent"] and out["think"] is None
+
+
+def test_context_is_sized_for_the_frames_and_both_refusal_wordings_are_retried(monkeypatch):
+    monkeypatch.setattr(panel, "_CTX_BY_MODEL", {})
+    sent = []
+
+    def ollama(body):
+        sent.append(body["options"]["num_ctx"])
+        return reply("ski")
+    panel.ask("qwen3-vl:8b-instruct", "ski", ["aGk="] * 16, list(range(16)), transport=ollama)
+    assert sent[0] >= 16 * 1100 + 2048                   # 16 frames fit on the first try
+    assert panel._context_needed(RuntimeError(
+        "Local Ollama HTTP 400: request (16921 tokens) exceeds the available context size "
+        "(8192 tokens), try increasing it")) == 20480

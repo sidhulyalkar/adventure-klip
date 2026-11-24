@@ -68,8 +68,11 @@ _CTX_BY_MODEL: dict[str, int] = {}  # what each model turned out to need, this p
 
 def _context_needed(error: Exception) -> int | None:
     """Context to retry with, if Ollama refused the request as longer than its window."""
-    m = re.search(r"n_prompt_tokens[^0-9]*(\d+)", str(error))
-    if "exceed" not in str(error) or not m:
+    text = str(error)
+    # Ollama words it two ways: '"n_prompt_tokens":16921' or 'request (16921 tokens) exceeds'
+    m = (re.search(r"n_prompt_tokens[^0-9]*(\d+)", text)
+         or re.search(r"request \((\d+) tokens\) exceeds", text))
+    if "exceed" not in text or not m:
         return None
     need = int(m.group(1)) + 2048           # room for the JSON answer
     ctx = -(-need // 4096) * 4096
@@ -199,7 +202,10 @@ def ask(model: str, sport: str, images: list[str], stamps_ms: list[int], *,
     # Explicit context, sized per model: Ollama refuses a request longer than its window
     # (qwen3-vl spends ~1,050 tokens per frame, gemma3 256), so a refusal is retried once
     # with a window that fits, and the window used is recorded with the judgment.
-    ctx = _CTX_BY_MODEL.get(model, NUM_CTX)
+    # Size the window up front (~1,100 tokens per image, plus the prompt and the answer);
+    # a refusal for length is still retried with the size Ollama reports.
+    upfront = -(-(len(images) * 1100 + 1500 + 2048) // 4096) * 4096
+    ctx = max(_CTX_BY_MODEL.get(model, NUM_CTX), min(upfront, MAX_CTX))
     for attempt in (1, 2, 3):
         options = {"temperature": 0, "num_ctx": ctx}
         base = {"model": model, "family": family(model), "sport": sport,
