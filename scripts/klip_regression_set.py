@@ -80,7 +80,7 @@ def build(reports: Path, size: int, *, replace: bool = False, reason: str | None
 
 
 def score(reports: Path, model: str, *, tolerance: float, timeout: int, transport=None,
-          frames=None, think: bool | None = None) -> dict:
+          frames=None, think: bool | None = None, limit: int | None = None) -> dict:
     if frames is None:
         from adventure_intelligence.panel_frames import sample_frames as frames
     doc = _read(reports / FILE)
@@ -90,20 +90,24 @@ def score(reports: Path, model: str, *, tolerance: float, timeout: int, transpor
     for it in doc["items"]:
         by_panel[it["panel"]].append(it)
     right = wrong = unclear = failed = 0
+    why_failed: dict[str, int] = defaultdict(int)
     per_q: dict[str, list] = defaultdict(lambda: [0, 0])
     fingerprints = set()
-    for pid, items in sorted(by_panel.items()):
+    panels = sorted(by_panel.items())[:limit] if limit else sorted(by_panel.items())
+    for pid, items in panels:
         first = items[0]
         try:
             images = frames(Path(first["proxy"]), first["frameTimesMs"])
-        except ValueError:
+        except ValueError as error:
             failed += len(items)
+            why_failed[f"frames: {str(error)[:120]}"] += len(items)
             continue
         out = panel.ask(model, first["sport"], images, first["frameTimesMs"],
                         transport=transport, timeout=timeout, think=think)
         fingerprints.add(out["fingerprint"])
         if out["status"] != "answered":
             failed += len(items)
+            why_failed[(out.get("failureDetail") or out.get("failure") or "?")[:160]] += len(items)
             continue
         for it in items:
             said = out["answers"].get(it["question"])
@@ -121,13 +125,14 @@ def score(reports: Path, model: str, *, tolerance: float, timeout: int, transpor
     result = {"version": VERSION, "model": model, "think": think,
               "fingerprints": sorted(fingerprints),
               "items": len(doc["items"]), "right": right, "wrong": wrong, "unclear": unclear,
-              "failed": failed, "accuracy": acc,
+              "failed": failed, "failureReasons": dict(why_failed), "accuracy": acc,
               "byQuestion": {q: {"right": r, "n": n} for q, (r, n) in sorted(per_q.items())},
               "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     previous = None
     for f in sorted((reports / "evaluations").glob("regression-*.json"), reverse=True):
         old = _read(f)
         if (old and old["model"] == model and old.get("think") == think
+                and old.get("accuracy") is not None          # never against an all-failed run
                 and old["fingerprints"] != result["fingerprints"]):
             previous = old
             break
@@ -136,6 +141,9 @@ def score(reports: Path, model: str, *, tolerance: float, timeout: int, transpor
         result["comparedWith"] = {"fingerprints": previous["fingerprints"],
                                   "accuracy": previous["accuracy"], "delta": delta,
                                   "regression": delta < -tolerance}
+    if limit:
+        result["limitedTo"] = limit      # a smoke check: not saved, not a comparison point
+        return result
     folder = reports / "evaluations"
     folder.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -157,6 +165,7 @@ def main(argv=None, *, transport=None, frames=None) -> int:
     s.add_argument("--tolerance", type=float, default=0.05)
     s.add_argument("--timeout", type=int, default=1500)
     s.add_argument("--think", choices=("off", "on", "default"), default="default")
+    s.add_argument("--limit", type=int, help="only the first N clips (a quick check)")
     args = parser.parse_args(argv)
     try:
         reports = args.reports.expanduser()
@@ -167,7 +176,8 @@ def main(argv=None, *, transport=None, frames=None) -> int:
         with run_lock.exclusive() if transport is None else _null():
             result = score(reports, args.model, tolerance=args.tolerance, timeout=args.timeout,
                            transport=transport, frames=frames,
-                           think={"off": False, "on": True, "default": None}[args.think])
+                           think={"off": False, "on": True, "default": None}[args.think],
+                           limit=args.limit)
         print(json.dumps(result, indent=2))
         return 1 if (result.get("comparedWith") or {}).get("regression") else 0
     except (ValueError, OSError, KeyError, RuntimeError) as error:

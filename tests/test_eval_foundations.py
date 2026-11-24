@@ -156,3 +156,27 @@ def test_pipeline_profile_and_runs_commands(tmp_path, capsys):
     out = tmp_path / "log.md"
     assert pipe.main(["runs", "--reports", str(reports), "--export", str(out)]) == 0
     assert "| klip_pipeline | reels |" in out.read_text()
+
+
+def test_regression_score_says_why_calls_failed(tmp_path, capsys):
+    reg = _script("klip_regression_set")
+    reports = tmp_path / "reports"
+    j = reports / "discovery-001" / ("a" * 64) / "judgments"
+    j.mkdir(parents=True)
+    (j / "0-10000.json").write_text(json.dumps({"frameTimesMs": [500]}))
+    owner_labels.append(reports, "fact", deck="d", answers_sha256="x", items=[
+        {"item": "p|q", "answer": "yes", "sport": "ski", "question": "airborne_visible",
+         "panel": f"discovery-001/{'a' * 64}/0-10000", "sourceSha256": "a" * 64,
+         "frameTimesMs": [500]}])
+    assert reg.main(["build", "--reports", str(reports)]) == 0
+    capsys.readouterr()
+
+    def refuse(body):
+        raise RuntimeError('Local Ollama HTTP 404: model "qwen3-vl:32b-instruct" not found')
+    frames = lambda proxy, times: ["aGk="] * len(times)
+    assert reg.main(["score", "--reports", str(reports), "--model", "qwen3-vl:32b-instruct",
+                     "--limit", "1"], transport=refuse, frames=frames) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["failed"] == 1 and out["limitedTo"] == 1
+    assert "not found" in next(iter(out["failureReasons"]))
+    assert not list((reports / "evaluations").glob("regression-*.json"))   # smoke runs aren't saved
