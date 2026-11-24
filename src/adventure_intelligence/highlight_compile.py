@@ -49,7 +49,10 @@ DEFAULT_WINDOW = (3.0, 5.0)
 MIN_CLIP_S = 2.0
 FADE_SPORTS = {"snorkeling"}          # scenic dissolves; action sports hard-cut
 PREVIEW_SIZE = (960, 540)
-SIMILARITY_THRESHOLD = 0.92          # v1, uncalibrated
+SIMILARITY_THRESHOLD = 0.92          # floor; the outing's own distribution sets the rest
+SIMILARITY_QUANTILE = 0.9            # look-alike = more similar than 90% of the outing's pairs
+MIN_REEL_CLIPS = 4
+SAME_FOOTAGE = 0.985                 # at or above: the same footage, never brought back
 DUPLICATE_GAP_S = 2.0
 COLOR = {  # v1, uncalibrated; recorded with every proposal
     "redRatioUnderwater": 0.55,      # mean R / mean(G, B) below this reads as underwater
@@ -206,7 +209,8 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
     moment_of = {}
     for m in story.get("moments", []):
         moment_of.setdefault(m["scene"], m)
-    clips, used, dropped, vectors, methods = [], 0.0, [], [], set()
+    # Pass 1: every shortlisted scene becomes a candidate clip (window, look-alike vector).
+    candidates, dropped = [], []
     for rank, sid in enumerate(story["shortlist"], 1):
         s = scenes[sid]
         if s["quality"]["verdict"] == "unusable":   # the harness already refuses this
@@ -219,46 +223,79 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
             dropped.append({"scene": sid, "reason": f"under {MIN_CLIP_S} s"})
             continue
         o_in, o_out = s["startMs"] + int(a * 1000), s["startMs"] + int(b * 1000)
-        # Same recording, overlapping or nearly touching: the same moment twice.
-        twin = next((c for c in clips if c["sourceSha256"] == s["sourceSha256"]
-                     and o_in < c["originalOutMs"] + DUPLICATE_GAP_S * 1000
-                     and c["originalInMs"] < o_out + DUPLICATE_GAP_S * 1000), None)
-        if twin:
-            dropped.append({"scene": sid, "reason": f"overlaps {twin['scene']} in the same "
-                                                    "recording"})
-            continue
         frames = sampler(where["proxy"], a, b) if sampler else None
         vec, method = (embed(s["sourceSha256"], o_in, o_out) if embed else None), "siglip2"
         if vec is None and frames:
             vec, method = thumbnail_descriptor(frames), "thumbnail"
-        if vec is not None:
-            vec = np.asarray(vec, np.float32)
-            same = [(float(vec @ v), c) for v, m, c in vectors
-                    if m == method and v.shape == vec.shape]
-            best = max(same, key=lambda x: x[0], default=None)
-            if best and best[0] >= similarity_threshold:
-                dropped.append({"scene": sid, "reason": f"near-duplicate of {best[1]['scene']} "
-                                f"({method} cosine {best[0]:.3f})"})
-                continue
-        if used + (b - a) > target_seconds and clips:
-            dropped.append({"scene": sid, "reason": "over the duration budget"})
-            continue
-        used += b - a
         m = moment_of.get(sid, {})
-        clip = {
-            "scene": sid, "rank": rank, "sourceSha256": s["sourceSha256"], "file": s["file"],
-            "clockStart": s["clockStart"], "proxy": str(where["proxy"]),
-            "proxyInSeconds": a, "proxyOutSeconds": b,
-            "originalInMs": o_in, "originalOutMs": o_out,
-            "anchorSeconds": round(at, 3), "anchor": why,
-            "what": m.get("what"), "whyItMatters": m.get("whyItMatters"),
-            "quality": s["quality"], "lookalike": method if vec is not None else None,
-            "color": color_proposal(frames, s, packet["sport"]) if frames else
-            {"applies": False, "why": "not measured"}}
-        clips.append(clip)
-        if vec is not None:
-            vectors.append((vec, method, clip))
-            methods.add(method)
+        candidates.append({
+            "vec": None if vec is None else np.asarray(vec, np.float32), "method": method,
+            "clip": {
+                "scene": sid, "rank": rank, "sourceSha256": s["sourceSha256"], "file": s["file"],
+                "clockStart": s["clockStart"], "proxy": str(where["proxy"]),
+                "proxyInSeconds": a, "proxyOutSeconds": b,
+                "originalInMs": o_in, "originalOutMs": o_out,
+                "anchorSeconds": round(at, 3), "anchor": why,
+                "what": m.get("what"), "whyItMatters": m.get("whyItMatters"),
+                "quality": s["quality"], "lookalike": method if vec is not None else None,
+                "color": color_proposal(frames, s, packet["sport"]) if frames else
+                {"applies": False, "why": "not measured"}}})
+
+    # The outing's own look-alike cut-off: footage of one place (a reef, a groomed run)
+    # is similar overall, so a fixed cosine dropped distinct moments (26 on owner footage).
+    sims = [float(x["vec"] @ y["vec"]) for i, x in enumerate(candidates)
+            for y in candidates[i + 1:] if x["vec"] is not None and y["vec"] is not None
+            and x["method"] == y["method"] and x["vec"].shape == y["vec"].shape]
+    effective = similarity_threshold
+    if len(sims) >= 3:
+        effective = max(similarity_threshold, float(np.quantile(sims, SIMILARITY_QUANTILE)))
+
+    def overlap(c, kept):
+        return next((k for k in kept if k["sourceSha256"] == c["sourceSha256"]
+                     and c["originalInMs"] < k["originalOutMs"] + DUPLICATE_GAP_S * 1000
+                     and k["originalInMs"] < c["originalOutMs"] + DUPLICATE_GAP_S * 1000), None)
+
+    # Pass 2: in rank order; same-recording overlaps always go, look-alikes are deferred.
+    clips, vectors, methods, deferred, used = [], [], set(), [], 0.0
+    for cand in candidates:
+        c = cand["clip"]
+        twin = overlap(c, clips)
+        if twin:
+            dropped.append({"scene": c["scene"], "reason": f"overlaps {twin['scene']} in the "
+                                                          "same recording"})
+            continue
+        if cand["vec"] is not None:
+            same = [(float(cand["vec"] @ v), k) for v, m, k in vectors
+                    if m == cand["method"] and v.shape == cand["vec"].shape]
+            best = max(same, key=lambda x: x[0], default=None)
+            if best and best[0] >= effective:
+                deferred.append((cand, best))
+                continue
+        length = c["proxyOutSeconds"] - c["proxyInSeconds"]
+        if used + length > target_seconds and clips:
+            dropped.append({"scene": c["scene"], "reason": "over the duration budget"})
+            continue
+        used += length
+        clips.append(c)
+        if cand["vec"] is not None:
+            vectors.append((cand["vec"], cand["method"], c))
+            methods.add(cand["method"])
+    # A reel keeps at least MIN_REEL_CLIPS when the shortlist has them: look-alikes come
+    # back in rank order, marked, before a reel is left with one or two clips.
+    minimum = min(MIN_REEL_CLIPS, len(clips) + sum(sim < SAME_FOOTAGE for _, (sim, _o) in deferred))
+    for cand, (sim, other) in deferred:
+        c = cand["clip"]
+        length = c["proxyOutSeconds"] - c["proxyInSeconds"]
+        if (len(clips) < minimum and sim < SAME_FOOTAGE and not overlap(c, clips)
+                and used + length <= target_seconds):
+            used += length
+            clips.append({**c, "nearDuplicateOf": other["scene"],
+                          "similarity": round(sim, 3)})
+            vectors.append((cand["vec"], cand["method"], c))
+            methods.add(cand["method"])
+        else:
+            dropped.append({"scene": c["scene"], "reason": f"near-duplicate of {other['scene']} "
+                            f"({cand['method']} cosine {sim:.3f} >= {effective:.3f})"})
     kept_sims = [float(v1 @ v2) for i, (v1, m1, _) in enumerate(vectors)
                  for (v2, m2, _) in vectors[i + 1:] if m1 == m2 and v1.shape == v2.shape]
     if order == "clock":
@@ -274,6 +311,8 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
         "windows": {"before/after seconds": WINDOWS.get(packet["sport"], DEFAULT_WINDOW)},
         "variety": {"methods": sorted(methods) or ["none"],
                     "similarityThreshold": similarity_threshold,
+                    "effectiveThreshold": round(effective, 3),
+                    "minimumClips": MIN_REEL_CLIPS,
                     "duplicateGapSeconds": DUPLICATE_GAP_S,
                     "maxSimilarityKept": round(max(kept_sims), 3) if kept_sims else None},
         "colorMode": color_mode,

@@ -368,3 +368,25 @@ def test_story_vs_baseline_reels_blind_deck(world, tmp_path):
     _s.rmtree(ab)
     assert pipe.main(["reels", *base, "--ab-reels", "motionPeak"]) == 0
     assert not (ab / "key.json").exists()                               # held-out: no deck
+
+
+def test_lookalikes_return_to_meet_the_minimum_but_identical_footage_never_does():
+    import numpy as np
+    scenes = [{"id": f"S0{i}", "file": NAME, "sourceSha256": f"{i}".ljust(64, "a"),
+               "startMs": 0, "endMs": 10000, "clockStart": None,
+               "quality": {"verdict": "usable", "flags": []}, "observations": [],
+               "factsYes": [], "factsNo": []} for i in range(1, 6)]
+    doc = {"record": {"model": "m", "harnessStatus": "accepted", "packetSha256": "x",
+                      "story": {"shortlist": [s["id"] for s in scenes], "moments": []}},
+           "packet": {"outing": "reef", "sport": "snorkeling", "scenes": scenes}}
+    locate = lambda sha, a, b: {"proxy": Path("/x.mp4"), "segment": None, "motion": []}
+    # one reef: every pair ~0.95 similar (distinct moments); scene 5 is scene 1 again
+    base = np.array([1.0, 0.0, 0.0])
+    vecs = {"1": base, "2": np.array([0.95, 0.31, 0.0]), "3": np.array([0.95, 0.0, 0.31]),
+            "4": np.array([0.95, -0.31, 0.0]), "5": base}
+    embed = lambda sha, a, b: vecs[sha[0]] / np.linalg.norm(vecs[sha[0]])
+    rec = hc.plan_reel(doc, locate, embed=embed)
+    kept = [c["scene"] for c in rec["clips"]]
+    assert len(kept) == 4 and "S05" not in kept                       # identical: stays out
+    assert rec["variety"]["effectiveThreshold"] >= 0.92
+    assert any("S05" == d["scene"] and "near-duplicate of S01" in d["reason"] for d in rec["dropped"])
