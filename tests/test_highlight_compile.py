@@ -390,3 +390,39 @@ def test_lookalikes_return_to_meet_the_minimum_but_identical_footage_never_does(
     assert len(kept) == 4 and "S05" not in kept                       # identical: stays out
     assert rec["variety"]["effectiveThreshold"] >= 0.92
     assert any("S05" == d["scene"] and "near-duplicate of S01" in d["reason"] for d in rec["dropped"])
+
+
+def test_story_review_page_claim_labels_and_accuracy(world, tmp_path):
+    import re
+    import subprocess as sp
+    from adventure_intelligence import owner_labels
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    assert pipe.main(["story-review", *base]) == 0
+    folder = world["reports"] / "outing-stories-v1" / "review"
+    key = json.loads((folder / "deck.json").read_text())
+    page = (folder / "index.html").read_text()
+    ids = sorted(key["items"])
+    assert len(ids) == 4 and all(f'data-id="{i}"' in page for i in ids)   # 2 beats, 2 moments
+    assert "<video" in page and "/Volumes" not in page
+    js = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+    (tmp_path / "p.js").write_text(js)
+    assert sp.run(["node", "--check", str(tmp_path / "p.js")]).returncode == 0
+    moments = [i for i in ids if "moment" in i]
+    ans = {"deck": key["deck"], "claims": {moments[0]: {"verdict": "true"},
+                                           moments[1]: {"verdict": "wrong",
+                                                        "rewrite": "it's a ray, not a turtle"}}}
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps(ans))
+    assert pipe.main(["import-claims", *base, "--answers", str(f)]) == 0
+    assert len(owner_labels.load(world["reports"], "claim")) == 2
+    assert pipe.main(["eval-claims", *base]) == 0
+    res = json.loads(next((world["reports"] / "evaluations").glob("claims-*.json")).read_text())
+    dev = res["development"]
+    assert dev["overall"]["trueShare"] == 0.5 and dev["restsOn"]["obs"]["claims"] == 2
+    assert "turtle" in dev["names"] and res["wrongClaims"][0]["ownerSays"] == "it's a ray, not a turtle"

@@ -5,6 +5,7 @@ their own namespace, one JSONL file per kind, under REPORTS/owner-ledgers/:
 
     boundary-labels.jsonl   where a clip should start and end (from the reel gallery)
     fact-labels.jsonl       whether a judged fact is true (from the fact-check deck)
+    claim-labels.jsonl      whether a story's claim is true (from the story review page)
 
 Every record names the deck it came from, the SHA-256 of the downloaded answers file and
 the import time. Importing the same answer twice adds nothing; a changed answer is a new
@@ -19,7 +20,7 @@ import os
 from pathlib import Path
 
 VERSION = "klip-owner-labels-v1"
-KINDS = ("boundary", "fact")
+KINDS = ("boundary", "fact", "claim")
 
 
 def path_for(reports: Path, kind: str) -> Path:

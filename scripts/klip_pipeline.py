@@ -9,6 +9,9 @@
     ab-score score a downloaded colour A/B answers file (exact sign test)
     profile  what the library holds per capture day and sport (dataset-profile.json/.md)
     runs     the run records; --export writes a redacted table for logs/experiments/
+    story-review  write the claim-by-claim story review page (outing-stories-v1/review/)
+    import-claims import its downloaded answers as owner claim labels
+    eval-claims   story claim accuracy by evidence, by what is named, by sport
     import-trims  import the gallery's downloaded trim answers as owner boundary labels
     eval-trims    score boundary methods against those labels (development vs held-out)
     run      judge pass -> stories (quality, describe, story) -> reels, each resumable
@@ -49,6 +52,7 @@ from adventure_intelligence import boundary_review
 from adventure_intelligence import dataset_profile
 from adventure_intelligence import evidence_ledger as ledger
 from adventure_intelligence import run_records
+from adventure_intelligence import story_review
 from adventure_intelligence import holdout
 from adventure_intelligence import owner_labels
 from adventure_intelligence import run_lock
@@ -304,11 +308,12 @@ def main(argv=None, *, transport=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "reels", "run", "ab-score", "import-trims", "eval-trims",
-                 "profile", "runs"):
+                 "profile", "runs", "story-review", "import-claims", "eval-claims"):
         p = sub.add_parser(name)
         p.add_argument("--reports", type=Path, required=True)
     sub.choices["import-trims"].add_argument("--answers", type=Path, required=True)
     sub.choices["profile"].add_argument("--ledger", type=Path)
+    sub.choices["import-claims"].add_argument("--answers", type=Path, required=True)
     sub.choices["runs"].add_argument("--export", type=Path,
                                      help="write a redacted markdown table here")
     sub.choices["ab-score"].add_argument("--answers", type=Path, required=True)
@@ -346,6 +351,41 @@ def main(argv=None, *, transport=None) -> int:
         reports = args.reports.expanduser()
         if args.command == "status":
             print(json.dumps(status(reports), indent=2))
+            return 0
+        if args.command in ("story-review", "import-claims", "eval-claims"):
+            folder = reports / "outing-stories-v1" / "review"
+            if args.command == "eval-claims":
+                result = story_review.evaluate(owner_labels.load(reports, "claim"),
+                                               held_out=holdout.held_out(reports))
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                _write(reports / "evaluations" / f"claims-{stamp}.json", result)
+                print(json.dumps(result, indent=2))
+                return 0
+            if args.command == "import-claims":
+                key = _read(folder / "deck.json")
+                if key is None:
+                    raise ValueError("No story review page yet; run story-review first")
+                raw = args.answers.read_bytes()
+                print(json.dumps(story_review.import_answers(
+                    reports, key, json.loads(raw), hashlib.sha256(raw).hexdigest()), indent=2))
+                return 0
+            docs = [d for d in (_read(f) for f in sorted(
+                (reports / "outing-stories-v1" / "stories").glob("*.json"))) if d and "record" in d]
+            if not docs:
+                raise ValueError("No outing stories yet")
+            locate = _locator(reports)
+            key = story_review.deck(docs)
+            _write(folder / "deck.json", key)
+
+            def proxy_of(scene):
+                try:
+                    clip = locate(scene["sourceSha256"], scene["startMs"], scene["endMs"])["proxy"]
+                except ValueError:
+                    return None
+                return clip if clip.is_file() else None
+            _write(folder / "index.html", story_review.page(docs, key, folder, proxy_of))
+            print(json.dumps({"deck": key["deck"], "claims": len(key["items"]),
+                              "page": str(folder / "index.html")}, indent=2))
             return 0
         if args.command == "profile":
             rows = ledger.load(args.ledger.expanduser()) if args.ledger else None
