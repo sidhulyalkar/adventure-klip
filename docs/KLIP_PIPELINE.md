@@ -12,7 +12,7 @@ reached owner footage as of 2026-11-21 as follows:
 
 No ranking or reel has been owner-reviewed yet.
 
-One entry point: `scripts/klip_pipeline.py`.
+One entry point: `scripts/klip_pipeline.py`. How each design decision is measured and decided: [KLIP_EVALUATION.md](KLIP_EVALUATION.md).
 
 ```
 index        klip_value_experiment.py index      reads footage once per recording

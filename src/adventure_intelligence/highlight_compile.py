@@ -49,7 +49,10 @@ DEFAULT_WINDOW = (3.0, 5.0)
 MIN_CLIP_S = 2.0
 FADE_SPORTS = {"snorkeling"}          # scenic dissolves; action sports hard-cut
 PREVIEW_SIZE = (960, 540)
-SIMILARITY_THRESHOLD = 0.92          # v1, uncalibrated
+SIMILARITY_THRESHOLD = 0.92          # floor; the outing's own distribution sets the rest
+SIMILARITY_QUANTILE = 0.9            # look-alike = more similar than 90% of the outing's pairs
+MIN_REEL_CLIPS = 4
+SAME_FOOTAGE = 0.985                 # at or above: the same footage, never brought back
 DUPLICATE_GAP_S = 2.0
 COLOR = {  # v1, uncalibrated; recorded with every proposal
     "redRatioUnderwater": 0.55,      # mean R / mean(G, B) below this reads as underwater
@@ -206,7 +209,8 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
     moment_of = {}
     for m in story.get("moments", []):
         moment_of.setdefault(m["scene"], m)
-    clips, used, dropped, vectors, methods = [], 0.0, [], [], set()
+    # Pass 1: every shortlisted scene becomes a candidate clip (window, look-alike vector).
+    candidates, dropped = [], []
     for rank, sid in enumerate(story["shortlist"], 1):
         s = scenes[sid]
         if s["quality"]["verdict"] == "unusable":   # the harness already refuses this
@@ -219,46 +223,79 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
             dropped.append({"scene": sid, "reason": f"under {MIN_CLIP_S} s"})
             continue
         o_in, o_out = s["startMs"] + int(a * 1000), s["startMs"] + int(b * 1000)
-        # Same recording, overlapping or nearly touching: the same moment twice.
-        twin = next((c for c in clips if c["sourceSha256"] == s["sourceSha256"]
-                     and o_in < c["originalOutMs"] + DUPLICATE_GAP_S * 1000
-                     and c["originalInMs"] < o_out + DUPLICATE_GAP_S * 1000), None)
-        if twin:
-            dropped.append({"scene": sid, "reason": f"overlaps {twin['scene']} in the same "
-                                                    "recording"})
-            continue
         frames = sampler(where["proxy"], a, b) if sampler else None
         vec, method = (embed(s["sourceSha256"], o_in, o_out) if embed else None), "siglip2"
         if vec is None and frames:
             vec, method = thumbnail_descriptor(frames), "thumbnail"
-        if vec is not None:
-            vec = np.asarray(vec, np.float32)
-            same = [(float(vec @ v), c) for v, m, c in vectors
-                    if m == method and v.shape == vec.shape]
-            best = max(same, key=lambda x: x[0], default=None)
-            if best and best[0] >= similarity_threshold:
-                dropped.append({"scene": sid, "reason": f"near-duplicate of {best[1]['scene']} "
-                                f"({method} cosine {best[0]:.3f})"})
-                continue
-        if used + (b - a) > target_seconds and clips:
-            dropped.append({"scene": sid, "reason": "over the duration budget"})
-            continue
-        used += b - a
         m = moment_of.get(sid, {})
-        clip = {
-            "scene": sid, "rank": rank, "sourceSha256": s["sourceSha256"], "file": s["file"],
-            "clockStart": s["clockStart"], "proxy": str(where["proxy"]),
-            "proxyInSeconds": a, "proxyOutSeconds": b,
-            "originalInMs": o_in, "originalOutMs": o_out,
-            "anchorSeconds": round(at, 3), "anchor": why,
-            "what": m.get("what"), "whyItMatters": m.get("whyItMatters"),
-            "quality": s["quality"], "lookalike": method if vec is not None else None,
-            "color": color_proposal(frames, s, packet["sport"]) if frames else
-            {"applies": False, "why": "not measured"}}
-        clips.append(clip)
-        if vec is not None:
-            vectors.append((vec, method, clip))
-            methods.add(method)
+        candidates.append({
+            "vec": None if vec is None else np.asarray(vec, np.float32), "method": method,
+            "clip": {
+                "scene": sid, "rank": rank, "sourceSha256": s["sourceSha256"], "file": s["file"],
+                "clockStart": s["clockStart"], "proxy": str(where["proxy"]),
+                "proxyInSeconds": a, "proxyOutSeconds": b,
+                "originalInMs": o_in, "originalOutMs": o_out,
+                "anchorSeconds": round(at, 3), "anchor": why,
+                "what": m.get("what"), "whyItMatters": m.get("whyItMatters"),
+                "quality": s["quality"], "lookalike": method if vec is not None else None,
+                "color": color_proposal(frames, s, packet["sport"]) if frames else
+                {"applies": False, "why": "not measured"}}})
+
+    # The outing's own look-alike cut-off: footage of one place (a reef, a groomed run)
+    # is similar overall, so a fixed cosine dropped distinct moments (26 on owner footage).
+    sims = [float(x["vec"] @ y["vec"]) for i, x in enumerate(candidates)
+            for y in candidates[i + 1:] if x["vec"] is not None and y["vec"] is not None
+            and x["method"] == y["method"] and x["vec"].shape == y["vec"].shape]
+    effective = similarity_threshold
+    if len(sims) >= 3:
+        effective = max(similarity_threshold, float(np.quantile(sims, SIMILARITY_QUANTILE)))
+
+    def overlap(c, kept):
+        return next((k for k in kept if k["sourceSha256"] == c["sourceSha256"]
+                     and c["originalInMs"] < k["originalOutMs"] + DUPLICATE_GAP_S * 1000
+                     and k["originalInMs"] < c["originalOutMs"] + DUPLICATE_GAP_S * 1000), None)
+
+    # Pass 2: in rank order; same-recording overlaps always go, look-alikes are deferred.
+    clips, vectors, methods, deferred, used = [], [], set(), [], 0.0
+    for cand in candidates:
+        c = cand["clip"]
+        twin = overlap(c, clips)
+        if twin:
+            dropped.append({"scene": c["scene"], "reason": f"overlaps {twin['scene']} in the "
+                                                          "same recording"})
+            continue
+        if cand["vec"] is not None:
+            same = [(float(cand["vec"] @ v), k) for v, m, k in vectors
+                    if m == cand["method"] and v.shape == cand["vec"].shape]
+            best = max(same, key=lambda x: x[0], default=None)
+            if best and best[0] >= effective:
+                deferred.append((cand, best))
+                continue
+        length = c["proxyOutSeconds"] - c["proxyInSeconds"]
+        if used + length > target_seconds and clips:
+            dropped.append({"scene": c["scene"], "reason": "over the duration budget"})
+            continue
+        used += length
+        clips.append(c)
+        if cand["vec"] is not None:
+            vectors.append((cand["vec"], cand["method"], c))
+            methods.add(cand["method"])
+    # A reel keeps at least MIN_REEL_CLIPS when the shortlist has them: look-alikes come
+    # back in rank order, marked, before a reel is left with one or two clips.
+    minimum = min(MIN_REEL_CLIPS, len(clips) + sum(sim < SAME_FOOTAGE for _, (sim, _o) in deferred))
+    for cand, (sim, other) in deferred:
+        c = cand["clip"]
+        length = c["proxyOutSeconds"] - c["proxyInSeconds"]
+        if (len(clips) < minimum and sim < SAME_FOOTAGE and not overlap(c, clips)
+                and used + length <= target_seconds):
+            used += length
+            clips.append({**c, "nearDuplicateOf": other["scene"],
+                          "similarity": round(sim, 3)})
+            vectors.append((cand["vec"], cand["method"], c))
+            methods.add(cand["method"])
+        else:
+            dropped.append({"scene": c["scene"], "reason": f"near-duplicate of {other['scene']} "
+                            f"({cand['method']} cosine {sim:.3f} >= {effective:.3f})"})
     kept_sims = [float(v1 @ v2) for i, (v1, m1, _) in enumerate(vectors)
                  for (v2, m2, _) in vectors[i + 1:] if m1 == m2 and v1.shape == v2.shape]
     if order == "clock":
@@ -274,6 +311,8 @@ def plan_reel(story_doc: dict, locate, *, target_seconds: float = 60.0,
         "windows": {"before/after seconds": WINDOWS.get(packet["sport"], DEFAULT_WINDOW)},
         "variety": {"methods": sorted(methods) or ["none"],
                     "similarityThreshold": similarity_threshold,
+                    "effectiveThreshold": round(effective, 3),
+                    "minimumClips": MIN_REEL_CLIPS,
                     "duplicateGapSeconds": DUPLICATE_GAP_S,
                     "maxSimilarityKept": round(max(kept_sims), 3) if kept_sims else None},
         "colorMode": color_mode,
@@ -438,99 +477,76 @@ def gallery(reels: list[dict]) -> str:
 
 def color_ab_deck(recipes: list[dict], folder: Path, *, max_pairs: int = 24,
                   seed: str = "") -> dict:
-    """Same clip, original vs corrected, sides shuffled. The key stays in key.json, out of
-    the page; the page lets the owner pick left / right / same and download the answers."""
+    """Same clip, original vs corrected, on a blind_ab page. Snippet names are random
+    tokens, so nothing on the page says which is which."""
     import random
-    import html as html_mod
+    from . import blind_ab
     rng = random.Random(seed or "klip-color-ab")
     candidates = [(r, c) for r in recipes for c in r["clips"]
                   if c.get("color", {}).get("applies")]
     rng.shuffle(candidates)
     folder.mkdir(parents=True, exist_ok=True)
-    pairs, key = [], {}
+    pairs = []
     for n, (recipe, c) in enumerate(candidates[:max_pairs], 1):
-        pid = f"pair-{n:03d}"
-        corrected_left = rng.random() < 0.5
         d = c["proxyOutSeconds"] - c["proxyInSeconds"]
-        for side, look in (("L", c["color"]["filter"] if corrected_left else None),
-                           ("R", None if corrected_left else c["color"]["filter"])):
-            target = folder / f"{pid}-{side}.mp4"
+        paths = {}
+        for look_name, look in (("corrected", c["color"]["filter"]), ("original", None)):
+            token = sha256(f"{seed}|{recipe['recipeSha256']}|{c['scene']}|{look_name}".encode()
+                           ).hexdigest()[:10]
+            target = folder / f"clip-{token}.mp4"
             if not target.is_file():
                 _encode([["-ss", f'{c["proxyInSeconds"]:.3f}', "-t", f"{d:.3f}",
                           "-i", c["proxy"]]], [d], False, False, target,
                          size=PREVIEW_SIZE, crf=20, preset="veryfast", timeout=600,
                          looks=[look])
-        key[pid] = {"corrected": "left" if corrected_left else "right",
-                    "recipeSha256": recipe["recipeSha256"], "outing": recipe["outing"],
-                    "scene": c["scene"], "color": c["color"]}
-        pairs.append(pid)
-    deck_id = _digest({"pairs": key})[:12]
-    (folder / "key.json").write_text(json.dumps({"version": VERSION, "deck": deck_id,
-                                                 "pairs": key}, indent=2), encoding="utf-8")
-    items = "".join(
-        f'<section data-pair="{p}"><h3>{i}</h3><div class="row">'
-        f'<video muted loop playsinline preload="metadata" src="{p}-L.mp4"></video>'
-        f'<video muted loop playsinline preload="metadata" src="{p}-R.mp4"></video></div>'
-        f'<div class="b"><button data-v="left">Left looks better</button>'
-        f'<button data-v="same">No difference</button>'
-        f'<button data-v="right">Right looks better</button></div></section>'
-        for i, p in enumerate(pairs, 1))
-    page = (
-        "<!doctype html><meta charset=utf-8><title>Colour A/B</title><style>"
-        "body{font:15px system-ui;max-width:1200px;margin:2em auto;padding:0 1em}"
-        ".row{display:flex;gap:8px}.row video{width:50%;background:#000}"
-        ".b{margin:.5em 0 2.5em}button{margin-right:.5em;padding:.4em .8em}"
-        "button.on{background:#2b6;color:#fff}</style>"
-        f"<h1>Which looks better?</h1><p>{len(pairs)} pairs. Each pair is the same clip; "
-        "judge colour and look only. Click a video pair to play both.</p>" + items +
-        f'<p><button id=dl>Download answers</button> <span id=n></span></p><script>'
-        f'const deck="{html_mod.escape(deck_id)}",a={{}};'
-        'document.querySelectorAll("section").forEach(s=>{const v=s.querySelectorAll("video");'
-        's.querySelector(".row").onclick=()=>{v.forEach(x=>{x.currentTime=0;x.play()})};'
-        's.querySelectorAll("button").forEach(b=>b.onclick=()=>{a[s.dataset.pair]=b.dataset.v;'
-        's.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));'
-        'document.getElementById("n").textContent=Object.keys(a).length+" answered"})});'
-        'document.getElementById("dl").onclick=()=>{const u=URL.createObjectURL(new Blob('
-        '[JSON.stringify({deck,answers:a},null,2)],{type:"application/json"}));'
-        'const l=document.createElement("a");l.href=u;l.download="color-ab-answers-"+deck+".json";'
-        'l.click()}</script>')
-    (folder / "index.html").write_text(page, encoding="utf-8")
-    return {"deck": deck_id, "pairs": len(pairs), "page": str(folder / "index.html")}
-
-
-def _sign_test(wins: int, losses: int) -> float:
-    """Exact two-sided binomial p for wins vs losses (ties excluded)."""
-    n = wins + losses
-    if n == 0:
-        return 1.0
-    k = min(wins, losses)
-    tail = sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n
-    return min(1.0, 2 * tail)
+            paths[look_name] = target
+        pairs.append({"id": f"pair-{n:03d}", "variantPath": paths["corrected"],
+                      "baselinePath": paths["original"],
+                      "meta": {"recipeSha256": recipe["recipeSha256"], "outing": recipe["outing"],
+                               "scene": c["scene"], "color": c["color"]}})
+    return blind_ab.write_deck(folder, pairs, variant="corrected", baseline="original",
+                               question="Which looks better? (colour and look only)",
+                               seed=seed or "klip-color-ab")
 
 
 def color_ab_score(key: dict, answers: dict) -> dict:
-    if answers.get("deck") != key["deck"]:
-        raise ValueError("These answers belong to a different A/B deck")
-    corrected = original = same = 0
-    for pid, choice in answers["answers"].items():
-        truth = key["pairs"].get(pid)
-        if truth is None or choice not in ("left", "right", "same"):
-            continue
-        if choice == "same":
-            same += 1
-        elif choice == truth["corrected"]:
-            corrected += 1
-        else:
-            original += 1
-    p = _sign_test(corrected, original)
-    decided = corrected + original
-    if decided < 10:
-        verdict = "too few decided pairs to conclude (need 10 or more)"
-    elif p < 0.05:
-        verdict = ("correction preferred: use --color underwater-v1" if corrected > original
-                   else "original preferred: keep --color none")
-    else:
+    from . import blind_ab
+    r = blind_ab.score(key, answers)
+    verdict = r["verdict"]
+    if verdict == "corrected preferred":
+        verdict = "correction preferred: use --color underwater-v1"
+    elif verdict == "original preferred":
+        verdict = "original preferred: keep --color none"
+    elif verdict.startswith("no clear"):
         verdict = "no clear preference: keep --color none"
-    return {"deck": key["deck"], "pairs": len(key["pairs"]), "answered": decided + same,
-            "preferCorrected": corrected, "preferOriginal": original, "noDifference": same,
-            "signTestP": round(p, 4), "verdict": verdict}
+    return {**r, "preferCorrected": r["preferVariant"], "preferOriginal": r["preferBaseline"],
+            "verdict": verdict}
+
+
+def _sign_test(wins: int, losses: int) -> float:   # kept for callers of the old name
+    from . import blind_ab
+    return blind_ab.sign_test(wins, losses)
+
+
+# ---------------------------------------------------------------- baseline reels
+
+BASELINE_SIGNALS = ("motionPeak", "distinctiveness", "eventCandidates")
+
+
+def baseline_doc(story_doc: dict, signal: str = "motionPeak") -> dict:
+    """A story-shaped document whose shortlist ranks the same scenes by one plain signal,
+    with as many scenes as the story picked. Plans with plan_reel exactly like a story,
+    so a comparison differs only in which moments were chosen and in what order."""
+    if signal not in BASELINE_SIGNALS:
+        raise ValueError(f"signal must be one of {BASELINE_SIGNALS}")
+    record, packet = story_doc["record"], story_doc["packet"]
+    k = len(((record.get("story") or {}).get("shortlist")) or [])
+    if k == 0:
+        raise ValueError(f"{packet['outing']}: the story has no shortlist to match")
+    usable = [s for s in packet["scenes"] if s["quality"]["verdict"] != "unusable"]
+    ranked = sorted(usable, key=lambda s: (-(s["signals"].get(signal) or 0), s["id"]))
+    return {"packet": packet, "record": {
+        "model": f"baseline:{signal}", "harnessStatus": "not-applicable",
+        "packetSha256": record["packetSha256"],
+        "story": {"shortlist": [s["id"] for s in ranked[:k]], "moments": [], "beats": [],
+                  "excluded": []}}}

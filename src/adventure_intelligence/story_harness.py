@@ -131,49 +131,108 @@ def segment_quality(frames: list[dict], recording_sharpness: float | None,
 
 # ---------------------------------------------------------------- bounded JSON calls
 
+STORY_OUTPUT_TOKENS = 3072
+DESCRIBE_OUTPUT_TOKENS = 1024
+TOKENS_PER_IMAGE = 1100     # measured on qwen3-vl (Ollama resizes every image to its grid)
+CHARS_PER_TOKEN = 3.0       # conservative for English prompts and JSON
+CTX_STEP, MAX_CTX = 4096, 32768
+
+
+def estimate_prompt_tokens(messages: list[dict]) -> int:
+    text = sum(len(m.get("content") or "") for m in messages)
+    images = sum(len(m.get("images") or []) for m in messages)
+    return int(text / CHARS_PER_TOKEN) + images * TOKENS_PER_IMAGE
+
+
+def context_for(messages: list[dict], output_budget: int) -> int:
+    """A window that holds the prompt and the whole answer: Ollama stops at the window,
+    and a JSON answer cut there is unparseable (the first owner run lost 108 of 145
+    descriptions and one story this way)."""
+    need = estimate_prompt_tokens(messages) + output_budget + 256
+    return min(MAX_CTX, -(-need // CTX_STEP) * CTX_STEP)
+
+
+def _reply_tail(reply: dict | None) -> dict:
+    """What came back when it could not be parsed: Ollama's stop reason and the ends."""
+    if not isinstance(reply, dict):
+        return {}
+    msg = reply.get("message") or {}
+    content = msg.get("content") or ""
+    return {"doneReason": reply.get("done_reason"), "contentChars": len(content),
+            "thinkingChars": len(msg.get("thinking") or ""),
+            "contentHead": content[:200], "contentTail": content[-200:],
+            "outputTokens": reply.get("eval_count"), "promptTokens": reply.get("prompt_eval_count")}
+
+
 def call_json(model: str, messages: list[dict], *, schema: dict, check, transport=None,
-              timeout: int = 600, repairs: int = 1) -> dict:
+              timeout: int = 600, repairs: int = 1, think: bool | None = False,
+              output_budget: int = 1024, normalize=None) -> dict:
     """One schema-constrained call, checked by `check(parsed) -> [violations]`.
 
-    Violations are sent back `repairs` times. The result says whether the answer was
-    accepted as given, repaired, or still violating (the caller then prunes or drops it).
+    The context is sized for the prompt plus `output_budget`, and the answer is capped at
+    that budget (num_predict) so a runaway answer ends instead of filling the window. An
+    answer cut by a length limit is retried once with twice the room. Violations are sent
+    back `repairs` times. `normalize(parsed)` may fix harmless spelling first. The result
+    says accepted, repaired, violating or failed, with Ollama's stop reason.
     """
     from .adaptive_judge_v2 import _send_local
-    ctx = panel._CTX_BY_MODEL.get(model, panel.NUM_CTX)
     history, attempts, last, violations = list(messages), 0, None, []
+    budget, grown, repaired = output_budget, False, False
+    ctx = max(panel._CTX_BY_MODEL.get(model, 0), context_for(history, budget))
     while True:
         attempts += 1
-        options = {"temperature": 0, "num_ctx": ctx}
-        body = {"model": model, "stream": False, "format": schema, "options": options,
-                "keep_alive": "30m", "messages": history}
+        options = {"temperature": 0, "num_ctx": ctx, "num_predict": budget}
+        body = panel.with_think({"model": model, "stream": False, "format": schema,
+                                 "options": options, "keep_alive": "30m",
+                                 "messages": history}, think)
+        reply = None
         try:
             reply = _send_local(body, timeout=timeout, transport=transport)
             text = reply["message"]["content"]
             parsed = json.loads(text)
         except (RuntimeError, ValueError, KeyError, TypeError) as error:
+            if think is not None and panel.think_unsupported(error) and attempts <= 3:
+                think = None
+                continue
             bigger = panel._context_needed(error)
             if bigger and bigger > ctx and attempts <= 3:
                 ctx = bigger
                 continue
-            return {"status": "failed", "model": model, "options": options,
+            tail = _reply_tail(reply)
+            if tail.get("doneReason") == "length" and not grown and attempts <= 3:
+                budget, grown = budget * 2, True          # cut off: once, with more room
+                ctx = max(ctx, context_for(history, budget))
+                continue
+            detail = str(error)[:300]
+            if not tail.get("contentChars") and tail.get("thinkingChars"):
+                detail = ("the model spent its whole answer budget on hidden reasoning "
+                          f"({tail['thinkingChars']} characters) and wrote no answer, despite "
+                          "think=false: use a non-reasoning variant (e.g. an '-instruct' tag)")
+            return {"status": "failed", "model": model, "options": options, "think": think,
                     "attempts": attempts, "failure": type(error).__name__,
-                    "failureDetail": str(error)[:300], "result": last,
+                    "failureDetail": detail, "reply": tail, "result": last,
                     "violations": violations}
-        panel._CTX_BY_MODEL[model] = ctx
+        panel._CTX_BY_MODEL[model] = max(panel._CTX_BY_MODEL.get(model, 0), ctx)
+        if normalize:
+            parsed = normalize(parsed)
         last, violations = parsed, check(parsed)
+        usage = {**panel.usage(reply), "doneReason": reply.get("done_reason")}
         if not violations:
-            return {"status": "accepted" if attempts == 1 else "repaired", "model": model,
-                    "options": options, "attempts": attempts, "result": parsed,
-                    "violations": []}
+            return {"status": "repaired" if repaired else "accepted", "model": model,
+                    "options": options, "think": think, "usage": usage,
+                    "attempts": attempts, "result": parsed, "violations": []}
         if repairs <= 0:
             return {"status": "violating", "model": model, "options": options,
-                    "attempts": attempts, "result": parsed, "violations": violations}
+                    "think": think, "usage": usage, "attempts": attempts,
+                    "result": parsed, "violations": violations}
         repairs -= 1
+        repaired = True
         history = history + [
             {"role": "assistant", "content": text},
             {"role": "user", "content": "Your answer breaks these rules:\n- " +
              "\n- ".join(violations[:30]) + "\nReturn the full answer again with only "
              "these problems fixed. Do not add claims that are not in the evidence."}]
+        ctx = max(ctx, context_for(history, budget))
 
 
 # ---------------------------------------------------------------- describe (VLM)
@@ -181,7 +240,9 @@ def call_json(model: str, messages: list[dict], *, schema: dict, check, transpor
 CAMERA = ("steady", "moving_smoothly", "shaky", "unclear")
 
 
-def describe_schema() -> dict:
+def describe_schema(n_frames: int = 8) -> dict:
+    """Observations name a frame NUMBER from a closed list, so a valid time is guaranteed by
+    the output grammar; the harness converts it to seconds (with_times)."""
     yn = {"type": "string", "enum": ["yes", "no", "unclear"]}
     return {"type": "object", "additionalProperties": False,
             "required": ["observations", "summary", "subjects", "setting", "cameraMotion",
@@ -189,8 +250,9 @@ def describe_schema() -> dict:
             "properties": {
                 "observations": {"type": "array", "minItems": 1, "maxItems": 8, "items": {
                     "type": "object", "additionalProperties": False,
-                    "required": ["atSeconds", "text"],
-                    "properties": {"atSeconds": {"type": "number"},
+                    "required": ["frame", "text"],
+                    "properties": {"frame": {"type": "integer",
+                                             "enum": list(range(1, max(1, n_frames) + 1))},
                                    "text": {"type": "string", "maxLength": 200}}}},
                 "summary": {"type": "string", "maxLength": 300},
                 "subjects": {"type": "array", "maxItems": 8,
@@ -204,32 +266,49 @@ def describe_schema() -> dict:
 
 
 def describe_prompt(sport: str, stamps_ms: list[int], duration_ms: int) -> str:
-    times = ", ".join(f"{t / 1000:.1f}s" for t in stamps_ms)
+    frames = ", ".join(f"frame {i} at {t / 1000:.1f}s" for i, t in enumerate(stamps_ms, 1))
     return (
-        f"These are frames, in time order, from one {duration_ms / 1000:.0f}-second clip of "
-        f"a first-person action camera during {sport}. They were taken at: {times}.\n"
-        "Describe only what is visible. For each observation give the second (from the "
-        "list above) at which it is visible. Do not guess what happens between frames, "
-        "do not invent animals, people or tricks, and do not say whether the clip is good. "
-        "List the subjects you can see, the setting, how the camera moves, and whether the "
-        "frames are in focus, well exposed and taken through a clear lens.")
+        f"These are {len(stamps_ms)} frames, in time order, from one "
+        f"{duration_ms / 1000:.0f}-second clip of a first-person action camera during "
+        f"{sport}: {frames}.\n"
+        "Describe only what is visible. For each observation give the number of the frame "
+        f"(1 to {len(stamps_ms)}) in which it is visible. Do not guess what happens between "
+        "frames, do not invent animals, people or tricks, and do not say whether the clip is "
+        "good. Keep each observation to one short sentence. List the subjects you can see, "
+        "the setting, how the camera moves, and whether the frames are in focus, well "
+        "exposed and taken through a clear lens.")
 
 
 def check_description(d: dict, duration_ms: int, stamps_ms: list[int]) -> list[str]:
     out = []
+    n = len(stamps_ms)
     allowed = {round(t / 1000, 1) for t in stamps_ms}
     for i, o in enumerate(d.get("observations", [])):
-        at = o.get("atSeconds")
-        if not isinstance(at, (int, float)) or not 0 <= at <= duration_ms / 1000 + 0.5:
-            out.append(f"observation {i} is at {at}s, outside the clip (0-"
-                       f"{duration_ms / 1000:.1f}s)")
-        elif min(abs(at - a) for a in allowed) > 1.0:
-            out.append(f"observation {i} is at {at}s, which is not one of the frame times")
+        if "frame" in o:
+            if not isinstance(o["frame"], int) or not 1 <= o["frame"] <= n:
+                out.append(f"observation {i} names frame {o['frame']}; frames are 1 to {n}")
+        else:   # descriptions written before frame numbers
+            at = o.get("atSeconds")
+            if not isinstance(at, (int, float)) or not 0 <= at <= duration_ms / 1000 + 0.5:
+                out.append(f"observation {i} is at {at}s, outside the clip (0-"
+                           f"{duration_ms / 1000:.1f}s)")
+            elif min(abs(at - a) for a in allowed) > 1.0:
+                out.append(f"observation {i} is at {at}s, which is not one of the frame times")
         if not o.get("text", "").strip():
             out.append(f"observation {i} is empty")
     if not d.get("summary", "").strip():
         out.append("summary is empty")
     return out
+
+
+def with_times(d: dict, stamps_ms: list[int]) -> dict:
+    """A description whose observations also carry atSeconds, from their frame numbers."""
+    obs = []
+    for o in d.get("observations", []):
+        if "frame" in o and isinstance(o["frame"], int) and 1 <= o["frame"] <= len(stamps_ms):
+            o = {**o, "atSeconds": round(stamps_ms[o["frame"] - 1] / 1000, 3)}
+        obs.append(o)
+    return {**d, "observations": obs}
 
 
 # ---------------------------------------------------------------- packet
@@ -273,9 +352,14 @@ def build_packet(outing: str, sport: str, scenes: list[dict], *, footage_ms: int
             "clockStart": datetime.fromtimestamp(start).strftime("%H:%M:%S") if start else None,
             "partOfDay": part_of_day(datetime.fromtimestamp(start).hour) if start else None,
             "quality": {"verdict": s["quality"]["verdict"], "flags": s["quality"]["flags"]},
-            "factsYes": sorted(k for k, v in facts.items() if v["outcome"] == "agreed_yes"),
-            "factsNo": sorted(k for k, v in facts.items() if v["outcome"] == "agreed_no"),
+            "factsYes": sorted(k for k, v in facts.items()
+                               if v["outcome"] in ("agreed_yes", "resolved_yes")),
+            "factsNo": sorted(k for k, v in facts.items()
+                              if v["outcome"] in ("agreed_no", "resolved_no")),
             "factsDisputed": sorted(k for k, v in facts.items() if v["outcome"] == "disputed"),
+            # Settled by owner-calibrated judge reliability, not by agreement: kept visible.
+            "factsResolved": sorted(k for k, v in facts.items()
+                                    if v["outcome"] in ("resolved_yes", "resolved_no")),
             "summary": d.get("summary"), "subjects": d.get("subjects", []),
             "setting": d.get("setting"), "cameraMotion": d.get("cameraMotion"),
             "observations": [f'{o["atSeconds"]:.1f}s: {o["text"]}'
@@ -294,8 +378,58 @@ def packet_digest(packet: dict) -> str:
 
 # ---------------------------------------------------------------- story (LLM)
 
-def story_schema(scene_ids: list[str]) -> dict:
+def evidence_refs(packet: dict) -> list[str]:
+    """Every citation a story may use, across the outing's scenes."""
+    refs = set()
+    for s in packet["scenes"]:
+        refs |= {f"fact:{k}" for k in s["factsYes"]}
+        refs |= {f"obs:{i}" for i in range(1, len(s["observations"]) + 1)}
+        refs |= {f"subject:{x}" for x in s["subjects"]}
+        refs |= {f"signal:{k}" for k in s["signals"]}
+        refs |= {f"quality:{f}" for f in s["quality"]["flags"]}
+    return sorted(refs)
+
+
+_FACT_FORMS = (re.compile(r"^(?:yes|fact|facts)\s*:\s*([a-z_]+)$"),
+               re.compile(r"^([a-z_]+)\s*:\s*yes$"))
+_OBS_FORM = re.compile(r"^(?:obs|observation)\s*[:#\s]\s*<?\s*(\d+)\s*>?$")
+
+
+def normalize_ref(ref: str, scene: dict | None) -> str | None:
+    """A citation in its canonical form, or None when it cites nothing (a bare scene id)."""
+    r = (ref or "").strip()
+    low = r.lower()
+    if re.fullmatch(r"s\d+", low):
+        return None
+    for form in _FACT_FORMS:
+        m = form.match(low)
+        if m:
+            return f"fact:{m.group(1)}"
+    m = _OBS_FORM.match(low)
+    if m:
+        return f"obs:{int(m.group(1))}"
+    if scene and low in scene.get("factsYes", []):
+        return f"fact:{low}"
+    return r
+
+
+def normalize_story(story: dict, packet: dict) -> dict:
+    scenes = {s["id"]: s for s in packet["scenes"]}
+    out = json.loads(json.dumps(story))
+    for m in out.get("moments", []):
+        refs = []
+        for ref in m.get("evidence", []):
+            n = normalize_ref(ref, scenes.get(m.get("scene")))
+            if n and n not in refs:
+                refs.append(n)
+        m["evidence"] = refs
+    return out
+
+
+def story_schema(scene_ids: list[str], refs: list[str] | None = None) -> dict:
     sid = {"type": "string", "enum": scene_ids}
+    ref_item = ({"type": "string", "enum": refs} if refs
+                else {"type": "string", "maxLength": 60})
     return {"type": "object", "additionalProperties": False,
             "required": ["beats", "moments", "shortlist", "excluded"],
             "properties": {
@@ -312,7 +446,7 @@ def story_schema(scene_ids: list[str]) -> dict:
                         "what": {"type": "string", "maxLength": 240},
                         "whyItMatters": {"type": "string", "maxLength": 300},
                         "evidence": {"type": "array", "minItems": 1, "maxItems": 6,
-                                     "items": {"type": "string", "maxLength": 60}},
+                                     "items": ref_item},
                         "confidence": {"type": "string", "enum": ["high", "medium", "low"]}}}},
                 "shortlist": {"type": "array", "items": sid},
                 "excluded": {"type": "array", "items": {
@@ -361,7 +495,9 @@ def story_prompt(packet: dict, shortlist_max: int) -> str:
             + (f" ({', '.join(s['quality']['flags'])})" if s["quality"]["flags"] else ""))
         lines.append(f"  yes: {', '.join(s['factsYes']) or '-'} | no: "
                      f"{', '.join(s['factsNo']) or '-'} | disputed: "
-                     f"{', '.join(s['factsDisputed']) or '-'}")
+                     f"{', '.join(s['factsDisputed']) or '-'}"
+                     + (f" | settled by measured judge reliability: {', '.join(s['factsResolved'])}"
+                        if s.get("factsResolved") else ""))
         if s["summary"]:
             lines.append(f"  summary: {s['summary']}")
         if s["subjects"]:
@@ -409,8 +545,11 @@ def scene_words(scene: dict, sport: str) -> set[str]:
     return _words(text.replace("_", " "))
 
 
-def check_story(story: dict, packet: dict, shortlist_max: int) -> list[str]:
-    """Every violation, as a sentence the model can act on. Empty means grounded."""
+def check_story(story: dict, packet: dict, shortlist_max: int,
+                warnings: list[str] | None = None) -> list[str]:
+    """Every violation, as a sentence the model can act on. Empty means grounded.
+    'first'/'last' about scenes that are not first/last is only a warning (collected in
+    `warnings`): it removed many plausible claims in the first owner run."""
     scenes = {s["id"]: s for s in packet["scenes"]}
     order = [s["id"] for s in packet["scenes"]]
     seen = {k: scene_words(v, packet["sport"]) for k, v in scenes.items()}
@@ -428,10 +567,11 @@ def check_story(story: dict, packet: dict, shortlist_max: int) -> list[str]:
             if part in words and None not in parts and part not in parts:
                 out.append(f"{where} says '{part}' but its scenes are in the "
                            f"{', '.join(sorted(parts))}")
+        soft = warnings if warnings is not None else []
         if words & _FIRST and order and order[0] not in ids:
-            out.append(f"{where} says 'first' but does not include the first scene {order[0]}")
+            soft.append(f"{where} says 'first' but does not include the first scene {order[0]}")
         if words & _LAST and order and order[-1] not in ids:
-            out.append(f"{where} says 'last' but does not include the last scene {order[-1]}")
+            soft.append(f"{where} says 'last' but does not include the last scene {order[-1]}")
 
     last_pos = -1
     for b, beat in enumerate(story.get("beats", []), 1):
@@ -526,7 +666,7 @@ def prune(story: dict, packet: dict, shortlist_max: int) -> tuple[dict, list[str
 
 
 def tell(packet: dict, model: str, *, transport=None, timeout: int = 600,
-         shortlist_max: int | None = None) -> dict:
+         shortlist_max: int | None = None, think: bool | None = False) -> dict:
     """Story for one outing, validated, repaired once, then pruned. Always returns a record."""
     ids = [s["id"] for s in packet["scenes"]]
     if not ids:
@@ -537,17 +677,22 @@ def tell(packet: dict, model: str, *, transport=None, timeout: int = 600,
         [{"role": "system", "content": "You write grounded, factual recaps of outdoor "
           "action-camera footage. You never invent what the evidence does not show."},
          {"role": "user", "content": story_prompt(packet, limit)}],
-        schema=story_schema(ids), transport=transport, timeout=timeout,
-        check=lambda s: check_story(s, packet, limit))
+        schema=story_schema(ids, evidence_refs(packet)), transport=transport,
+        timeout=timeout, check=lambda s: check_story(s, packet, limit), think=think,
+        output_budget=STORY_OUTPUT_TOKENS, normalize=lambda s: normalize_story(s, packet))
     record = {"version": VERSION, "outing": packet["outing"], "sport": packet["sport"],
               "packetSha256": packet_digest(packet), "model": model,
-              "options": answer["options"], "harnessStatus": answer["status"],
+              "options": answer["options"], "think": answer.get("think"),
+              "usage": answer.get("usage"), "harnessStatus": answer["status"],
               "attempts": answer["attempts"], "shortlistMax": limit,
               "violationsBeforePruning": answer["violations"],
               "isModelProposalNotOwnerJudgment": True}
     if answer["result"] is None:
         return {**record, "story": None, "removedByHarness": [],
-                "failureDetail": answer.get("failureDetail")}
+                "failureDetail": answer.get("failureDetail"), "reply": answer.get("reply")}
+    warned: list[str] = []
+    check_story(answer["result"], packet, limit, warnings=warned)
+    record["warnings"] = warned
     kept, removed = prune(answer["result"], packet, limit) if answer["violations"] else (
         answer["result"], [])
     if not answer["violations"]:
@@ -580,6 +725,9 @@ def markdown(record: dict, packet: dict) -> str:
               f"{by_id[sid]['endMs'] / 1000:.0f}s" for i, sid in enumerate(story["shortlist"], 1)]
     lines += ["", "## Excluded"]
     lines += [f"- {e['scene']}: {e['reason']}" for e in story["excluded"]]
+    if record.get("warnings"):
+        lines += ["", "## Worth a look (kept, but the wording may overreach)"]
+        lines += [f"- {w}" for w in record["warnings"]]
     if record["removedByHarness"]:
         lines += ["", "## Removed by the harness (claims the evidence did not support)"]
         lines += [f"- {r}" for r in record["removedByHarness"]]

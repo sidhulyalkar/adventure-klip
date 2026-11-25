@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -27,12 +28,18 @@ from statistics import median
 import sys
 
 from adventure_intelligence import judge_panel as panel
+from adventure_intelligence import evidence_ledger as ledger
+from adventure_intelligence import holdout
+from adventure_intelligence import judge_reliability
+from adventure_intelligence import owner_examples
 from adventure_intelligence import outing_roster as roster
+from adventure_intelligence import run_lock
 from adventure_intelligence import story_harness as harness
 from adventure_intelligence.discovery_experiment import FRAME_MARGIN_MS, MIN_VIDEO_MS
 from adventure_intelligence.panel_frames import video_span
 
 STAGES = ("quality", "describe", "story")
+THINK = {"off": False, "on": True, "default": None}
 SKIP_SPORTS = {"unknown"}
 
 
@@ -85,7 +92,11 @@ def collect(reports: Path, outing_of: dict[str, str]) -> list[dict]:
 def _times(item: dict, max_frames: int) -> list[int]:
     judged = item["judged"]
     if judged and judged.get("frameTimesMs"):
-        return judged["frameTimesMs"]
+        times = judged["frameTimesMs"]       # the frames the judges saw, thinned to max_frames
+        if len(times) > max_frames:
+            step = len(times) / max_frames
+            times = [times[int(i * step + step / 2)] for i in range(max_frames)]
+        return times
     s = item["segment"]
     length = s["endMs"] - s["startMs"]
     span = video_span(item["proxy"])   # plan inside the clip's real video
@@ -97,7 +108,7 @@ def _times(item: dict, max_frames: int) -> list[int]:
                             max_frames=max_frames)
 
 
-def run_quality(items: list[dict], out: Path, log) -> int:
+def run_quality(items: list[dict], out: Path, log, weak: dict | None = None) -> int:
     done = 0
     by_rec = defaultdict(list)
     for it in items:
@@ -133,7 +144,7 @@ def run_quality(items: list[dict], out: Path, log) -> int:
                 continue
             times, ms = metrics[it["key"]]
             j = harness.jitter(series, it["segment"]["startMs"], it["segment"]["endMs"])
-            facts = (it["judged"] or {}).get("panel", {}).get("facts")
+            facts = _facts(it, None, weak)
             q = harness.segment_quality(ms, sharp, j / jit_median if j and jit_median else None,
                                         facts)
             _write(out / "segments" / sha / f'{it["key"]}.quality.json',
@@ -144,7 +155,8 @@ def run_quality(items: list[dict], out: Path, log) -> int:
 
 
 def run_describe(items: list[dict], out: Path, model: str, budget: list | None,
-                 timeout: int, log, transport=None) -> int:
+                 timeout: int, log, transport=None, frames: int = 8,
+                 think: bool | None = False) -> int:
     from adventure_intelligence.panel_frames import sample_frames
     done = 0
     for it in items:
@@ -160,14 +172,17 @@ def run_describe(items: list[dict], out: Path, model: str, budget: list | None,
             break
         s = it["segment"]
         length = s["endMs"] - s["startMs"]
-        times = _times(it, 16)
+        times = _times(it, frames)
         log(f'{it["sourceSha256"][:12]} describing {it["key"]} ms with {model}')
         images = sample_frames(it["proxy"], times)
         answer = harness.call_json(
             model, [{"role": "user", "content": harness.describe_prompt(it["sport"], times, length),
                      "images": images}],
-            schema=harness.describe_schema(), transport=transport, timeout=timeout,
-            check=lambda d: harness.check_description(d, length, times))
+            schema=harness.describe_schema(len(times)), transport=transport, timeout=timeout,
+            check=lambda d: harness.check_description(d, length, times), think=think,
+            output_budget=harness.DESCRIBE_OUTPUT_TOKENS)
+        if answer.get("result"):
+            answer = {**answer, "result": harness.with_times(answer["result"], times)}
         if budget is not None:
             budget[0] -= 1
         _write(target, {"version": harness.VERSION, "sourceSha256": it["sourceSha256"],
@@ -184,13 +199,58 @@ def groups(items: list[dict]) -> dict[tuple[str, str], list[dict]]:
     return dict(out)
 
 
+def _facts(it: dict, reliability: dict | None, weak: dict | None = None) -> dict | None:
+    """Panel facts: answers to questions the judges can't answer consistently count as
+    uncertain; then disputes are settled where owner-measured reliability allows."""
+    facts = (it["judged"] or {}).get("panel", {}).get("facts")
+    if facts and weak:
+        facts = judge_reliability.demote(facts, it["sport"], weak)
+    if facts and reliability:
+        facts = judge_reliability.apply(facts, it["sport"], reliability)
+    return facts
+
+
+def weak_questions(reports: Path) -> dict:
+    """Computed from the panels now, so it can never be stale."""
+    return judge_reliability.weak_questions(
+        judge_reliability.agreement(judge_reliability.panels(reports)))
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()[:80]
 
 
+def _names(reports: Path) -> dict[str, str]:
+    out = {}
+    for f in reports.glob("discovery-*/sources.json"):
+        for row in _read(f) or []:
+            out[row["sourceSha256"]] = Path(row["path"]).name
+    return out
+
+
+def _embedder(reports: Path):
+    folder = reports / "evidence"
+    if not (folder / "vocabulary.json").is_file():
+        return None
+    try:
+        from adventure_intelligence.moment_evidence import Store
+        store = Store(folder)
+    except (ValueError, OSError):
+        return None
+
+    def embed(sha, a, b):
+        got = store.interval(sha, a, b)
+        return None if got is None else got.get("embedding")
+    return embed
+
+
 def run_story(items: list[dict], out: Path, model: str, budget: list | None, timeout: int,
-              log, transport=None) -> int:
+              log, transport=None, reliability: dict | None = None,
+              ledger_rows: list[dict] | None = None, reports: Path | None = None,
+              embed=None, weak: dict | None = None, think: bool | None = False) -> int:
     done = 0
+    names = _names(reports) if (ledger_rows and reports) else {}
+    banned = holdout.held_out(reports) if reports else set()
     for (outing, sport), members in sorted(groups(items).items()):
         scenes, footage = [], {}
         for it in members:
@@ -203,7 +263,8 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
             scenes.append({
                 "file": it["file"], "sourceSha256": it["sourceSha256"],
                 "startMs": s["startMs"], "endMs": s["endMs"], "capture": it["capture"],
-                "quality": quality, "facts": (it["judged"] or {}).get("panel", {}).get("facts"),
+                "quality": quality,
+                "facts": _facts(it, reliability, weak),
                 "description": described.get("result") if described.get("status") in (
                     "accepted", "repaired") else None,
                 "signals": {k: v for k, v in (("motionPeak", s.get("peakChange")),
@@ -211,8 +272,14 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
                                               ("distinctiveness", s.get("distinctiveness")))
                             if v is not None}})
             footage[it["sourceSha256"]] = it["durationMs"]
+        examples = owner_examples.select(
+            [{"sourceSha256": sc["sourceSha256"], "startMs": sc["startMs"],
+              "endMs": sc["endMs"], "file": sc["file"]} for sc in scenes],
+            ledger_rows, embed=embed, names=names, held_out=banned) if ledger_rows else []
         packet = harness.build_packet(f"{outing} / {sport}", sport, scenes,
-                                      footage_ms=sum(footage.values()))
+                                      footage_ms=sum(footage.values()), examples=examples)
+        packet["weakQuestions"] = sorted(f"{q}: {why}" for (sp, q), why in (weak or {}).items()
+                                         if sp == sport)
         target = out / "stories" / f"{_slug(outing)}--{sport}.json"
         previous = _read(target)
         if (previous and previous["record"]["packetSha256"] == harness.packet_digest(packet)
@@ -224,7 +291,7 @@ def run_story(items: list[dict], out: Path, model: str, budget: list | None, tim
             n = len(list((out / "stories" / "history").glob(f"{target.stem}.*.json"))) + 1
             _write(out / "stories" / "history" / f"{target.stem}.{n:03d}.json", previous)
         log(f"story for {outing} / {sport}: {len(scenes)} scenes with {model}")
-        record = harness.tell(packet, model, transport=transport, timeout=timeout)
+        record = harness.tell(packet, model, transport=transport, timeout=timeout, think=think)
         if budget is not None:
             budget[0] -= 1
         _write(target, {"record": record, "packet": packet})
@@ -244,6 +311,14 @@ def main(argv=None, *, transport=None) -> int:
     parser.add_argument("--max-calls", type=int, help="stop after this many model calls")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--describe-frames", type=int, default=8,
+                        help="frames per description (each costs ~1,060 prompt tokens)")
+    parser.add_argument("--think", choices=tuple(THINK), default="off",
+                        help="model reasoning before answering: off (default, much faster), "
+                             "on, or the model's default")
+    parser.add_argument("--ledger", type=Path,
+                        help="owner evidence ledger: similar past keep/skip judgments become "
+                             "story examples (never held-out or same-day ones)")
     args = parser.parse_args(argv)
 
     def log(message):
@@ -283,13 +358,22 @@ def main(argv=None, *, transport=None) -> int:
         budget = [args.max_calls] if args.max_calls is not None else None
         result = {}
         if "quality" in args.stages:
-            result["qualityMeasured"] = run_quality(items, out, log)
-        if "describe" in args.stages:
-            result["described"] = run_describe(items, out, args.describe_model, budget,
-                                               args.timeout, log, transport)
-        if "story" in args.stages:
-            result["stories"] = run_story(items, out, args.story_model, budget, args.timeout,
-                                          log, transport)
+            result["qualityMeasured"] = run_quality(items, out, log,
+                                                    weak_questions(args.reports.expanduser()))
+        uses_models = {"describe", "story"} & set(args.stages)
+        with run_lock.exclusive(log=log) if uses_models and transport is None else nullcontext():
+            if "describe" in args.stages:
+                result["described"] = run_describe(items, out, args.describe_model, budget,
+                                                   args.timeout, log, transport,
+                                                   frames=args.describe_frames, think=THINK[args.think])
+            if "story" in args.stages:
+                rel = _read(args.reports.expanduser() / "judge-reliability.json")
+                rows = ledger.load(args.ledger.expanduser()) if args.ledger else None
+                result["stories"] = run_story(
+                    items, out, args.story_model, budget, args.timeout, log, transport,
+                    reliability=rel, ledger_rows=rows, reports=args.reports.expanduser(),
+                    embed=_embedder(args.reports.expanduser()) if rows else None,
+                    weak=weak_questions(args.reports.expanduser()), think=THINK[args.think])
         status = defaultdict(int)
         for f in (out / "stories").glob("*.json"):
             doc = _read(f)
@@ -303,4 +387,5 @@ def main(argv=None, *, transport=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from adventure_intelligence import run_records
+    raise SystemExit(run_records.main_recorded(main, "klip_outing_stories"))

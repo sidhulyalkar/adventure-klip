@@ -20,6 +20,7 @@ import sys
 import time
 
 from adventure_intelligence import judge_panel as panel
+from adventure_intelligence import run_lock
 from adventure_intelligence.media import require_tool
 from adventure_intelligence.panel_frames import sample_frames
 
@@ -39,17 +40,24 @@ def main(argv=None) -> int:
     parser.add_argument("--frames", nargs="+", type=int, default=[4, 8, 16])
     parser.add_argument("--widths", nargs="+", type=int, default=[448])
     parser.add_argument("--timeout", type=int, default=1200)
+    parser.add_argument("--think", nargs="+", choices=("off", "on", "default"), default=["default"],
+                        help="compare reasoning on/off (e.g. --think on off)")
     args = parser.parse_args(argv)
     try:
         length = _duration_ms(args.clip)
+        lock = run_lock.exclusive(wait=False)   # timings under contention are meaningless
+        lock.__enter__()
         for model in args.models:
-            for width in args.widths:
+            for think in args.think:
+              for width in args.widths:
                 for n in args.frames:
                     times = panel.frame_plan(0, length, [], max_frames=n)
                     images = sample_frames(args.clip, times, width=width)
                     began = time.monotonic()
-                    out = panel.ask(model, args.sport, images, times, timeout=args.timeout)
-                    print(json.dumps({"model": model, "frames": len(times), "width": width,
+                    out = panel.ask(model, args.sport, images, times, timeout=args.timeout,
+                                    think={"off": False, "on": True, "default": None}[think])
+                    print(json.dumps({"model": model, "think": think, "frames": len(times),
+                                      "width": width,
                                       "status": out["status"],
                                       "wallSeconds": round(time.monotonic() - began, 1),
                                       **out.get("usage", {}),

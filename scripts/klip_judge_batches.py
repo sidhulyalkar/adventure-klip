@@ -33,6 +33,7 @@ import sys
 
 from adventure_intelligence import discovery_experiment as experiment
 from adventure_intelligence import outing_roster as roster
+from adventure_intelligence import run_lock
 
 
 def _folders(reports: Path, names: list[str] | None) -> list[Path]:
@@ -210,26 +211,27 @@ def main(argv=None) -> int:
                              " && ".join(f"ollama pull {m}" for m in missing))
         budget = [args.max_calls] if args.max_calls is not None else None
         workspace = args.reports.expanduser().absolute().parent
-        # Model-major across the whole pass: one model answers every folder before the
-        # next is loaded, so two ~20 GB models are never resident together (on a 64 GB
-        # Mac that pushes Ollama past the GPU memory limit and calls time out).
-        for model in sorted(models, key=lambda m: (m != args.first_model, m)):
-            for folder in folders:
-                if backlog[folder.name]["judgeCallsLeft"] == 0:
-                    continue
-                if budget is not None and budget[0] <= 0:
-                    break
-                print(f"[judge] {model} on {folder.name}", file=sys.stderr, flush=True)
-                report = experiment.run(
-                    inputs[folder.name], folder, workspace=workspace,
-                    trusted_root=args.trusted_source_root, allow_mounted=True,
-                    stages=("judge",), judge_budget=budget, judge_models=[model],
-                    judge_timeout=args.timeout,
-                    log=lambda m: print("[judge]", m, file=sys.stderr, flush=True))
-                t = report["totals"]
-                print(json.dumps({"model": model, "folder": folder.name, **{k: t[k] for k in (
-                    "judgeCallsAnswered", "judgeCallsLeft", "judgeAbstentions",
-                    "judgeControlFailures", "segmentsWithDisputedFacts", "failedSources")}}))
+        with run_lock.exclusive(log=lambda m: print("[judge]", m, file=sys.stderr, flush=True)):
+            # Model-major across the whole pass: one model answers every folder before the
+            # next is loaded, so two ~20 GB models are never resident together (on a 64 GB
+            # Mac that pushes Ollama past the GPU memory limit and calls time out).
+            for model in sorted(models, key=lambda m: (m != args.first_model, m)):
+                for folder in folders:
+                    if backlog[folder.name]["judgeCallsLeft"] == 0:
+                        continue
+                    if budget is not None and budget[0] <= 0:
+                        break
+                    print(f"[judge] {model} on {folder.name}", file=sys.stderr, flush=True)
+                    report = experiment.run(
+                        inputs[folder.name], folder, workspace=workspace,
+                        trusted_root=args.trusted_source_root, allow_mounted=True,
+                        stages=("judge",), judge_budget=budget, judge_models=[model],
+                        judge_timeout=args.timeout,
+                        log=lambda m: print("[judge]", m, file=sys.stderr, flush=True))
+                    t = report["totals"]
+                    print(json.dumps({"model": model, "folder": folder.name, **{k: t[k] for k in (
+                        "judgeCallsAnswered", "judgeCallsLeft", "judgeAbstentions",
+                        "judgeControlFailures", "segmentsWithDisputedFacts", "failedSources")}}))
         print(json.dumps({"secondsPerCall": _seconds_per_call(folders),
                           "ollamaUsage": _usage(folders),
                           "panelOutcomesByQuestion": _outcomes(folders)}, indent=2))
@@ -240,4 +242,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from adventure_intelligence import run_records
+    raise SystemExit(run_records.main_recorded(main, "klip_judge_batches"))

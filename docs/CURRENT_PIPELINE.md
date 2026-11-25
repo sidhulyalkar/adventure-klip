@@ -30,6 +30,7 @@ older versioned experiment reports. Older docs are historical evidence.
 | Judge pass over index batches | scripts/klip_judge_batches.py, scripts/klip_guess_activities.py, scripts/klip_vlm_bench.py | Backlog, roster relabelling with provenance, model-major order, Ollama usage; running on owner footage (2026-11-21) |
 | Grounded outing stories | story_harness.py, scripts/klip_outing_stories.py; [KLIP_GROUNDED_OUTING_STORIES_V1.md](KLIP_GROUNDED_OUTING_STORIES_V1.md) | Quality gate, VLM descriptions, code-validated LLM stories; synthetic CI passed only |
 | Highlight compile | highlight_compile.py | Recipes from validated shortlists, preview from review clips, approval-gated master from originals; synthetic CI passed only |
+| **Evaluation foundations** | [KLIP_EVALUATION.md](KLIP_EVALUATION.md); holdout.py, owner_labels.py, judge_reliability.py, boundary_review.py, blind_ab.py, owner_examples.py, dataset_profile.py, run_records.py, run_lock.py; scripts/klip_holdout.py, klip_fact_check.py, klip_regression_set.py, klip_tag_micro_recordings.py | Held-out days, owner label namespaces, judge reliability, trims, blind A/B, dataset profile, run records; synthetic CI passed only |
 | K-MOMENT / K-TIDE research | main branch scripts and offline cache | Eight dense windows; no proven ranking advantage |
 
 Core contracts: **Asset → Observation → Candidate Moment → Owner-reviewed

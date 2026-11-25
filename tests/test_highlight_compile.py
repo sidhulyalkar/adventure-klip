@@ -74,7 +74,13 @@ STORY = {"beats": [{"text": "Over the reef a turtle swims past.", "scenes": ["S0
 
 def _fake(body):
     if "images" in body["messages"][0]:
-        return {"message": {"content": json.dumps(DESC)}}
+        import re
+        # like a real describer: name the frame (from the list it was shown) nearest 14.5 s
+        times = [float(t) for t in re.findall(r"frame \d+ at ([0-9]+\.[0-9])s",
+                                              body["messages"][0]["content"])]
+        frame = min(range(len(times)), key=lambda i: abs(times[i] - 14.5)) + 1
+        desc = {**DESC, "observations": [{"frame": frame, "text": DESC["observations"][0]["text"]}]}
+        return {"message": {"content": json.dumps(desc)}}
     return {"message": {"content": json.dumps(STORY)}}
 
 
@@ -118,8 +124,10 @@ def test_end_to_end_stories_to_preview_reel_and_gallery(world):
     recipe = json.loads(next(hl.glob("*.recipe.json")).read_text())
     assert [c["scene"] for c in recipe["clips"]] == ["S01", "S02"]          # clock order
     first = recipe["clips"][0]
-    assert first["anchor"] == "observation 1" and first["anchorSeconds"] == 14.5
-    assert (first["proxyInSeconds"], first["proxyOutSeconds"]) == (10.0, 20.0)
+    assert first["anchor"] == "observation 1" and 13 < first["anchorSeconds"] < 16
+    at = first["anchorSeconds"]                      # snorkeling: 4 s lead-in, 6 s after
+    assert (first["proxyInSeconds"], first["proxyOutSeconds"]) == hc.window(at, 20.0, "snorkeling")
+    assert first["proxyOutSeconds"] - first["proxyInSeconds"] == 10.0
     assert recipe["isDraft"] and not recipe["publicationApproved"]
     preview = next(hl.glob("*.preview.mp4"))
     meta = json.loads(next(hl.glob("*.preview.json")).read_text())
@@ -270,8 +278,8 @@ def test_colour_ab_deck_is_blind_and_scored_with_a_sign_test(world, tmp_path):
     key = json.loads((ab / "key.json").read_text())
     page = (ab / "index.html").read_text()
     assert len(key["pairs"]) == 1 and "corrected" not in page and "underwater" not in page
-    assert (ab / "pair-001-L.mp4").is_file() and (ab / "pair-001-R.mp4").is_file()
-    truth = key["pairs"]["pair-001"]["corrected"]
+    assert len(list(ab.glob("clip-*.mp4"))) == 2
+    truth = key["pairs"]["pair-001"]["variant"]
     answers = tmp_path / "answers.json"
     answers.write_text(json.dumps({"deck": key["deck"], "answers": {"pair-001": truth}}))
     assert pipe.main(["ab-score", *base, "--answers", str(answers)]) == 0
@@ -279,8 +287,142 @@ def test_colour_ab_deck_is_blind_and_scored_with_a_sign_test(world, tmp_path):
     assert result["preferCorrected"] == 1 and result["verdict"].startswith("too few")
     answers.write_text(json.dumps({"deck": "other", "answers": {}}))
     assert pipe.main(["ab-score", *base, "--answers", str(answers)]) == 2
-    many = {"deck": "d", "pairs": {f"p{i}": {"corrected": "left"} for i in range(16)}}
+    many = {"deck": "d", "variant": "corrected", "baseline": "original",
+            "pairs": {f"p{i}": {"variant": "left"} for i in range(16)}}
     picks = {"deck": "d", "answers": {f"p{i}": ("left" if i < 13 else "right") for i in range(16)}}
     s = hc.color_ab_score(many, picks)
     assert (s["preferCorrected"], s["preferOriginal"]) == (13, 3) and s["signTestP"] < 0.05
     assert s["verdict"].startswith("correction preferred")
+
+
+def test_trim_handles_import_labels_and_score_boundaries(world, tmp_path):
+    import os
+    from adventure_intelligence import holdout, owner_labels
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    hl = world["reports"] / "highlights-v1"
+    page = (hl / "index.html").read_text()
+    key = json.loads((hl / "boundary-deck.json").read_text())
+    ids = sorted(key["clips"])
+    assert len(ids) == 2 and all(f'data-id="{i}"' in page for i in ids)
+    rel = os.path.relpath(key["clips"][ids[0]]["proxy"], hl)
+    assert f'src="{rel}"' in page and "/Volumes" not in page      # relative paths only
+    c0, c1 = key["clips"][ids[0]], key["clips"][ids[1]]
+    answers = {"deck": key["deck"], "boundaries": {
+        ids[0]: {"in": c0["proposedIn"], "out": c0["proposedOut"] + 1.5, "verdict": "adjusted"},
+        ids[1]: {"in": c1["proposedIn"], "out": c1["proposedOut"], "verdict": "ok"}}}
+    f = tmp_path / "trims.json"
+    f.write_text(json.dumps(answers))
+    assert pipe.main(["import-trims", *base, "--answers", str(f)]) == 0
+    assert pipe.main(["import-trims", *base, "--answers", str(f)]) == 0   # idempotent
+    labels = owner_labels.load(world["reports"], "boundary")
+    assert len(labels) == 2 and {l["reviewer"] for l in labels} == {"owner"}
+    adj = next(l for l in labels if l["verdict"] == "adjusted")
+    assert adj["owner"]["originalOutMs"] - adj["owner"]["originalInMs"] == \
+        int(round((c0["proposedOut"] + 1.5 - c0["proposedIn"]) * 1000))
+    assert pipe.main(["eval-trims", *base]) == 0
+    res = json.loads(next((world["reports"] / "evaluations").glob("trims-*.json")).read_text())
+    dev = res["methods"]["fixed"]["development"]
+    assert dev["clips"] == 2 and dev["truncationRate"] == 0.5 and dev["slackRate"] == 0
+    assert res["methods"]["fixed"]["heldOut"]["clips"] == 0
+    holdout.freeze(world["reports"], [("2024-12-26", "snorkeling")])
+    assert pipe.main(["eval-trims", *base]) == 0
+    res = json.loads(sorted((world["reports"] / "evaluations").glob("trims-*.json"))[-1].read_text())
+    assert res["methods"]["fixed"]["heldOut"]["clips"] == 2
+    bad = tmp_path / "other.json"
+    bad.write_text(json.dumps({"deck": "nope", "boundaries": {}}))
+    assert pipe.main(["import-trims", *base, "--answers", str(bad)]) == 2
+
+
+def test_story_vs_baseline_reels_blind_deck(world, tmp_path):
+    from adventure_intelligence import holdout
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    assert pipe.main(["reels", *base, "--ab-reels", "motionPeak"]) == 0
+    ab = world["reports"] / "highlights-v1" / "reel-ab"
+    key = json.loads((ab / "key.json").read_text())
+    page = (ab / "index.html").read_text()
+    assert key["variant"] == "story" and key["baseline"] == "baseline:motionPeak"
+    assert len(key["pairs"]) == 1
+    assert "preview" not in page and "baseline" not in page            # nothing names a side
+    assert len(list(ab.glob("reel-*.mp4"))) == 2
+    baseline = json.loads(next(ab.glob("reel-*.recipe.json")).read_text())
+    assert baseline["story"]["model"] == "baseline:motionPeak"
+    assert all(c["anchor"] != "observation 1" for c in baseline["clips"])  # no story evidence
+    truth = key["pairs"]["outing-001"]["variant"]
+    f = tmp_path / "a.json"
+    f.write_text(json.dumps({"deck": key["deck"], "answers": {"outing-001": truth}}))
+    assert pipe.main(["ab-score", *base, "--deck", "reel-ab", "--answers", str(f)]) == 0
+    holdout.freeze(world["reports"], [("2024-12-26", "snorkeling")])
+    import shutil as _s
+    _s.rmtree(ab)
+    assert pipe.main(["reels", *base, "--ab-reels", "motionPeak"]) == 0
+    assert not (ab / "key.json").exists()                               # held-out: no deck
+
+
+def test_lookalikes_return_to_meet_the_minimum_but_identical_footage_never_does():
+    import numpy as np
+    scenes = [{"id": f"S0{i}", "file": NAME, "sourceSha256": f"{i}".ljust(64, "a"),
+               "startMs": 0, "endMs": 10000, "clockStart": None,
+               "quality": {"verdict": "usable", "flags": []}, "observations": [],
+               "factsYes": [], "factsNo": []} for i in range(1, 6)]
+    doc = {"record": {"model": "m", "harnessStatus": "accepted", "packetSha256": "x",
+                      "story": {"shortlist": [s["id"] for s in scenes], "moments": []}},
+           "packet": {"outing": "reef", "sport": "snorkeling", "scenes": scenes}}
+    locate = lambda sha, a, b: {"proxy": Path("/x.mp4"), "segment": None, "motion": []}
+    # one reef: every pair ~0.95 similar (distinct moments); scene 5 is scene 1 again
+    base = np.array([1.0, 0.0, 0.0])
+    vecs = {"1": base, "2": np.array([0.95, 0.31, 0.0]), "3": np.array([0.95, 0.0, 0.31]),
+            "4": np.array([0.95, -0.31, 0.0]), "5": base}
+    embed = lambda sha, a, b: vecs[sha[0]] / np.linalg.norm(vecs[sha[0]])
+    rec = hc.plan_reel(doc, locate, embed=embed)
+    kept = [c["scene"] for c in rec["clips"]]
+    assert len(kept) == 4 and "S05" not in kept                       # identical: stays out
+    assert rec["variety"]["effectiveThreshold"] >= 0.92
+    assert any("S05" == d["scene"] and "near-duplicate of S01" in d["reason"] for d in rec["dropped"])
+
+
+def test_story_review_page_claim_labels_and_accuracy(world, tmp_path):
+    import re
+    import subprocess as sp
+    from adventure_intelligence import owner_labels
+    pipe = _pipeline()
+    roster = world["reports"].parent / "roster.json"
+    from adventure_intelligence import outing_roster as r
+    roster.write_text(json.dumps({"version": r.VERSION, "status": "provisional", "outings": [
+        {"outing": "d", "sources": [{"sourceSha256": SHA, "activity": "snorkeling"}]}]}))
+    base = ["--reports", str(world["reports"])]
+    assert pipe.main(["run", *base, "--roster", str(roster), "--skip-judge"], transport=_fake) == 0
+    assert pipe.main(["story-review", *base]) == 0
+    folder = world["reports"] / "outing-stories-v1" / "review"
+    key = json.loads((folder / "deck.json").read_text())
+    page = (folder / "index.html").read_text()
+    ids = sorted(key["items"])
+    assert len(ids) == 4 and all(f'data-id="{i}"' in page for i in ids)   # 2 beats, 2 moments
+    assert "<video" in page and "/Volumes" not in page
+    js = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+    (tmp_path / "p.js").write_text(js)
+    assert sp.run(["node", "--check", str(tmp_path / "p.js")]).returncode == 0
+    moments = [i for i in ids if "moment" in i]
+    ans = {"deck": key["deck"], "claims": {moments[0]: {"verdict": "true"},
+                                           moments[1]: {"verdict": "wrong",
+                                                        "rewrite": "it's a ray, not a turtle"}}}
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps(ans))
+    assert pipe.main(["import-claims", *base, "--answers", str(f)]) == 0
+    assert len(owner_labels.load(world["reports"], "claim")) == 2
+    assert pipe.main(["eval-claims", *base]) == 0
+    res = json.loads(next((world["reports"] / "evaluations").glob("claims-*.json")).read_text())
+    dev = res["development"]
+    assert dev["overall"]["trueShare"] == 0.5 and dev["restsOn"]["obs"]["claims"] == 2
+    assert "turtle" in dev["names"] and res["wrongClaims"][0]["ownerSays"] == "it's a ray, not a turtle"

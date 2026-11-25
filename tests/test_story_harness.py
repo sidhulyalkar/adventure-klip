@@ -125,8 +125,6 @@ def test_grounded_story_passes_and_scenes_are_in_clock_order():
     (lambda s: s["beats"].reverse(), "out of clock order"),
     (lambda s: s["moments"][0].update(evidence=["fact:landing_visible"]), "disputed fact"),
     (lambda s: s["moments"][0].update(evidence=["obs:7"]), "not in S01's evidence"),
-    (lambda s: s["beats"][1].update(text="The last run ends in a crash.", scenes=["S02"]),
-     "says 'last'"),
     (lambda s: s["beats"][1].update(text="A crash on the slope.", scenes=["S02"]),
      "mentions crash"),
 ])
@@ -187,19 +185,20 @@ def test_unusable_scene_is_excluded_by_the_harness_if_the_model_forgets():
 
 
 def test_description_times_outside_the_clip_are_sent_back():
-    bad = {"observations": [{"atSeconds": 42.0, "text": "a jump"}], "summary": "a jump",
+    bad = {"observations": [{"frame": 9, "text": "a jump"}], "summary": "a jump",
            "subjects": [], "setting": "slope", "cameraMotion": "steady",
            "filming": {"inFocus": "yes", "exposureOk": "yes", "lensClear": "yes"}}
-    good = {**bad, "observations": [{"atSeconds": 2.5, "text": "a jump"}]}
+    good = {**bad, "observations": [{"frame": 2, "text": "a jump"}]}
     out = h.call_json("qwen3-vl:32b", [{"role": "user", "content": "x"}],
-                      schema=h.describe_schema(), transport=_replies(bad, good),
+                      schema=h.describe_schema(3), transport=_replies(bad, good),
                       check=lambda d: h.check_description(d, 10000, [500, 2500, 4500]))
-    assert out["status"] == "repaired" and out["result"]["observations"][0]["atSeconds"] == 2.5
+    assert out["status"] == "repaired"
+    assert h.with_times(out["result"], [500, 2500, 4500])["observations"][0]["atSeconds"] == 2.5
 
 
 def test_cli_end_to_end_with_fake_models(reports, tmp_path, capsys):
     cli = _cli()
-    desc = {"observations": [{"atSeconds": 2.5, "text": "skier in the air above the snow"}],
+    desc = {"observations": [{"frame": 2, "text": "skier in the air above the snow"}],
             "summary": "A skier leaves the snow off a small jump.", "subjects": ["skier"],
             "setting": "ski slope", "cameraMotion": "moving_smoothly",
             "filming": {"inFocus": "yes", "exposureOk": "yes", "lensClear": "yes"}}
@@ -239,7 +238,7 @@ def test_clip_without_video_is_unusable_and_not_described(reports, tmp_path):
         q = json.loads((tmp_path / "segments" / SHA / "20000-30000.quality.json").read_text())
         assert q["verdict"] == "unusable" and q["flags"] == ["no_usable_video"]
         asked = []
-        desc = {"observations": [{"atSeconds": 2.5, "text": "x"}], "summary": "x",
+        desc = {"observations": [{"frame": 1, "text": "x"}], "summary": "x",
                 "subjects": [], "setting": "x", "cameraMotion": "steady",
                 "filming": {"inFocus": "yes", "exposureOk": "yes", "lensClear": "yes"}}
 
@@ -252,8 +251,113 @@ def test_clip_without_video_is_unusable_and_not_described(reports, tmp_path):
         bad.write_bytes(backup)
 
 
+def test_reliability_settled_fact_is_citable_and_marked():
+    from datetime import datetime
+    scene = {"file": NAME, "sourceSha256": SHA, "startMs": 0, "endMs": 10000,
+             "capture": datetime(2026, 3, 1, 10, 0), "quality": {"verdict": "usable", "flags": []},
+             "facts": {"crash_or_fall_visible": {"outcome": "resolved_yes", "pYes": 0.93}},
+             "description": {"summary": "The skier falls in deep snow.", "subjects": ["skier"],
+                             "setting": "slope", "cameraMotion": "shaky", "observations": []},
+             "signals": {}}
+    p = h.build_packet("o", "ski", [scene], footage_ms=10000)
+    s = p["scenes"][0]
+    assert s["factsYes"] == ["crash_or_fall_visible"] and s["factsResolved"] == ["crash_or_fall_visible"]
+    assert "settled by measured judge reliability" in h.story_prompt(p, 3)
+    story = {"beats": [{"text": "A fall in deep snow.", "scenes": ["S01"]}],
+             "moments": [{"scene": "S01", "what": "The skier falls", "whyItMatters": "a real crash",
+                          "evidence": ["fact:crash_or_fall_visible"], "confidence": "medium"}],
+             "shortlist": ["S01"], "excluded": []}
+    assert h.check_story(story, p, 3) == []
 def test_judges_lens_view_degrades_but_never_drops_a_scene():
     frames = [{"sharpness": 200.0, "meanLuma": 120.0, "lumaStd": 40.0, "darkShare": 0.0,
                "clippedShare": 0.0}] * 4
     q = h.segment_quality(frames, 200.0, 1.0, {"lens_obstructed": {"outcome": "agreed_yes"}})
     assert q["verdict"] == "degraded" and q["flags"] == ["lens_obstructed_by_judges"]
+
+
+def test_story_and_description_calls_ask_for_the_answer_without_reasoning():
+    bodies = []
+
+    def transport(body):
+        bodies.append(body)
+        return {"message": {"content": json.dumps(GOOD)}, "eval_count": 120,
+                "prompt_eval_count": 900}
+    rec = h.tell(_packet(), "gemma3:27b", transport=transport)
+    assert bodies[0]["think"] is False and rec["think"] is False
+    assert rec["usage"]["outputTokens"] == 120
+
+
+def test_frame_numbers_are_enforced_by_the_schema_and_converted_to_times():
+    schema = h.describe_schema(4)
+    frame = schema["properties"]["observations"]["items"]["properties"]["frame"]
+    assert frame["enum"] == [1, 2, 3, 4]
+    d = {"observations": [{"frame": 3, "text": "a turtle"}], "summary": "s"}
+    assert h.check_description(d, 10000, [500, 2500, 4500, 6500]) == []
+    assert h.with_times(d, [500, 2500, 4500, 6500])["observations"][0] == {
+        "frame": 3, "text": "a turtle", "atSeconds": 4.5}
+    assert "frame 1 at 0.5s" in h.describe_prompt("ski", [500, 2500], 3000)
+    legacy = {"observations": [{"atSeconds": 2.5, "text": "x"}], "summary": "s"}
+    assert h.check_description(legacy, 10000, [500, 2500]) == []          # older files still read
+
+
+def test_first_and_last_are_warnings_not_removals():
+    story = json.loads(json.dumps(GOOD))
+    story["beats"][1].update(text="The last stretch of the day.", scenes=["S02"])
+    warned = []
+    assert h.check_story(story, _packet(), 3, warnings=warned) == []
+    assert any("says 'last'" in w for w in warned)
+    rec = h.tell(_packet(), "gemma3:27b", transport=_replies(story))
+    assert rec["harnessStatus"] == "accepted" and rec["warnings"]
+    assert "Worth a look" in h.markdown(rec, _packet())
+
+
+def test_citation_slips_are_normalised_and_the_schema_lists_valid_citations():
+    p = _packet()
+    refs = h.evidence_refs(p)
+    assert "fact:airborne_visible" in refs and "obs:1" in refs and "subject:skier" in refs
+    schema = h.story_schema([s["id"] for s in p["scenes"]], refs)
+    assert schema["properties"]["moments"]["items"]["properties"]["evidence"]["items"]["enum"] == refs
+    story = json.loads(json.dumps(GOOD))
+    story["moments"][0]["evidence"] = ["yes: airborne_visible", "obs:<1>", "S01",
+                                       "airborne_visible:yes", "airborne_visible"]
+    fixed = h.normalize_story(story, p)
+    assert fixed["moments"][0]["evidence"] == ["fact:airborne_visible", "obs:1"]
+    assert h.check_story(fixed, p, 3) == []
+
+
+def test_context_is_sized_for_prompt_and_answer_and_a_cut_answer_gets_more_room():
+    msgs = [{"role": "user", "content": "x" * 3000, "images": ["a"] * 8}]
+    assert h.context_for(msgs, 1024) == 12288          # 1000 + 8800 + 1024 + 256 -> 12288
+    sent = []
+
+    def ollama(body):
+        sent.append((body["options"]["num_ctx"], body["options"]["num_predict"]))
+        if len(sent) == 1:
+            return {"message": {"content": '{"beats": [{"text": "cut'}, "done_reason": "length"}
+        return {"message": {"content": json.dumps(GOOD)}, "done_reason": "stop"}
+    rec = h.tell(_packet(), "gemma3:27b", transport=ollama)
+    assert rec["harnessStatus"] == "accepted"        # more room is not a repair
+    assert sent[1][1] == 2 * sent[0][1] and sent[1][0] >= sent[0][0]
+
+
+def test_unparseable_reply_is_recorded_with_its_stop_reason():
+    def ollama(body):
+        return {"message": {"content": ""}, "done_reason": "stop", "eval_count": 1444}
+    rec = h.tell(_packet(), "gemma3:27b", transport=ollama)
+    assert rec["story"] is None and rec["reply"]["doneReason"] == "stop"
+    assert rec["reply"]["contentChars"] == 0 and rec["reply"]["outputTokens"] == 1444
+
+
+def test_describer_thins_judged_frames_and_names_the_reasoning_failure(reports):
+    cli = _cli()
+    item = {"judged": {"frameTimesMs": list(range(0, 16000, 1000))},
+            "segment": {"startMs": 0, "endMs": 16000, "eventCandidatesMs": []}}
+    times = cli._times(item, 8)
+    assert len(times) == 8 and times == sorted(times) and set(times) <= set(range(0, 16000, 1000))
+
+    def thinker(body):
+        return {"message": {"content": "", "thinking": "x" * 8684}, "done_reason": "length",
+                "eval_count": 2048}
+    out = h.call_json("qwen3-vl:8b", [{"role": "user", "content": "x"}],
+                      schema=h.describe_schema(2), check=lambda d: [], transport=thinker)
+    assert out["status"] == "failed" and "-instruct" in out["failureDetail"]

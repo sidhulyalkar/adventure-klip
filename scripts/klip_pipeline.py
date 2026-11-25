@@ -7,6 +7,13 @@
              deck; --color underwater-v1 applies the correction; --approve RECIPE_SHA
              --master renders full quality from the camera originals for approved recipes
     ab-score score a downloaded colour A/B answers file (exact sign test)
+    profile  what the library holds per capture day and sport (dataset-profile.json/.md)
+    runs     the run records; --export writes a redacted table for logs/experiments/
+    story-review  write the claim-by-claim story review page (outing-stories-v1/review/)
+    import-claims import its downloaded answers as owner claim labels
+    eval-claims   story claim accuracy by evidence, by what is named, by sport
+    import-trims  import the gallery's downloaded trim answers as owner boundary labels
+    eval-trims    score boundary methods against those labels (development vs held-out)
     run      judge pass -> stories (quality, describe, story) -> reels, each resumable
 
 Stages and where they write (all new files; originals and earlier reports are not edited):
@@ -28,15 +35,27 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime, timezone
+import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 
 from adventure_intelligence import discovery_experiment as experiment
 from adventure_intelligence import highlight_compile as compile_
+from adventure_intelligence import blind_ab
+from adventure_intelligence import boundary_review
+from adventure_intelligence import dataset_profile
+from adventure_intelligence import evidence_ledger as ledger
+from adventure_intelligence import run_records
+from adventure_intelligence import story_review
+from adventure_intelligence import holdout
+from adventure_intelligence import owner_labels
+from adventure_intelligence import run_lock
 
 HERE = Path(__file__).resolve().parent
 
@@ -156,10 +175,55 @@ def _embedder(reports: Path):
     return embed
 
 
+def _reel_ab(reports: Path, shown: list[dict], *, signal: str, locate, embed, sampler,
+             target_seconds, order, color_mode, similarity_threshold, log) -> dict:
+    """Story reel vs a plain-signal reel per outing, blind. Development days only."""
+    hl = reports / "highlights-v1"
+    folder = hl / "reel-ab"
+    banned = holdout.held_out(reports)
+    pairs, skipped = [], Counter()
+    for x in shown:
+        recipe, preview = x["recipe"], x["preview"]
+        if any(c["sourceSha256"] in banned for c in recipe["clips"]):
+            skipped["heldOut"] += 1
+            continue
+        doc = _read(reports / "outing-stories-v1" / "stories" / f'{x["stem"]}.json')
+        base = compile_.plan_reel(compile_.baseline_doc(doc, signal), locate,
+                                  target_seconds=target_seconds, order=order, embed=embed,
+                                  sampler=sampler, color_mode=color_mode,
+                                  similarity_threshold=similarity_threshold)
+        if [(c["sourceSha256"], c["originalInMs"]) for c in base["clips"]] == \
+                [(c["sourceSha256"], c["originalInMs"]) for c in recipe["clips"]]:
+            skipped["identicalToStory"] += 1
+            continue
+        token = hashlib.sha256(f'{recipe["recipeSha256"]}|{base["recipeSha256"]}'.encode()).hexdigest()
+        target = folder / f"reel-{token[:10]}.mp4"
+        # The story reel is copied under a neutral name: its own file name would say which
+        # side is the story.
+        story_copy = folder / f"reel-{token[10:20]}.mp4"
+        if not story_copy.is_file():
+            folder.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(preview["path"], story_copy)
+        _write(folder / f"reel-{token}.recipe.json", base)
+        if not target.is_file():
+            log(f"rendering baseline ({signal}) reel for {recipe['outing']}")
+            compile_.render_preview(base, target)
+        pairs.append({"id": f"outing-{len(pairs) + 1:03d}", "variantPath": story_copy,
+                      "baselinePath": target,
+                      "meta": {"outing": recipe["outing"], "storyRecipe": recipe["recipeSha256"],
+                               "baselineRecipe": base["recipeSha256"], "signal": signal}})
+    if not pairs:
+        return {"pairs": 0, "skipped": dict(skipped)}
+    out = blind_ab.write_deck(folder, pairs, variant="story", baseline=f"baseline:{signal}",
+                              question="Which highlight reel would you rather keep?",
+                              loop=False)
+    return {**out, "skipped": dict(skipped)}
+
+
 def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
           approve: list[str], trusted_root: Path | None, log, color_mode: str = "none",
           ab_color: bool = False, similarity_threshold: float = compile_.SIMILARITY_THRESHOLD,
-          sampler=compile_.sample_rgb) -> dict:
+          sampler=compile_.sample_rgb, ab_reels: str | None = None) -> dict:
     hl = reports / "highlights-v1"
     approvals_file = hl / "approvals.json"
     approvals = _read(approvals_file) or {"approved": []}
@@ -213,15 +277,24 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
                     recipe, master_file, originals=_originals(reports),
                     trusted_root=trusted_root, approved=known))
                 made["masters"] += 1
-        shown.append({"recipe": recipe, "preview": meta})
+        shown.append({"recipe": recipe, "preview": meta, "stem": stem})
         made["recipes"] += 1
-    _write(hl / "index.html", compile_.gallery(shown))
+    key = boundary_review.deck_key(shown)
+    _write(hl / "boundary-deck.json", key)
+    _write(hl / "index.html", boundary_review.page(shown, key, hl))
     ab = None
     if ab_color:
-        ab = compile_.color_ab_deck([x["recipe"] for x in shown], hl / "color-ab",
+        banned = holdout.held_out(reports)   # never tune the look on held-out days
+        tunable = [{**x["recipe"], "clips": [c for c in x["recipe"]["clips"]
+                                             if c["sourceSha256"] not in banned]} for x in shown]
+        ab = compile_.color_ab_deck(tunable, hl / "color-ab",
                                     seed="|".join(sorted(x["recipe"]["recipeSha256"] for x in shown)))
         log(f"colour A/B deck: {ab['pairs']} pairs -> {ab['page']}")
-    return {**dict(made), "gallery": str(hl / "index.html"), "colorAB": ab,
+    reel_ab = _reel_ab(reports, shown, signal=ab_reels, locate=locate, embed=embed,
+                       sampler=sampler, target_seconds=target_seconds, order=order,
+                       color_mode=color_mode, similarity_threshold=similarity_threshold,
+                       log=log) if ab_reels else None
+    return {**dict(made), "gallery": str(hl / "index.html"), "colorAB": ab, "reelAB": reel_ab,
             "dropped": Counter(d["reason"].split(" (")[0].split(" of ")[0]
                                for x in shown for d in x["recipe"]["dropped"]),
             "recipes": [{"outing": s["recipe"]["outing"],
@@ -234,9 +307,15 @@ def reels(reports: Path, *, target_seconds: float, order: str, master: bool,
 def main(argv=None, *, transport=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("status", "reels", "run", "ab-score"):
+    for name in ("status", "reels", "run", "ab-score", "import-trims", "eval-trims",
+                 "profile", "runs", "story-review", "import-claims", "eval-claims"):
         p = sub.add_parser(name)
         p.add_argument("--reports", type=Path, required=True)
+    sub.choices["import-trims"].add_argument("--answers", type=Path, required=True)
+    sub.choices["profile"].add_argument("--ledger", type=Path)
+    sub.choices["import-claims"].add_argument("--answers", type=Path, required=True)
+    sub.choices["runs"].add_argument("--export", type=Path,
+                                     help="write a redacted markdown table here")
     sub.choices["ab-score"].add_argument("--answers", type=Path, required=True)
     for p in (sub.choices["reels"], sub.choices["run"]):
         p.add_argument("--target-seconds", type=float, default=60.0)
@@ -249,6 +328,10 @@ def main(argv=None, *, transport=None) -> int:
     sub.choices["reels"].add_argument("--master", action="store_true")
     sub.choices["reels"].add_argument("--ab-color", action="store_true",
                                       help="write a blind colour A/B deck")
+    sub.choices["reels"].add_argument("--ab-reels", choices=compile_.BASELINE_SIGNALS,
+                                      help="blind story-vs-baseline reel deck ranked by this signal")
+    sub.choices["ab-score"].add_argument("--deck", choices=("color-ab", "reel-ab"),
+                                         default="color-ab")
     run = sub.choices["run"]
     run.add_argument("--roster", type=Path, required=True)
     run.add_argument("--through", choices=("judge", "stories", "reels"), default="reels")
@@ -256,6 +339,9 @@ def main(argv=None, *, transport=None) -> int:
     run.add_argument("--timeout", type=int, default=600)
     run.add_argument("--describe-model", default="qwen3-vl:32b")
     run.add_argument("--story-model", default="gemma3:27b")
+    run.add_argument("--ledger", type=Path, help="owner evidence ledger for story examples")
+    run.add_argument("--describe-frames", type=int, default=8)
+    run.add_argument("--think", choices=("off", "on", "default"), default="off")
     args = parser.parse_args(argv)
 
     def log(message):
@@ -266,12 +352,80 @@ def main(argv=None, *, transport=None) -> int:
         if args.command == "status":
             print(json.dumps(status(reports), indent=2))
             return 0
+        if args.command in ("story-review", "import-claims", "eval-claims"):
+            folder = reports / "outing-stories-v1" / "review"
+            if args.command == "eval-claims":
+                result = story_review.evaluate(owner_labels.load(reports, "claim"),
+                                               held_out=holdout.held_out(reports))
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                _write(reports / "evaluations" / f"claims-{stamp}.json", result)
+                print(json.dumps(result, indent=2))
+                return 0
+            if args.command == "import-claims":
+                key = _read(folder / "deck.json")
+                if key is None:
+                    raise ValueError("No story review page yet; run story-review first")
+                raw = args.answers.read_bytes()
+                print(json.dumps(story_review.import_answers(
+                    reports, key, json.loads(raw), hashlib.sha256(raw).hexdigest()), indent=2))
+                return 0
+            docs = [d for d in (_read(f) for f in sorted(
+                (reports / "outing-stories-v1" / "stories").glob("*.json"))) if d and "record" in d]
+            if not docs:
+                raise ValueError("No outing stories yet")
+            locate = _locator(reports)
+            key = story_review.deck(docs)
+            _write(folder / "deck.json", key)
+
+            def proxy_of(scene):
+                try:
+                    clip = locate(scene["sourceSha256"], scene["startMs"], scene["endMs"])["proxy"]
+                except ValueError:
+                    return None
+                return clip if clip.is_file() else None
+            _write(folder / "index.html", story_review.page(docs, key, folder, proxy_of))
+            print(json.dumps({"deck": key["deck"], "claims": len(key["items"]),
+                              "page": str(folder / "index.html")}, indent=2))
+            return 0
+        if args.command == "profile":
+            rows = ledger.load(args.ledger.expanduser()) if args.ledger else None
+            doc = dataset_profile.profile(reports, rows)
+            _write(reports / "dataset-profile.json", doc)
+            _write(reports / "dataset-profile.md", dataset_profile.markdown(doc))
+            print(json.dumps({"bySport": doc["bySport"], "days": len(doc["days"]),
+                              "heldOutDays": doc["heldOutDays"],
+                              "table": str(reports / "dataset-profile.md")}, indent=2))
+            return 0
+        if args.command == "runs":
+            records = run_records.load(reports)
+            table = run_records.export_markdown(records)
+            if args.export:
+                _write(args.export.expanduser(), table)
+            print(table)
+            return 0
+        if args.command == "import-trims":
+            key = _read(reports / "highlights-v1" / "boundary-deck.json")
+            if key is None:
+                raise ValueError("No gallery yet; run reels first")
+            raw = args.answers.read_bytes()
+            print(json.dumps(boundary_review.import_answers(
+                reports, key, json.loads(raw), hashlib.sha256(raw).hexdigest()), indent=2))
+            return 0
+        if args.command == "eval-trims":
+            result = boundary_review.evaluate(owner_labels.load(reports, "boundary"),
+                                              held_out=holdout.held_out(reports))
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            _write(reports / "evaluations" / f"trims-{stamp}.json", result)
+            print(json.dumps(result, indent=2))
+            return 0
         if args.command == "ab-score":
-            folder = reports / "highlights-v1" / "color-ab"
+            folder = reports / "highlights-v1" / args.deck
             key = _read(folder / "key.json")
             if key is None:
-                raise ValueError("No colour A/B deck; run reels --ab-color first")
-            result = compile_.color_ab_score(key, json.loads(args.answers.read_text(encoding="utf-8")))
+                raise ValueError(f"No {args.deck} deck; run reels --{'ab-color' if args.deck == 'color-ab' else 'ab-reels SIGNAL'} first")
+            answers = json.loads(args.answers.read_text(encoding="utf-8"))
+            result = (compile_.color_ab_score(key, answers) if args.deck == "color-ab"
+                      else blind_ab.score(key, answers))
             n = len(list(folder.glob("result-*.json"))) + 1
             _write(folder / f"result-{n:03d}.json", {**result, "answersFile": str(args.answers),
                                                      "at": datetime.now(timezone.utc).isoformat()})
@@ -282,9 +436,12 @@ def main(argv=None, *, transport=None) -> int:
                                    master=args.master, approve=args.approve or [],
                                    trusted_root=args.trusted_source_root, log=log,
                                    color_mode=args.color, ab_color=args.ab_color,
-                                   similarity_threshold=args.similarity_threshold), indent=2))
+                                   similarity_threshold=args.similarity_threshold,
+                                   ab_reels=args.ab_reels), indent=2))
             return 0
         common = ["--reports", str(reports), "--roster", str(args.roster)]
+        lock = run_lock.exclusive(log=log) if transport is None else nullcontext()
+        lock.__enter__()   # held for the whole run; released when the process ends
         if not args.skip_judge:
             if args.trusted_source_root is None:
                 raise ValueError("The judge pass needs --trusted-source-root (or --skip-judge)")
@@ -298,7 +455,9 @@ def main(argv=None, *, transport=None) -> int:
             log("stage: stories (quality, describe, story)")
             code = _script("klip_outing_stories").main(
                 common + ["--timeout", str(args.timeout), "--describe-model", args.describe_model,
-                          "--story-model", args.story_model], transport=transport)
+                          "--story-model", args.story_model,
+                          "--describe-frames", str(args.describe_frames), "--think", args.think]
+                + (["--ledger", str(args.ledger)] if args.ledger else []), transport=transport)
             if code:
                 return code
         if args.through == "reels":
@@ -315,4 +474,5 @@ def main(argv=None, *, transport=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from adventure_intelligence import run_records
+    raise SystemExit(run_records.main_recorded(main, "klip_pipeline"))
