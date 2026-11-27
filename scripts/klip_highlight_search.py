@@ -97,10 +97,27 @@ def discovery_rows(reports: Path) -> dict[str, dict]:
     return out
 
 
+def catalog(workspace: Path) -> dict[str, dict]:
+    """sha -> path, size and duration of each imported original (read-only)."""
+    db_path = Path(workspace) / "catalog.sqlite3"
+    if db_path.is_symlink() or not db_path.is_file():
+        return {}
+    db = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        return {sha: {"path": path, "sizeBytes": size,
+                      "durationMs": round(duration * 1000) if duration else None}
+                for sha, path, size, duration in
+                db.execute("SELECT sha256,stored_path,size_bytes,duration FROM assets")}
+    finally:
+        db.close()
+
+
 def inventory(reports: Path, roster_doc: dict | None, scorer: hs.Scorer,
               log=lambda m: None) -> tuple[list[dict], dict]:
     """Every searchable recording: a sport, a length, and whatever evidence is stored."""
     found = discovery_rows(reports)
+    cat = catalog(Path(reports).parent)
     activity = roster.activity_by_source(roster_doc) if roster_doc else {}
     outing = roster.outing_by_source(roster_doc) if roster_doc else {}
     guessed = roster.guessed_sources(roster_doc) if roster_doc else set()
@@ -136,8 +153,10 @@ def inventory(reports: Path, roster_doc: dict | None, scorer: hs.Scorer,
             rec["motion"] = (_read(d["record"] / "motion.json") or {}).get("series")
             rec["audio"] = (_read(d["record"] / "audio.json") or {}).get("series")
         elif rec["times"] is not None and len(rec["times"]):
-            rec["durationMs"] = int(rec["times"][-1]) + hs.STEP_MS
-            rec["file"] = None
+            c = cat.get(sha) or {}
+            rec["durationMs"] = c.get("durationMs") or int(rec["times"][-1]) + hs.STEP_MS
+            rec["file"] = Path(c["path"]).name if c.get("path") else None
+            notes["evidenceOnlyNoMotion"] += 1
         else:
             notes["noEvidence"] += 1
             continue
@@ -219,25 +238,48 @@ def cmd_search(args, log) -> dict:
     _write(folder / "candidates.json", doc)
     _write(_home(args.reports) / "latest.json", {"run": key})
     kinds = Counter(c["kind"] for c in doc["candidates"])
-    top = [c for c in doc["candidates"] if c["kind"] == "animal"][:8]
+    top, seen_top = [], Counter()
+    for c in doc["candidates"]:
+        if c["kind"] == "animal" and seen_top[c["top"]] < 2:
+            seen_top[c["top"]] += 1
+            top.append(c)
+    windows = [(c["endMs"] - c["startMs"]) / 1000 for c in doc["candidates"]
+               if c["kind"] in hs.MOMENT_KINDS]
+    ski = [r for r in doc["recordings"] if r["sport"] == "ski"]
     return {"run": key, "candidates": dict(kinds), "audit": len(doc["audit"]),
             "footageHours": doc["footageHours"], "inventory": notes,
             "animalsFound": dict(Counter(c["top"] for c in doc["candidates"]
                                          if c["kind"] == "animal")),
             "topAnimals": [f'{c["file"]} {c["startMs"] // 1000}-{c["endMs"] // 1000}s '
-                           f'{c["top"]} z={c["concepts"][0]["peakZ"]}' for c in top],
+                           f'{c["top"]} z={c["concepts"][0]["peakZ"]}'
+                           f'{" scene-wide" if c.get("sceneWide") else ""}'
+                           f'{" " + ",".join(c["qualityFlags"]) if c.get("qualityFlags") else ""}'
+                           for c in top],
+            "animalsMentioned": dict(Counter(x["concept"] for c in doc["candidates"]
+                                             if c["kind"] == "animal" for x in c["concepts"])),
+            "sceneWideAnimals": sum(1 for c in doc["candidates"]
+                                    if c["kind"] == "animal" and c.get("sceneWide")),
+            "animalsByOuting": dict(Counter(c.get("outing") for c in doc["candidates"]
+                                            if c["kind"] == "animal").most_common(8)),
+            "medianMomentSeconds": float(np.median(windows)) if windows else None,
+            "skiRecordingsWithoutMotion": sum(not r.get("motionEvidence", True) for r in ski),
+            "skiActionMedianOfP90": float(np.median([r["actionQuantiles"]["0.9"] for r in ski
+                                                     if r.get("actionQuantiles")]))
+            if any(r.get("actionQuantiles") for r in ski) else None,
             "file": str(folder / "candidates.json")}
 
 
 def scan_labels(roots: list[Path]) -> dict:
     """Marine samples and their owner exports, paired by sampleId. Read-only."""
-    samples, exports, seen = {}, [], set()
+    samples, exports, seen, unreadable, scanned = {}, [], set(), [], Counter()
     wanted = {hs.marine_sample_version(): "sample", **{v: "export" for v in hs.marine_label_versions()}}
     for root in roots:
         root = Path(root).expanduser()
         if not root.is_dir():
+            unreadable.append(f"{root}: not a folder")
             continue
-        for folder, dirs, files in os.walk(root):
+        for folder, dirs, files in os.walk(root, onerror=lambda e: unreadable.append(
+                f"{e.filename}: {e.strerror}")):
             dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in
                              ("evidence", "proxies", "clips", "media", "node_modules"))
             for name in sorted(files):
@@ -250,7 +292,8 @@ def scan_labels(roots: list[Path]) -> dict:
                     raw = path.read_bytes()
                 except OSError:
                     continue
-                if b"marine" not in raw[:4096] and b"marine" not in raw[-4096:]:
+                scanned[str(root)] += 1
+                if b"klip-marine" not in raw:
                     continue
                 digest = sha256(raw).hexdigest()
                 if digest in seen:
@@ -272,7 +315,9 @@ def scan_labels(roots: list[Path]) -> dict:
             pairs.append({"sample": sample[0], "export": path, "sampleDoc": sample[1], "exportDoc": doc})
         else:
             orphans.append(str(path))
-    return {"pairs": pairs, "exportsWithoutSample": orphans, "samples": len(samples)}
+    return {"pairs": pairs, "exportsWithoutSample": orphans, "samples": len(samples),
+            "sampleFiles": [str(p) for p, _ in samples.values()],
+            "jsonFilesScanned": dict(scanned), "unreadable": unreadable[:20]}
 
 
 def cmd_find_labels(args, log) -> dict:
@@ -280,7 +325,9 @@ def cmd_find_labels(args, log) -> dict:
     return {"pairs": [{"sample": str(p["sample"]), "export": str(p["export"]),
                        "reviews": len(p["exportDoc"].get("reviews") or []),
                        "version": p["exportDoc"]["version"]} for p in got["pairs"]],
-            "samplesFound": got["samples"], "exportsWithoutSample": got["exportsWithoutSample"]}
+            "samplesFound": got["samples"], "sampleFiles": got["sampleFiles"],
+            "exportsWithoutSample": got["exportsWithoutSample"],
+            "jsonFilesScanned": got["jsonFilesScanned"], "unreadable": got["unreadable"]}
 
 
 def _truth(args) -> tuple[list[dict], list[str]]:
@@ -334,13 +381,6 @@ def cmd_eval(args, log) -> dict:
     return result
 
 
-def _catalog_paths(workspace: Path) -> dict[str, str]:
-    db_path = Path(workspace) / "catalog.sqlite3"
-    if db_path.is_symlink() or not db_path.is_file():
-        return {}
-    with sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True) as db:
-        db.execute("PRAGMA query_only=ON")
-        return {r[0]: r[1] for r in db.execute("SELECT sha256,stored_path FROM assets")}
 
 
 class Sources:
@@ -349,7 +389,7 @@ class Sources:
     def __init__(self, reports: Path, trusted_root: Path | None):
         self.reports, self.trusted = Path(reports), trusted_root
         self.rows = discovery_rows(reports)
-        self._catalog = None
+        self.catalog = catalog(Path(reports).parent)
 
     def covering_proxy(self, c: dict):
         d = self.rows.get(c["sourceSha256"])
@@ -368,13 +408,16 @@ class Sources:
         if self.trusted is None:
             raise ValueError("needs --trusted-source-root (no review clip covers this window)")
         d = self.rows.get(sha)
-        if d is None:
-            raise ValueError("recording was never hashed by a discovery pass; scan it first")
-        path = Path(d["path"]).expanduser()
+        if d is not None:
+            path, size = Path(d["path"]).expanduser(), d["source"]["sizeBytes"]
+        elif sha in self.catalog:     # hashed when it was imported into the catalog
+            path, size = Path(self.catalog[sha]["path"]).expanduser(), self.catalog[sha]["sizeBytes"]
+        else:
+            raise ValueError("recording is in neither a discovery pass nor the catalog")
         if not path.resolve().is_relative_to(Path(self.trusted).expanduser().resolve()):
-            raise ValueError("source is not under --trusted-source-root")
-        if not path.is_file() or path.stat().st_size != d["source"]["sizeBytes"]:
-            raise ValueError("source missing or changed since it was hashed")
+            raise ValueError(f"{path.name} is not under --trusted-source-root")
+        if not path.is_file() or path.stat().st_size != size:
+            raise ValueError(f"{path.name} missing or changed since it was hashed")
         return path
 
 
@@ -455,7 +498,7 @@ def cmd_review(args, log) -> dict:
     folder, doc = latest_run(args.reports)
     results = verify_results(args.reports, args.model)
     deck = review.build_deck(doc["candidates"], doc["audit"], results,
-                             max_items=args.max_items)
+                             max_items=args.max_items, max_audit=args.max_audit)
     out = _home(args.reports) / "review" / deck["deck"]
     clips = _home(args.reports) / "clips"
     sources = Sources(args.reports, args.trusted_source_root)
@@ -533,6 +576,8 @@ def parser() -> argparse.ArgumentParser:
             s.add_argument("--dry-run", action="store_true")
         if name == "review":
             s.add_argument("--max-items", type=int, default=120)
+            s.add_argument("--max-audit", type=int, default=30,
+                           help="audit windows in the deck (a reproducible subset)")
         if name == "import-answers":
             s.add_argument("--answers", type=Path, required=True)
         if name == "eval-review":

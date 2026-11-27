@@ -215,10 +215,20 @@ def verdict(candidate: dict, answer: dict | None) -> dict:
 
 
 def queue(candidates: list[dict], *, kinds=PRIORITY, done: set[str] = frozenset()) -> list[dict]:
-    """Candidates still to verify, in priority order, best score first within a kind."""
-    rank = {k: i for i, k in enumerate(kinds)}
-    todo = [c for c in candidates if c["kind"] in rank and c["id"] not in done]
-    return sorted(todo, key=lambda c: (rank[c["kind"]], -(c.get("score") or 0), c["id"]))
+    """Candidates still to verify: kinds in priority order; within a kind, round-robin over
+    (outing, suspected concept) groups, best score first in each, so a short budget samples
+    every outing and species instead of one recording's twenty manta windows."""
+    out = []
+    for kind in kinds:
+        groups: dict[tuple, list[dict]] = defaultdict(list)
+        for c in candidates:
+            if c["kind"] == kind and c["id"] not in done:
+                groups[(c.get("outing") or c.get("day") or c.get("sourceSha256"), c.get("top"))].append(c)
+        lists = [sorted(g, key=lambda c: (-(c.get("score") or 0), c["id"])) for g in groups.values()]
+        lists.sort(key=lambda g: (-(g[0].get("score") or 0), g[0]["id"]))
+        for depth in range(max((len(g) for g in lists), default=0)):
+            out += [g[depth] for g in lists if depth < len(g)]
+    return out
 
 
 def ask(candidate: dict, images: list[str], stamps_ms: list[int], length_ms: int, *,

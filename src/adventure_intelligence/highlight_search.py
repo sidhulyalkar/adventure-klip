@@ -102,12 +102,18 @@ DEFAULTS = {
     "mergeGapMs": 4000,     # hits closer than this are one encounter
     "padMs": 3000,          # context around the first and last hit
     "coreMs": 3000,         # the tight window either side of the peak
+    "maxWindowMs": 20000,   # longer encounters are clipped to this, centred on the peak
+                            # (first owner run: 100 s windows were not tight)
+    "sceneWideShare": 0.5,  # a concept hitting more of a recording than this matches the
+                            # whole scene; flagged, and its peak is the local maximum
     "stopRatio": 0.25,      # motion under this share of the sport's median = not moving
                             # (a quantile would call a fixed share of every day "stopped")
     "runGapMs": 30000,      # a stop longer than this ends a run
     "minRunMs": 20000,      # riding time for a stretch to count as a run
     "actionSmoothSteps": 4,  # 8 s
-    "actionMin": 1.5,       # smoothed action score a ski moment must reach
+    "actionMin": 0.5,       # smoothed action score a ski moment must reach (first owner
+                            # run: 1.5 proposed no moment in 45 runs; each run's best
+                            # moments are now proposed and ranked across the library)
     "momentsPerRun": 2,
     "momentSeparationMs": 20000,
     "skiBeforeMs": 4000, "skiAfterMs": 6000,
@@ -325,10 +331,16 @@ def concept_events(rec: dict, z: np.ndarray, probs: np.ndarray, scorer: Scorer, 
         best = max(group_pieces, key=lambda p: p["peakZ"])
         first = min(p["first"] for p in group_pieces)
         last = max(p["last"] for p in group_pieces)
-        start = max(0, first - cfg["padMs"])
-        end = min(duration, last + STEP_MS + cfg["padMs"])
-        if end <= start:
+        enc_start = max(0, first - cfg["padMs"])
+        enc_end = min(duration, last + STEP_MS + cfg["padMs"])
+        if enc_end <= enc_start:
             continue
+        start, end = enc_start, enc_end
+        if end - start > cfg["maxWindowMs"]:
+            half = cfg["maxWindowMs"] // 2
+            start = max(enc_start, best["peakMs"] - half)
+            end = min(enc_end, start + cfg["maxWindowMs"])
+            start = max(enc_start, end - cfg["maxWindowMs"])
         concepts = {}
         for p in sorted(group_pieces, key=lambda p: -p["peakZ"]):
             c = concepts.setdefault(p["concept"], {"concept": p["concept"], "peakZ": p["peakZ"],
@@ -348,6 +360,8 @@ def concept_events(rec: dict, z: np.ndarray, probs: np.ndarray, scorer: Scorer, 
             "startMs": int(start), "endMs": int(end), "peakMs": best["peakMs"],
             "coreStartMs": max(0, best["peakMs"] - cfg["coreMs"]),
             "coreEndMs": min(duration, best["peakMs"] + cfg["coreMs"]),
+            "encounterStartMs": int(enc_start), "encounterEndMs": int(enc_end),
+            "sceneWide": hits / max(1, len(times)) > cfg["sceneWideShare"],
             "top": best["concept"], "concepts": list(concepts.values()),
             "visibleSeconds": hits * STEP_MS / 1000,
             "score": round(best["peakZ"] + 0.5 * math.log1p(hits), 3),
@@ -369,7 +383,10 @@ def ski_states(rec: dict, tl: dict, z: np.ndarray | None, scorer: Scorer, base: 
     motion = tl["motion"]
     if stop_at is not None:
         state[np.isfinite(motion) & (motion < stop_at)] = "stopped"
-    state[~np.isfinite(motion)] = "stopped"
+    if np.isfinite(motion).any():
+        state[~np.isfinite(motion)] = "stopped"
+    # No motion timeline at all (never scanned by a discovery pass): riding unless SigLIP
+    # sees a lift, a line or a building. Recorded as motionEvidence false.
     if z is not None:
         for name in ("indoors", "queue", "lift"):   # later wins: a lift outranks a line
             key = f"ski_context:{name}"
@@ -444,7 +461,12 @@ def ski_action(tl: dict, z: np.ndarray | None, scorer: Scorer, base: dict,
         if comp:
             companion = z[:, [scorer.index[c] for c in comp]].max(axis=1)
     w = cfg["weights"]
-    action = w["speed"] * _clip(speed) + w["visual"] * _clip(visual) + w["companion"] * _clip(companion)
+    known = np.isfinite(speed)
+    rest = w["visual"] + w["companion"]
+    action = np.where(
+        known,
+        w["speed"] * _clip(speed) + w["visual"] * _clip(visual) + w["companion"] * _clip(companion),
+        (w["visual"] * _clip(visual) + w["companion"] * _clip(companion)) / rest)
     return {"speed": speed, "visual": visual, "visualConcept": which, "companion": companion,
             "action": action, "z": z}
 
@@ -561,6 +583,10 @@ def search_recording(rec: dict, scorer: Scorer, base: dict, cfg: dict) -> dict:
         summary["seconds"] = {s: round(float((state == s).sum()) * STEP_MS / 1000, 1)
                               for s in ("riding", "stopped", "lift", "queue", "indoors")}
         summary["runs"] = len(runs)
+        summary["motionEvidence"] = bool(np.isfinite(tl["motion"]).any())
+        riding = parts["action"][state == "riding"]
+        summary["actionQuantiles"] = ({str(q): round(float(np.quantile(riding, q)), 2)
+                                       for q in (0.5, 0.9, 0.99)} if len(riding) else {})
     summary["candidates"] = len(found)
     return {"candidates": found, "summary": summary}
 

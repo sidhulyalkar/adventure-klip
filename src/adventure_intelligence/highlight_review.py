@@ -47,7 +47,8 @@ def _key(deck_id: str, item_id: str) -> str:
 
 
 def build_deck(candidates: list[dict], audit: list[dict], verified: dict[str, dict], *,
-               rejected_share: float = REJECTED_SHARE, max_items: int | None = None) -> dict:
+               rejected_share: float = REJECTED_SHARE, max_items: int | None = None,
+               max_audit: int | None = 30) -> dict:
     """The review deck: verified and uncertain moments, a sample of rejected ones, and the
     audit windows. `verified` maps candidate id -> stage B record."""
     chosen = []
@@ -63,7 +64,10 @@ def build_deck(candidates: list[dict], audit: list[dict], verified: dict[str, di
     rejected.sort(key=lambda x: sha256(f'rejected|{x[0]["id"]}'.encode()).hexdigest())
     if rejected:
         chosen += rejected[:max(3, round(rejected_share * len(rejected)))]
-    chosen += [(a, None, "audit") for a in audit]
+    # A reproducible subset of the audit windows: each is a uniform draw of unproposed
+    # footage, so any subset chosen without looking at content stays unbiased.
+    audit = sorted(audit, key=lambda a: sha256(f'audit|{a["id"]}'.encode()).hexdigest())
+    chosen += [(a, None, "audit") for a in (audit if max_audit is None else audit[:max_audit])]
     items = {}
     for c, r, role in chosen:
         items[c["id"]] = {

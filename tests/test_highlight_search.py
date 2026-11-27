@@ -155,6 +155,15 @@ def test_ski_run_between_lifts_and_its_fastest_moment(scorer, image):
     assert summary["runs"] == 1 and summary["seconds"]["lift"] >= 70
 
 
+def test_ski_without_a_motion_timeline_still_finds_runs_from_siglip(scorer, image):
+    rec = ski_recording(scorer, image, layout=[(40, "lift"), (100, "ride"), (40, "lift")])
+    rec["motion"] = []
+    got = hs.search([rec], scorer, set())
+    runs = [c for c in got["candidates"] if c["kind"] == "ski_run"]
+    assert len(runs) == 1 and runs[0]["run"]["afterLift"]
+    assert got["recordings"][0]["motionEvidence"] is False
+
+
 def test_a_long_stop_splits_runs_and_a_short_one_does_not(scorer, image):
     long_stop = ski_recording(scorer, image, layout=[(60, "ride"), (60, "stop"), (60, "ride")])
     short_stop = ski_recording(scorer, image, layout=[(60, "ride"), (10, "stop"), (60, "ride")])
@@ -164,6 +173,23 @@ def test_a_long_stop_splits_runs_and_a_short_one_does_not(scorer, image):
 
 
 # ---------------------------------------------------------------- audit and evaluation
+
+def test_a_long_encounter_is_clipped_around_its_peak_and_keeps_its_extent(scorer, image):
+    rec = snorkel(scorer, image, animal__sea_turtle=list(range(100, 140)))
+    [c] = [c for c in hs.search([rec], scorer, set())["candidates"] if c["kind"] == "animal"]
+    assert c["endMs"] - c["startMs"] == hs.DEFAULTS["maxWindowMs"]
+    assert c["startMs"] <= c["peakMs"] <= c["endMs"]
+    assert (c["encounterStartMs"], c["encounterEndMs"]) == (197000, 283000)
+    assert not c["sceneWide"]
+
+
+def test_a_concept_matching_most_of_a_recording_is_flagged_scene_wide(scorer, image):
+    dev = snorkel(scorer, image, SHA, n=200)
+    night = snorkel(scorer, image, SHA2, n=50, seed=2, animal__manta_ray=list(range(5, 50)))
+    c = [c for c in hs.search([dev, night], scorer, set())["candidates"]
+         if c["kind"] == "animal" and c["sourceSha256"] == SHA2]
+    assert c and c[0]["sceneWide"]
+
 
 def test_audit_is_reproducible_and_avoids_proposed_moments(scorer, image):
     rec = snorkel(scorer, image, animal__manta_ray=[150, 151])
@@ -297,6 +323,14 @@ def test_verdicts(kind, answer, expected):
     assert hv.verdict({"kind": kind, "top": "manta_ray"}, answer)["verdict"] == expected
 
 
+def test_verify_queue_samples_every_outing_and_species_before_going_deep():
+    cands = ([{"id": f"m{i}", "kind": "animal", "outing": "o1", "top": "manta_ray",
+               "score": 10 - i * 0.1} for i in range(5)]
+             + [{"id": "t", "kind": "animal", "outing": "o2", "top": "sea_turtle", "score": 3},
+                {"id": "s", "kind": "animal", "outing": "o1", "top": "shark", "score": 2}])
+    assert [c["id"] for c in hv.queue(cands)][:3] == ["m0", "t", "s"]
+
+
 def test_verify_queue_puts_animals_first_and_skips_done():
     cands = [{"id": "r", "kind": "ski_run", "score": 9}, {"id": "a1", "kind": "animal", "score": 2},
              {"id": "a2", "kind": "animal", "score": 5}, {"id": "j", "kind": "ski_jump", "score": 1}]
@@ -323,6 +357,14 @@ def test_deck_mixes_proposed_rejected_sample_and_audit_in_a_fixed_order():
     deck = _deck()
     assert deck["counts"] == {"proposed": 2, "rejected_sample": 3, "audit": 1}
     assert deck == _deck() and sorted(deck["order"]) == sorted(deck["items"])
+
+
+def test_deck_takes_a_reproducible_subset_of_audit_windows():
+    audit = [{"id": f"a{i}", "kind": "audit", "sport": "ski", "sourceSha256": SKI,
+              "startMs": i * 10000, "endMs": i * 10000 + 10000} for i in range(50)]
+    deck = review.build_deck([], audit, {}, max_audit=12)
+    assert deck["counts"] == {"audit": 12}
+    assert deck == review.build_deck([], list(reversed(audit)), {}, max_audit=12)
 
 
 def test_review_page_is_blind_and_accessible(tmp_path):
@@ -447,3 +489,56 @@ def test_cli_finds_marine_label_pairs(tmp_path, capsys):
     assert cli.main(["find-labels", "--roots", str(tmp_path)]) == 0
     got = json.loads(capsys.readouterr().out)
     assert len(got["pairs"]) == 1 and len(got["exportsWithoutSample"]) == 1
+    assert got["jsonFilesScanned"][str(tmp_path)] == 3
+
+
+def test_cli_reports_folders_it_cannot_read(tmp_path, capsys):
+    cli = _cli()
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        assert cli.main(["find-labels", "--roots", str(tmp_path), str(tmp_path / "nope")]) == 0
+        got = json.loads(capsys.readouterr().out)
+    finally:
+        locked.chmod(0o755)
+    assert any("nope" in u for u in got["unreadable"])
+    import os
+    if os.geteuid() != 0:          # root can read anything
+        assert any("locked" in u for u in got["unreadable"])
+
+
+def test_evidence_only_recordings_get_names_and_originals_from_the_catalog(tmp_path, image, scorer):
+    import sqlite3
+    cli = _cli()
+    reports = _workspace(tmp_path, image, scorer)
+    other = "d" * 64
+    ev = reports / "evidence" / other
+    ev.mkdir()
+    (ev / "meta.json").write_text(json.dumps({"imageModel": image.model_id}))
+    np.savez(ev / "frames.npz", times=np.arange(30) * 2000,
+             embeddings=image.frames(30).astype(np.float16))
+    src = tmp_path / "src"
+    src.mkdir(exist_ok=True)
+    original = src / "DJI_20250101090000_0009_D.MP4"
+    original.write_bytes(b"0123456789")
+    db = sqlite3.connect(tmp_path / "catalog.sqlite3")
+    db.execute("CREATE TABLE assets (id TEXT, sha256 TEXT, stored_path TEXT, size_bytes INTEGER,"
+               " duration REAL)")
+    db.execute("INSERT INTO assets VALUES (?,?,?,?,?)", (other, other, str(original), 10, 61.5))
+    db.commit()
+    db.close()
+    recs, notes = cli.inventory(reports, None, cli.load_queries(reports))
+    assert notes["otherOrUnknownSport"] == 1        # no sport known without a roster
+    from adventure_intelligence import outing_roster
+    roster_doc = outing_roster.validate({
+        "version": outing_roster.VERSION, "status": "provisional",
+        "outings": [{"outing": "o9", "sources": [{"sourceSha256": other, "activity": "snorkeling"}]}]})
+    recs, notes = cli.inventory(reports, roster_doc, cli.load_queries(reports))
+    rec = next(r for r in recs if r["sourceSha256"] == other)
+    assert rec["file"] == original.name and rec["durationMs"] == 61500
+    sources = cli.Sources(reports, src)
+    assert sources.original(other) == original
+    original.write_bytes(b"changed!!!!")
+    with pytest.raises(ValueError, match="changed since it was hashed"):
+        sources.original(other)
