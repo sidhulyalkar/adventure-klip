@@ -13,7 +13,7 @@ from adventure_intelligence import story_harness as h
 pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
 
 SHA = "ab" * 32
-NAME = "DJI_20260301101134_0204_D.MP4"  # captured 10:11 -> morning
+NAME = "DJI_20260301101134_0204_D.MP4"  # camera clock 10:11 (not local time)
 SOURCES = {"0-10000": "testsrc2=size=320x180:rate=10",
            "10000-20000": "color=c=black:size=320x180:rate=10",
            "20000-30000": "testsrc2=size=320x180:rate=10,gblur=sigma=14"}
@@ -99,7 +99,7 @@ def _packet(quality=None):
     return h.build_packet("day / ski", "ski", scenes, footage_ms=30000)
 
 
-GOOD = {"beats": [{"text": "In the morning the skier launches off a small jump.",
+GOOD = {"beats": [{"text": "Early on the skier launches off a small jump.",
                    "scenes": ["S01"]},
                   {"text": "Later the light fades and the camera goes soft.",
                    "scenes": ["S02", "S03"]}],
@@ -113,13 +113,25 @@ GOOD = {"beats": [{"text": "In the morning the skier launches off a small jump."
 def test_grounded_story_passes_and_scenes_are_in_clock_order():
     p = _packet()
     assert [s["id"] for s in p["scenes"]] == ["S01", "S02", "S03"]
-    assert p["scenes"][0]["clockStart"] == "10:11:34" and p["scenes"][0]["partOfDay"] == "morning"
+    assert p["scenes"][0]["clockStart"] == "10:11:34" and p["scenes"][0]["elapsedSeconds"] == 0
+    assert "partOfDay" not in p["scenes"][0] and p["promptRevision"] == h.PROMPT_REVISION
     assert h.check_story(GOOD, p, 3) == []
+
+
+def test_prompt_shows_elapsed_time_not_the_camera_clock_or_part_of_day():
+    prompt = h.story_prompt(_packet(), 3)
+    assert "10:11" not in prompt and "+0:00 after the first scene" in prompt
+    assert "time of day is unknown" in prompt
 
 
 @pytest.mark.parametrize("change,expected", [
     (lambda s: s["moments"][0].update(what="A sea turtle glides past"), "mentions turtle"),
-    (lambda s: s["beats"][0].update(text="An evening jump."), "says 'evening'"),
+    (lambda s: s["beats"][0].update(text="An evening jump."), "time of day is unknown"),
+    (lambda s: s["beats"][0].update(text="A morning jump."), "time of day is unknown"),
+    (lambda s: s["moments"][0].update(whyItMatters="Hands touching the snow mid-air."),
+     "claims touching"),
+    (lambda s: s["moments"][0].update(what="Skier in the air, watch on foot"),
+     "camera wearer's body or gear"),
     (lambda s: s.update(shortlist=["S02"]), "S02, which is unusable"),
     (lambda s: s.update(shortlist=["S01", "S03"]), "without a moment"),
     (lambda s: s["beats"].reverse(), "out of clock order"),
@@ -361,3 +373,14 @@ def test_describer_thins_judged_frames_and_names_the_reasoning_failure(reports):
     out = h.call_json("qwen3-vl:8b", [{"role": "user", "content": "x"}],
                       schema=h.describe_schema(2), check=lambda d: [], transport=thinker)
     assert out["status"] == "failed" and "-instruct" in out["failureDetail"]
+
+
+def test_watching_is_not_a_gear_claim():
+    story = json.loads(json.dumps(GOOD))
+    story["moments"][0]["whyItMatters"] = "Fun to watch: the only airborne moment."
+    assert h.check_story(story, _packet(), 3) == []
+
+
+def test_describe_prompt_asks_for_species_and_counts_and_forbids_contact():
+    text = h.describe_prompt("snorkeling", [0, 1000], 2000)
+    assert "how many" in text and "unidentified" in text and "touches or holds" in text

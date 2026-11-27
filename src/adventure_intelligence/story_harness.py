@@ -276,7 +276,10 @@ def describe_prompt(sport: str, stamps_ms: list[int], duration_ms: int) -> str:
         "frames, do not invent animals, people or tricks, and do not say whether the clip is "
         "good. Keep each observation to one short sentence. List the subjects you can see, "
         "the setting, how the camera moves, and whether the frames are in focus, well "
-        "exposed and taken through a clear lens.")
+        "exposed and taken through a clear lens. Name animals as specifically as you can see "
+        "them (stingray, eagle ray, sea turtle...) and say how many; write 'an unidentified "
+        "animal' rather than guess a species. Do not say what anyone touches or holds, and do "
+        "not describe the camera wearer's hands, feet or gear.")
 
 
 def check_description(d: dict, duration_ms: int, stamps_ms: list[int]) -> list[str]:
@@ -324,6 +327,14 @@ def capture_start(name: str) -> datetime | None:
         return None
 
 
+PROMPT_REVISION = 2   # 2: no time of day, no contact or wearer claims, species and counts
+
+
+def _elapsed(seconds: int) -> str:
+    h, rest = divmod(int(seconds), 3600)
+    return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60}:{rest % 60:02d}"
+
+
 def part_of_day(hour: int) -> str:
     return "morning" if 5 <= hour < 12 else "afternoon" if hour < 17 else (
         "evening" if hour < 21 else "night")
@@ -340,6 +351,8 @@ def build_packet(outing: str, sport: str, scenes: list[dict], *, footage_ms: int
         return (s["capture"] is None, s["capture"] or datetime.min, s["file"], s["startMs"])
 
     ordered = sorted(scenes, key=clock)
+    starts = [s["capture"].timestamp() + s["startMs"] / 1000 for s in ordered if s["capture"]]
+    origin = min(starts) if starts else None
     out = []
     for i, s in enumerate(ordered, 1):
         facts = s.get("facts") or {}
@@ -349,8 +362,10 @@ def build_packet(outing: str, sport: str, scenes: list[dict], *, footage_ms: int
             "id": f"S{i:02d}", "file": s["file"], "sourceSha256": s["sourceSha256"],
             "startMs": s["startMs"], "endMs": s["endMs"],
             "durationSeconds": round((s["endMs"] - s["startMs"]) / 1000, 1),
+            # The camera clock is NOT local time (owner claim review, 2026-11-26): it orders
+            # scenes and is shown to the owner, but the storyteller only sees elapsed time.
             "clockStart": datetime.fromtimestamp(start).strftime("%H:%M:%S") if start else None,
-            "partOfDay": part_of_day(datetime.fromtimestamp(start).hour) if start else None,
+            "elapsedSeconds": round(start - origin) if start and origin is not None else None,
             "quality": {"verdict": s["quality"]["verdict"], "flags": s["quality"]["flags"]},
             "factsYes": sorted(k for k, v in facts.items()
                                if v["outcome"] in ("agreed_yes", "resolved_yes")),
@@ -367,7 +382,8 @@ def build_packet(outing: str, sport: str, scenes: list[dict], *, footage_ms: int
             "signals": s.get("signals", {}),
         })
     reviewed = sum(s["endMs"] - s["startMs"] for s in ordered)
-    return {"version": VERSION, "outing": outing, "sport": sport, "scenes": out,
+    return {"version": VERSION, "promptRevision": PROMPT_REVISION, "outing": outing,
+            "sport": sport, "scenes": out,
             "reviewedSeconds": round(reviewed / 1000), "footageSeconds": round(footage_ms / 1000),
             "examples": examples or []}
 
@@ -474,8 +490,12 @@ def story_prompt(packet: dict, shortlist_max: int) -> str:
         "- Every moment cites evidence as fact:<key> (a 'yes' fact of that scene), "
         "obs:<n> (that scene's observation number, from 1), subject:<name>, "
         "signal:<name> or quality:<flag>.",
-        "- Beats follow clock order. Say 'first' or 'last' only of the first or last scene "
-        "listed; use morning/afternoon/evening only as the scene's part of day says.",
+        "- Beats follow the scenes' order. Say 'first' or 'last' only of the first or last "
+        "scene listed. The time of day is unknown: never say morning, afternoon, evening, "
+        "night, sunrise light or similar.",
+        "- Never say what anyone touches, grabs or holds, and never describe the camera "
+        "wearer's hands, feet, watch or gear: the frames cannot show it reliably.",
+        "- Name an animal by its species only as the scene's evidence names it.",
         "- Scenes marked unusable never go in the shortlist. A degraded scene may only be "
         "shortlisted if its moment cites quality:<flag> and says why it is still worth it.",
         "- Disputed facts are uncertain: do not state them as true.",
@@ -490,8 +510,10 @@ def story_prompt(packet: dict, shortlist_max: int) -> str:
     for s in packet["scenes"]:
         lines.append(
             f"{s['id']} | {s['file']} {s['startMs'] / 1000:.0f}-{s['endMs'] / 1000:.0f}s "
-            f"({s['durationSeconds']} s) | clock {s['clockStart'] or 'unknown'} "
-            f"({s['partOfDay'] or 'unknown part of day'}) | quality {s['quality']['verdict']}"
+            f"({s['durationSeconds']} s) | "
+            + (f"+{_elapsed(s['elapsedSeconds'])} after the first scene"
+               if s.get("elapsedSeconds") is not None else "time unknown")
+            + f" | quality {s['quality']['verdict']}"
             + (f" ({', '.join(s['quality']['flags'])})" if s["quality"]["flags"] else ""))
         lines.append(f"  yes: {', '.join(s['factsYes']) or '-'} | no: "
                      f"{', '.join(s['factsNo']) or '-'} | disputed: "
@@ -522,7 +544,12 @@ SALIENT = {
     "sunset": ["sunset", "sunrise"], "waterfall": ["waterfall"], "kayak": ["kayak"],
     "boat": ["boat"], "beach": ["beach", "sand"],
 }
-_CLOCK = ("morning", "afternoon", "evening", "night")
+_CLOCK = ("morning", "afternoon", "evening", "night", "noon", "midday", "dawn", "dusk")
+# Claims the owner marked wrong in the first claim review: body contact and the camera
+# wearer's own body or gear, which first-person frames cannot show reliably.
+_CONTACT = {"touch", "touche", "touched", "touching", "grab", "grabbed", "grabbing", "hold",
+            "holding", "held", "stroke", "stroking", "pet", "petting"}
+_WEARER = {"hand", "finger", "foot", "feet", "glove"}   # not "watch": a verb too
 _FIRST, _LAST = {"first", "opening"}, {"last", "final"}
 
 
@@ -562,11 +589,17 @@ def check_story(story: dict, packet: dict, shortlist_max: int,
 
     def clock_words(text, ids, where):
         words = _words(text)
-        parts = {scenes[i]["partOfDay"] for i in ids if i in scenes}
         for part in _CLOCK:
-            if part in words and None not in parts and part not in parts:
-                out.append(f"{where} says '{part}' but its scenes are in the "
-                           f"{', '.join(sorted(parts))}")
+            if part in words:
+                out.append(f"{where} says '{part}', but the time of day is unknown (the "
+                           "camera clock is not local time)")
+        if words & _CONTACT:
+            out.append(f"{where} claims touching or holding ({', '.join(sorted(words & _CONTACT))}),"
+                       " which the frames cannot show reliably")
+        if words & _WEARER:
+            out.append(f"{where} describes the camera wearer's body or gear "
+                       f"({', '.join(sorted(words & _WEARER))}), which the frames cannot show "
+                       "reliably")
         soft = warnings if warnings is not None else []
         if words & _FIRST and order and order[0] not in ids:
             soft.append(f"{where} says 'first' but does not include the first scene {order[0]}")
