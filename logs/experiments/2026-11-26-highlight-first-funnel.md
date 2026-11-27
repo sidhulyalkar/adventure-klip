@@ -34,3 +34,22 @@ acceptance criteria: [KLIP_HIGHLIGHT_FUNNEL.md](../../docs/KLIP_HIGHLIGHT_FUNNEL
 * Any other animals always worth keeping (needlefish, octopus, dolphins are in the list)?
 * What makes a ski moment "best": speed, steep or powder, jumps, a full run, friends in frame?
   The default weights (speed 0.5, visual 0.35, skier ahead 0.15) stand until then.
+
+## First footage run (2026-11-27, search run acaf4845-4b22fd2a)
+
+* Inventory: 195 searchable recordings (98 evidence-only without motion, 19 accidental and 18
+  other-sport recordings left out). Candidates: 181 animal, 156 ski_action, 98 ski_run,
+  1 companion; 122 audit windows.
+* Verify (qwen3-vl:8b-instruct, 40 calls): 45 of 85 queued candidates were skipped because
+  `--trusted-source-root` pointed at the code checkout. All 113 discovery and 232 catalog
+  originals are under `/Volumes/Sid_DJI_SSD/DCIM/DJI_001`. Only windows already covered by
+  a discovery proxy were verified, so this first deck is biased toward previously-reviewed
+  footage. It is not used for the acceptance criteria.
+* Species agreement between search and verifier on the 38 answers naming an animal:
+  25 (0.66). Sea turtle 11/11 and shark 9/11, but manta 5/15 (8 called stingray) and
+  dolphin 0/2. Search never proposed "stingray" although it scores that query, so rays fall
+  to manta / eagle ray. Whether search or verifier is right waits for owner review.
+* `find-labels`: the frozen marine sample was found; no owner export paired with it.
+* Fixes in `highlights/clips-library-showcase-v1`: pages report the cause of each missing
+  clip; library page cuts previews from originals; exports and showcase (stage E in the
+  funnel doc).

@@ -110,6 +110,52 @@ legends, polite live regions for counts and marks. Answers import as owner label
     $PY scripts/klip_highlight_search.py import-answers --reports "$R" --answers ~/Downloads/highlight-answers-<deck>.json
     $PY scripts/klip_highlight_search.py eval-review --reports "$R"
 
+## From kept moments to finished clips (stage E)
+
+`SRC` must be the footage drive (`/Volumes/Sid_DJI_SSD`), not the code checkout: every
+recorded original lives under `/Volumes/Sid_DJI_SSD/DCIM/DJI_001`, so any other root refuses
+every clip that needs the original. Pages now say why a clip is missing instead of "run the
+verify stage first", and every review page is dark with keyboard controls
+(k / m / s, 1-5, i / o for the best part, p to play it, space, arrows, j for next).
+
+1. **Watch everything.** `klip_highlight_library.py page --trusted-source-root "$SRC"` cuts a
+   960 px preview with 4 s of context on each side (`--pad-s`) for any moment no existing
+   review clip covers, so you can set in and out points just outside the old window.
+   `--top N` shows only the best N of each sport.
+2. **Trim.** Your best part start and end replace the window (`windowBasis: owner_trim`) on
+   the next `build`; a 5-star rating makes the moment `owner_best`.
+3. **Export.** `export` cuts each `owner_best` and `owner_keep` moment exactly to its window
+   from the original, frame-accurate (re-encoded, not stream-copied):
+   * `master.mp4`: original resolution, x264 CRF 18, AAC 192k: the copy to edit from;
+   * `web.mp4`: at most 1920 px wide, CRF 23 capped at 8 Mb/s, `+faststart`, with all
+     camera metadata removed (GPS, serials, telemetry and timecode streams);
+   * `poster.jpg`: the middle frame, at most 1280 px.
+   Stored in `highlight-library-v1/exports/<moment id>/` with `export.json` (source SHA,
+   window, settings, output sizes and SHA-256). Idempotent; a new trim is a new moment id
+   and a new folder, so earlier exports are never overwritten. Moments marked
+   "bad footage" and unresolved keep-and-skip conflicts are left out unless asked for.
+4. **Showcase.** `showcase` copies the best exported web files and posters into
+   `highlight-library-v1/showcase/` (or `--out`): `media/`, `highlights.json`
+   (title, sport, place, trip, date, tags, rating, duration, video and poster URLs) and a
+   dark gallery `index.html`. Titles come from the roster's outing and trip titles and
+   places. The JSON holds no source hashes, file names or private notes
+   (`--include-notes` to opt in). `--base-url` sets where the site will serve media from.
+   Nothing is uploaded or deployed.
+
+Status: implemented, synthetic CI passed (real ffmpeg on synthetic video). Not yet run on
+footage.
+
+Commands:
+
+    SRC=/Volumes/Sid_DJI_SSD; L="$R/owner-ledgers"
+    $PY scripts/klip_highlight_library.py build --reports "$R" --ledgers "$L"
+    $PY scripts/klip_highlight_library.py page --reports "$R" --trusted-source-root "$SRC" --top 15
+    $PY scripts/klip_highlight_library.py import-answers --reports "$R" --answers ~/Downloads/highlight-answers-<deck>.json
+    $PY scripts/klip_highlight_library.py build --reports "$R" --ledgers "$L"
+    $PY scripts/klip_highlight_library.py export --reports "$R" --trusted-source-root "$SRC" --dry-run
+    $PY scripts/klip_highlight_library.py export --reports "$R" --trusted-source-root "$SRC"
+    $PY scripts/klip_highlight_library.py showcase --reports "$R" --ledgers "$L" --limit 12 --base-url /highlights/media
+
 ## Story harness changes from the same claim review (prompt revision 2)
 
 * No time of day: the camera clock is not local time. Packets carry elapsed time from the

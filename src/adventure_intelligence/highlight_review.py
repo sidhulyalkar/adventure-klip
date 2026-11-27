@@ -33,7 +33,19 @@ WHAT = {
                    "nothing_special", "bad_footage"],
     "ski": ["speed", "jump", "powder", "trees", "steep", "friend", "full_run", "crash",
             "scenery", "lift_or_line", "nothing_special", "bad_footage"],
+    # Any other or unlabelled activity (kayaking, biking, hiking, unknown...).
+    "other": ["friend", "animal", "scenery", "speed", "jump", "crash", "funny",
+              "nothing_special", "bad_footage"],
 }
+SPORT_ALIASES = {"skiing": "ski", "snowboarding": "ski", "snowboard": "ski",
+                 "snorkel": "snorkeling", "diving": "snorkeling", "scuba": "snorkeling",
+                 "freediving": "snorkeling"}
+
+
+def what_for(sport: str | None) -> list[str]:
+    """The tick boxes for a sport; never empty, so every clip can be described."""
+    key = SPORT_ALIASES.get(sport or "", sport or "")
+    return WHAT.get(key) or WHAT["other"]
 ANIMAL_WHAT = {"manta_ray", "eagle_ray", "stingray", "shark", "sea_turtle", "octopus",
                "dolphin", "eel", "other_animal"}
 REJECTED_SHARE = 0.15
@@ -93,14 +105,26 @@ def build_deck(candidates: list[dict], audit: list[dict], verified: dict[str, di
 
 
 _CSS = """
-body{font:15px/1.45 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#1b1b1b}
-h1{font-size:20px} .item{border:1px solid #bbb;border-radius:8px;padding:12px;margin:16px 0}
-.item.done{border-color:#2e7d32} video{width:100%;max-height:60vh;background:#000}
-fieldset{border:0;padding:0;margin:8px 0} legend{font-weight:600;margin-bottom:4px}
+:root{color-scheme:dark}
+body{font:15px/1.45 system-ui,sans-serif;margin:0 auto;max-width:1100px;padding:16px;
+  color:#e8e8e8;background:#0b0b0c}
+h1{font-size:20px} h2{font-size:17px;margin:0 0 4px}
+.item{border:1px solid #2a2a2e;border-radius:10px;padding:12px;margin:16px 0;background:#141416}
+.item.done{border-color:#3d8b47} .item.current{box-shadow:0 0 0 2px #4b7bd1}
+video{width:100%;max-height:72vh;background:#000;border-radius:6px;display:block}
+fieldset{border:0;padding:0;margin:8px 0} legend{font-weight:600;margin-bottom:4px;color:#cfcfd4}
 label{display:inline-block;margin:2px 10px 2px 0;padding:4px 6px;border-radius:4px}
-label:focus-within{outline:3px solid #1565c0} input[type=text]{width:100%;font:inherit}
-button{font:inherit;padding:4px 10px;margin-right:6px} .meta{color:#444;font-size:13px}
-#bar{position:sticky;top:0;background:#fff;padding:8px 0;border-bottom:1px solid #ddd}
+label:focus-within{outline:3px solid #4b7bd1} input[type=text]{width:100%;font:inherit;
+  background:#0b0b0c;color:#e8e8e8;border:1px solid #3a3a40;border-radius:4px;padding:4px}
+button{font:inherit;padding:4px 10px;margin-right:6px;background:#26262b;color:#e8e8e8;
+  border:1px solid #3a3a40;border-radius:6px;cursor:pointer} button:hover{background:#323238}
+button:focus-visible{outline:3px solid #4b7bd1}
+.meta{color:#a0a0a8;font-size:13px} .marks{color:#9fd3a8}
+.missing{padding:24px;border:1px dashed #5a4a2a;border-radius:6px;color:#e0c48a;background:#1a1610}
+#bar{position:sticky;top:0;z-index:2;background:#0b0b0cee;padding:8px 0;border-bottom:1px solid #2a2a2e}
+kbd{background:#26262b;border:1px solid #3a3a40;border-radius:3px;padding:0 4px;font-size:12px}
+.keys{color:#a0a0a8;font-size:13px}
+a{color:#8ab4f8}
 """
 
 _JS = """
@@ -128,10 +152,27 @@ function show(item) {
     + (a.bestEndMs != null ? ' to ' + (a.bestEndMs/1000).toFixed(1) + ' s' : '');
   item.classList.toggle('done', !!a.decision);
 }
-const TOTAL = document.querySelectorAll('.item').length;
-document.querySelectorAll('.item').forEach(item => {
+const ITEMS = [...document.querySelectorAll('.item')], TOTAL = ITEMS.length;
+let current = null;
+function focusItem(item, scroll) {
+  if (current) current.classList.remove('current');
+  current = item; if (!item) return;
+  item.classList.add('current');
+  if (scroll) item.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+function decide(item, value) {
+  const r = item.querySelector('input.d[value="' + value + '"]');
+  if (r) { r.checked = true; r.dispatchEvent(new Event('change')); }
+}
+function rate(item, value) {
+  const r = item.querySelector('input.s[value="' + value + '"]');
+  if (r) { r.checked = true; r.dispatchEvent(new Event('change')); }
+}
+ITEMS.forEach(item => {
   const id = item.dataset.id, start = +item.dataset.start, video = item.querySelector('video');
   load(item);
+  item.addEventListener('focusin', () => focusItem(item, false));
+  item.addEventListener('pointerdown', () => focusItem(item, false));
   item.querySelectorAll('input.d').forEach(r => r.addEventListener('change', () => {
     entry(id).decision = r.value; show(item); save(); }));
   item.querySelectorAll('input.s').forEach(r => r.addEventListener('change', () => {
@@ -140,12 +181,46 @@ document.querySelectorAll('.item').forEach(item => {
     const a = entry(id); a.what = [...item.querySelectorAll('input[type=checkbox]:checked')].map(x => x.value);
     save(); }));
   item.querySelector('input[type=text]').addEventListener('input', e => { entry(id).note = e.target.value; save(); });
-  item.querySelector('.in').addEventListener('click', () => {
-    entry(id).bestStartMs = Math.round(start + video.currentTime * 1000); show(item); save(); });
-  item.querySelector('.out').addEventListener('click', () => {
-    entry(id).bestEndMs = Math.round(start + video.currentTime * 1000); show(item); save(); });
+  const mark = which => {
+    if (!video) return;
+    entry(id)[which] = Math.round(start + video.currentTime * 1000); show(item); save(); };
+  item.querySelector('.in').addEventListener('click', () => mark('bestStartMs'));
+  item.querySelector('.out').addEventListener('click', () => mark('bestEndMs'));
   item.querySelector('.clear').addEventListener('click', () => {
     const a = entry(id); delete a.bestStartMs; delete a.bestEndMs; show(item); save(); });
+  item.querySelector('.play').addEventListener('click', () => {
+    const a = answers[id] || {};
+    if (!video || a.bestStartMs == null) return;
+    video.currentTime = (a.bestStartMs - start) / 1000; video.play();
+    const stop = () => { if (a.bestEndMs != null && start + video.currentTime * 1000 >= a.bestEndMs) {
+      video.pause(); video.removeEventListener('timeupdate', stop); } };
+    video.addEventListener('timeupdate', stop);
+  });
+  if (video) video.addEventListener('play', () => {
+    focusItem(item, false);
+    document.querySelectorAll('video').forEach(v => { if (v !== video) v.pause(); });
+  });
+});
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input[type=text], textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  const item = current || ITEMS[0]; if (!item) return;
+  const video = item.querySelector('video'), k = e.key.toLowerCase();
+  const go = step => { const i = ITEMS.indexOf(item) + step;
+    if (i >= 0 && i < ITEMS.length) { if (video) video.pause(); focusItem(ITEMS[i], true); } };
+  if (k === 'k') decide(item, 'keep');
+  else if (k === 'm') decide(item, 'maybe');
+  else if (k === 's') decide(item, 'skip');
+  else if ('12345'.includes(k) && k.length === 1) rate(item, k);
+  else if (k === 'i' || k === '[') item.querySelector('.in').click();
+  else if (k === 'o' || k === ']') item.querySelector('.out').click();
+  else if (k === 'p') item.querySelector('.play').click();
+  else if (k === ' ' && video) { video.paused ? video.play() : video.pause(); }
+  else if (k === 'arrowleft' && video) video.currentTime = Math.max(0, video.currentTime - (e.shiftKey ? 0.2 : 2));
+  else if (k === 'arrowright' && video) video.currentTime += e.shiftKey ? 0.2 : 2;
+  else if (k === 'j' || k === 'arrowdown') go(1);
+  else if (k === 'arrowup') go(-1);
+  else return;
+  e.preventDefault();
 });
 document.getElementById('download').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify({version: 'ANSWERS_VERSION', deck: KEY, answers}, null, 1)],
@@ -154,13 +229,16 @@ document.getElementById('download').addEventListener('click', () => {
   link.href = URL.createObjectURL(blob); link.download = 'highlight-answers-' + KEY + '.json';
   link.click();
 });
+if (ITEMS.length) focusItem(ITEMS[0], false);
 save();
 """
 
 
-def page(deck: dict, base: Path, clip_of) -> str:
+def page(deck: dict, base: Path, clip_of, missing: dict[str, str] | None = None) -> str:
     """clip_of(item id) -> Path of a clip containing the item, or None. A clip that starts
-    before the item (mediaStartMs) plays from the item's window via a media fragment."""
+    before the item (mediaStartMs) plays from the item's window via a media fragment.
+    missing: item id -> why there is no clip, shown in place of the video."""
+    missing = missing or {}
     blocks = []
     for n, item_id in enumerate(deck["order"], 1):
         it = deck["items"][item_id]
@@ -170,9 +248,10 @@ def page(deck: dict, base: Path, clip_of) -> str:
         if clip and (media_start != it["startMs"] or it.get("mediaEndMs", it["endMs"]) != it["endMs"]):
             src += (f'#t={(it["startMs"] - media_start) / 1000:.2f},'
                     f'{(it["endMs"] - media_start) / 1000:.2f}')
-        video = (f'<video preload="none" controls src="{src}" '
+        why = missing.get(item_id) or "no review clip covers this window"
+        video = (f'<video preload="metadata" controls playsinline src="{src}" '
                  f'aria-label="Clip {n}"></video>' if clip else
-                 '<p role="note">Clip not cut yet: run the verify stage first.</p>')
+                 f'<p class="missing" role="note">No clip yet: {_h(why)}</p>')
         group = f"q{n}"
         decision = "".join(
             f'<label><input type="radio" class="d" name="{group}-d" value="{d}"> {d}</label>'
@@ -182,7 +261,7 @@ def page(deck: dict, base: Path, clip_of) -> str:
             for v in STARS)
         what = "".join(
             f'<label><input type="checkbox" value="{w}"> {w.replace("_", " ")}</label>'
-            for w in WHAT.get(it["sport"], []))
+            for w in what_for(it["sport"]))
         blocks.append(
             f'<section class="item" data-id="{_h(item_id)}" data-start="{media_start}" '
             f'aria-labelledby="{group}-h">'
@@ -196,6 +275,7 @@ def page(deck: dict, base: Path, clip_of) -> str:
             f'<fieldset><legend>Best part (pause the clip at the moment, then press)</legend>'
             f'<button type="button" class="in">Best part starts here</button>'
             f'<button type="button" class="out">Best part ends here</button>'
+            f'<button type="button" class="play">Play best part</button>'
             f'<button type="button" class="clear">Clear</button> '
             f'<span class="marks" aria-live="polite"></span></fieldset>'
             f'<label style="display:block">Note <input type="text" maxlength="300"></label>'
@@ -206,7 +286,11 @@ def page(deck: dict, base: Path, clip_of) -> str:
             f'<title>Klip highlights review {deck["deck"]}</title><style>{_CSS}</style></head>'
             f'<body data-deck="{deck["deck"]}"><h1>Highlights review</h1>'
             f'<div id="bar"><span id="count" aria-live="polite"></span> '
-            f'<button type="button" id="download">Download answers</button></div>'
+            f'<button type="button" id="download">Download answers</button> '
+            f'<span class="keys">Keys: <kbd>k</kbd>/<kbd>m</kbd>/<kbd>s</kbd> keep, maybe, skip · '
+            f'<kbd>1</kbd>-<kbd>5</kbd> rate · <kbd>i</kbd>/<kbd>o</kbd> best part in, out · '
+            f'<kbd>p</kbd> play it · <kbd>space</kbd> play/pause · <kbd>\u2190</kbd>/<kbd>\u2192</kbd> '
+            f'2 s (shift: 0.2 s) · <kbd>j</kbd> next</span></div>'
             f'<p>Some clips were picked by the search, some at random. Judge each on its own: '
             f'would you keep it for a highlight reel?</p>'
             f'{"".join(blocks)}<script>{js}</script></body></html>')
@@ -221,7 +305,7 @@ def import_answers(reports: Path, deck: dict, answers_doc: dict, raw: bytes) -> 
         if it is None or not isinstance(a, dict) or a.get("decision") not in DECISIONS:
             skipped += 1
             continue
-        allowed = set(WHAT.get(it["sport"], []))
+        allowed = set(what_for(it["sport"]))
         what = sorted(w for w in a.get("what") or [] if w in allowed)
         best = [a.get("bestStartMs"), a.get("bestEndMs")]
         lo, hi = it.get("mediaStartMs", it["startMs"]), it.get("mediaEndMs", it["endMs"])
