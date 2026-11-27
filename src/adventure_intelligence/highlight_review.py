@@ -119,7 +119,8 @@ label:focus-within{outline:3px solid #4b7bd1} input[type=text]{width:100%;font:i
 button{font:inherit;padding:4px 10px;margin-right:6px;background:#26262b;color:#e8e8e8;
   border:1px solid #3a3a40;border-radius:6px;cursor:pointer} button:hover{background:#323238}
 button:focus-visible{outline:3px solid #4b7bd1}
-.meta{color:#a0a0a8;font-size:13px} .marks{color:#9fd3a8}
+.meta{color:#a0a0a8;font-size:13px} .marks{color:#9fd3a8} .seq{color:#d9b46a}
+button[aria-pressed=true]{background:#3b3320;border-color:#d9b46a}
 .missing{padding:24px;border:1px dashed #5a4a2a;border-radius:6px;color:#e0c48a;background:#1a1610}
 #bar{position:sticky;top:0;z-index:2;background:#0b0b0cee;padding:8px 0;border-bottom:1px solid #2a2a2e}
 kbd{background:#26262b;border:1px solid #3a3a40;border-radius:3px;padding:0 4px;font-size:12px}
@@ -144,6 +145,7 @@ function load(item) {
   item.querySelectorAll('input.s').forEach(r => r.checked = +r.value === a.stars);
   item.querySelectorAll('input[type=checkbox]').forEach(c => c.checked = (a.what||[]).includes(c.value));
   item.querySelector('input[type=text]').value = a.note || '';
+  item.querySelectorAll('.more').forEach(b => b.setAttribute('aria-pressed', a[b.dataset.side] ? 'true' : 'false'));
   show(item);
 }
 function show(item) {
@@ -188,6 +190,10 @@ ITEMS.forEach(item => {
   item.querySelector('.out').addEventListener('click', () => mark('bestEndMs'));
   item.querySelector('.clear').addEventListener('click', () => {
     const a = entry(id); delete a.bestStartMs; delete a.bestEndMs; show(item); save(); });
+  item.querySelectorAll('.more').forEach(b => b.addEventListener('click', () => {
+    const a = entry(id), on = !a[b.dataset.side];
+    if (on) a[b.dataset.side] = true; else delete a[b.dataset.side];
+    b.setAttribute('aria-pressed', on ? 'true' : 'false'); save(); }));
   item.querySelector('.play').addEventListener('click', () => {
     const a = answers[id] || {};
     if (!video || a.bestStartMs == null) return;
@@ -234,6 +240,14 @@ save();
 """
 
 
+def _part(it: dict) -> str:
+    seq = it.get("sequence")
+    if not seq:
+        return ""
+    return (f' · <span class="seq">part {seq["index"]} of {seq["of"]} of a sequence'
+            f'{" (continues the clip above)" if seq["index"] > 1 else ""}</span>')
+
+
 def page(deck: dict, base: Path, clip_of, missing: dict[str, str] | None = None) -> str:
     """clip_of(item id) -> Path of a clip containing the item, or None. A clip that starts
     before the item (mediaStartMs) plays from the item's window via a media fragment.
@@ -267,7 +281,8 @@ def page(deck: dict, base: Path, clip_of, missing: dict[str, str] | None = None)
             f'aria-labelledby="{group}-h">'
             f'<h2 id="{group}-h">Clip {n}</h2>'
             f'<p class="meta">{_h(it.get("file"))} at {it["startMs"] / 1000:.0f}-'
-            f'{it["endMs"] / 1000:.0f} s · {_h(it.get("outing") or it.get("day") or "")}</p>'
+            f'{it["endMs"] / 1000:.0f} s · {_h(it.get("outing") or it.get("day") or "")}'
+            f'{_part(it)}</p>'
             f'{video}'
             f'<fieldset><legend>Worth keeping?</legend>{decision}</fieldset>'
             f'<fieldset><legend>How good, 1 to 5 (optional)</legend>{stars}</fieldset>'
@@ -277,6 +292,10 @@ def page(deck: dict, base: Path, clip_of, missing: dict[str, str] | None = None)
             f'<button type="button" class="out">Best part ends here</button>'
             f'<button type="button" class="play">Play best part</button>'
             f'<button type="button" class="clear">Clear</button> '
+            f'<button type="button" class="more" data-side="moreBefore" aria-pressed="false">'
+            f'Needs more before</button>'
+            f'<button type="button" class="more" data-side="moreAfter" aria-pressed="false">'
+            f'Needs more after</button> '
             f'<span class="marks" aria-live="polite"></span></fieldset>'
             f'<label style="display:block">Note <input type="text" maxlength="300"></label>'
             f'</section>')
@@ -296,6 +315,23 @@ def page(deck: dict, base: Path, clip_of, missing: dict[str, str] | None = None)
             f'{"".join(blocks)}<script>{js}</script></body></html>')
 
 
+def _trim(start, end, lo: int, hi: int, win_start: int, win_end: int):
+    """The owner's best part. A single mark keeps its meaning: a start alone runs to the end
+    of the moment (or of the clip, if the mark is past the moment), an end alone runs from
+    the start of the moment (or of the clip). Marks outside the clip shown are ignored."""
+    ok = lambda b: type(b) is int and lo <= b <= hi      # noqa: E731
+    s, e = (start if ok(start) else None), (end if ok(end) else None)
+    if s is not None and e is not None:
+        return ((s, e), "both") if s < e else ((None, None), None)
+    if s is not None:
+        e = win_end if s < win_end else hi
+        return ((s, e), "start") if s < e else ((None, None), None)
+    if e is not None:
+        s = win_start if e > win_start else lo
+        return ((s, e), "end") if s < e else ((None, None), None)
+    return (None, None), None
+
+
 def import_answers(reports: Path, deck: dict, answers_doc: dict, raw: bytes) -> dict:
     if answers_doc.get("version") != ANSWERS_VERSION or answers_doc.get("deck") != deck["deck"]:
         raise ValueError(f"These answers are not for deck {deck['deck']}")
@@ -307,15 +343,16 @@ def import_answers(reports: Path, deck: dict, answers_doc: dict, raw: bytes) -> 
             continue
         allowed = set(what_for(it["sport"]))
         what = sorted(w for w in a.get("what") or [] if w in allowed)
-        best = [a.get("bestStartMs"), a.get("bestEndMs")]
         lo, hi = it.get("mediaStartMs", it["startMs"]), it.get("mediaEndMs", it["endMs"])
-        ok = all(type(b) is int and lo <= b <= hi for b in best)
+        best, sides = _trim(a.get("bestStartMs"), a.get("bestEndMs"), lo, hi,
+                            it["startMs"], it["endMs"])
         stars = a.get("stars") if a.get("stars") in STARS else None
         items.append({"item": item_id, "sourceSha256": it["sourceSha256"],
                       "startMs": it["startMs"], "endMs": it["endMs"], "sport": it["sport"],
                       "decision": a["decision"], "what": what,
-                      "bestStartMs": best[0] if ok and best[0] < best[1] else None,
-                      "bestEndMs": best[1] if ok and best[0] < best[1] else None,
+                      "bestStartMs": best[0], "bestEndMs": best[1], "trimSides": sides,
+                      "moreBefore": a.get("moreBefore") is True,
+                      "moreAfter": a.get("moreAfter") is True,
                       "stars": stars, "note": str(a.get("note") or "")[:300]})
     result = owner_labels.append(reports, "highlight", deck=deck["deck"],
                                  answers_sha256=sha256(raw).hexdigest(), items=items)

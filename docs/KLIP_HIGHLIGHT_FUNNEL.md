@@ -123,7 +123,16 @@ verify stage first", and every review page is dark with keyboard controls
    review clip covers, so you can set in and out points just outside the old window.
    `--top N` shows only the best N of each sport.
 2. **Trim.** Your best part start and end replace the window (`windowBasis: owner_trim`) on
-   the next `build`; a 5-star rating makes the moment `owner_best`.
+   the next `build`; a 5-star rating makes the moment `owner_best`. A single mark keeps its
+   meaning: a start alone runs to the end of the moment, an end alone from its start.
+   "Needs more before / after" widens the next preview on that side (`--more-pad-s`, 20 s).
+   * **Purpose from the rating:** starred best or 4-5 stars is a `highlight`; kept and rated
+     1-2 is a `memory` (kept and exported, never shown); unrated or 3 is `keep`.
+   * **Sequences:** kept moments of one outing within 60 s of each other (on one recording, or
+     across consecutive recordings by their file-name clocks) are linked: the page shows
+     "part 2 of 3" in time order, `export --sequences` cuts each as one file (one span per
+     recording, so the footage between parts is included, then joined), and
+     `showcase --sequences` shows the sequence once in place of its parts.
 3. **Export.** `export` cuts each `owner_best` and `owner_keep` moment exactly to its window
    from the original, frame-accurate (re-encoded, not stream-copied):
    * `master.mp4`: original resolution, x264 CRF 18, AAC 192k: the copy to edit from;
@@ -134,7 +143,7 @@ verify stage first", and every review page is dark with keyboard controls
    window, settings, output sizes and SHA-256). Idempotent; a new trim is a new moment id
    and a new folder, so earlier exports are never overwritten. Moments marked
    "bad footage" and unresolved keep-and-skip conflicts are left out unless asked for.
-4. **Showcase.** `showcase` copies the best exported web files and posters into
+4. **Showcase.** `showcase` (highlights only by default; `--purpose` to widen) copies the best exported web files and posters into
    `highlight-library-v1/showcase/` (or `--out`): `media/`, `highlights.json`
    (title, sport, place, trip, date, tags, rating, duration, video and poster URLs) and a
    dark gallery `index.html`. Titles come from the roster's outing and trip titles and

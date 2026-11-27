@@ -141,7 +141,9 @@ def _line(m: dict) -> str:
     stars = f' ★{m["stars"]}' if m.get("stars") else ""
     what = f' [{", ".join(m["what"])}]' if m.get("what") else ""
     flag = " (conflict)" if m.get("conflict") else ""
-    return (f'{m["tier"]}{stars} {m.get("sport")} {m.get("outing") or m.get("day")} '
+    seq = m.get("sequence")
+    part = f' [part {seq["index"]}/{seq["of"]}]' if seq else ""
+    return (f'{m["tier"]}/{m.get("purpose")}{stars}{part} {m.get("sport")} {m.get("outing") or m.get("day")} '
             f'{m.get("file")} {m["startMs"] / 1000:.0f}-{m["endMs"] / 1000:.0f}s{what}{flag}')
 
 
@@ -206,6 +208,7 @@ def cmd_page(args) -> dict:
     originals = (hm.Originals(args.reports, args.trusted_source_root)
                  if args.trusted_source_root else None)
     pad = int(args.pad_s * 1000)
+    more_pad = int(args.more_pad_s * 1000)
     missing: dict[str, str] = {}
     clips = home / "clips"
 
@@ -215,8 +218,11 @@ def cmd_page(args) -> dict:
 
     def media_of(m: dict):
         found = find(m)
-        want_lo = max(0, m["startMs"] - pad)
-        if found and found[1] <= want_lo and m["endMs"] + pad <= found[2]:
+        more = m.get("wantMore") or {}
+        before = more_pad if more.get("before") else pad
+        after = more_pad if more.get("after") else pad
+        want_lo = max(0, m["startMs"] - before)
+        if found and found[1] <= want_lo and m["endMs"] + after <= found[2]:
             return found                 # an existing clip already has context around it
         if originals is None:
             if found is None:
@@ -225,7 +231,7 @@ def cmd_page(args) -> dict:
             return found
         try:
             return hm.preview(originals, m["sourceSha256"], m["startMs"], m["endMs"],
-                              clips, pad_ms=pad)
+                              clips, pad_ms=before, after_ms=after)
         except (ValueError, OSError) as error:
             if found is None:
                 missing[m["id"]] = str(error)
@@ -267,6 +273,8 @@ def _selected(library: dict, args) -> list[dict]:
             continue
         if "bad_footage" in (m.get("what") or []):
             continue
+        if args.purpose and m.get("purpose") not in args.purpose:
+            continue
         rows.append(m)
     return rows[:args.limit] if args.limit else rows
 
@@ -293,6 +301,24 @@ def cmd_export(args) -> dict:
         done.append(m["id"])
         print(f"[library] {n}/{len(chosen)} {'kept' if record['reused'] else 'cut'} "
               f"{_line(m)}", file=sys.stderr)
+    seq_done = []
+    if args.sequences:
+        by_id = {m["id"]: m for m in library["moments"]}
+        chosen_ids = {m["id"] for m in chosen}
+        for seq in library.get("sequences") or []:
+            if not chosen_ids & set(seq["members"]):
+                continue
+            members = [by_id[i] for i in seq["members"] if i in by_id]
+            try:
+                parts = [(originals.path(m["sourceSha256"]), m) for m in members]
+                record = hm.export_sequence(parts, home / f'seq-{seq["id"]}', seq["id"], profile)
+            except (ValueError, OSError) as error:
+                failed[f'seq-{seq["id"]}'] = str(error)
+                print(f"[library] sequence {seq['id']}: {error}", file=sys.stderr)
+                continue
+            seq_done.append(seq["id"])
+            print(f"[library] {'kept' if record['reused'] else 'cut'} sequence {seq['id']} "
+                  f"({len(members)} parts)", file=sys.stderr)
     index = _read(home / "index.json") or {"version": hm.EXPORT_VERSION, "exports": {}}
     for m in chosen:
         if m["id"] in done:
@@ -300,7 +326,8 @@ def cmd_export(args) -> dict:
                 "sourceSha256", "startMs", "endMs", "windowBasis", "tier", "stars", "what",
                 "sport", "outing", "day", "file")}
     _write(home / "index.json", index)
-    return {"exported": len(done) - reused, "reused": reused, "failed": len(failed),
+    return {"exported": len(done) - reused, "reused": reused, "sequences": len(seq_done),
+            "failed": len(failed),
             "whyFailed": _causes(failed.values()), "folder": str(home)}
 
 
@@ -336,18 +363,48 @@ def _describe(m: dict, titles: dict) -> dict:
             "date": m.get("day"), "tags": seen}
 
 
+def _owner_rows(library: dict, args) -> list[dict]:
+    rows = []
+    for m in library["moments"]:
+        if m["tier"] not in ("owner_best", "owner_keep") or m["conflict"]:
+            continue
+        if m.get("purpose") not in args.purpose:
+            continue
+        if args.min_stars and (m.get("stars") or 0) < args.min_stars and m["tier"] != "owner_best":
+            continue
+        rows.append(m)
+    return rows
+
+
 def cmd_showcase(args) -> dict:
     library = _library(args.reports)
     exports = Path(args.reports) / FOLDER / "exports"
     out = Path(args.out).expanduser() if args.out else Path(args.reports) / FOLDER / "showcase"
     titles = _titles(args.ledgers or Path(args.reports) / "owner-ledgers")
+    by_id = {m["id"]: m for m in library["moments"]}
+    seqs = {s["id"]: s for s in library.get("sequences") or []} if args.sequences else {}
     taken: dict[str, int] = {}
-    rows, stale = [], []
-    for m in library["moments"]:
-        if m["tier"] not in ("owner_best", "owner_keep") or m["conflict"]:
-            continue
-        if args.min_stars and (m.get("stars") or 0) < args.min_stars and m["tier"] != "owner_best":
-            continue
+    rows, stale, shown_seqs = [], [], set()
+    for m in _owner_rows(library, args):
+        seq = m.get("sequence")
+        if seq and seq["id"] in seqs:
+            if seq["id"] in shown_seqs:
+                continue
+            record = _read(exports / f'seq-{seq["id"]}' / "export.json")
+            if record:
+                members = [by_id[i] for i in seqs[seq["id"]]["members"] if i in by_id]
+                folder = exports / f'seq-{seq["id"]}'
+                entry = {**m, "id": f'seq-{seq["id"]}', "startMs": 0,
+                         "endMs": round(record["files"]["web.mp4"].get("durationS", 0) * 1000),
+                         "what": sorted({w for x in members for w in x.get("what") or []}),
+                         "stars": max((x.get("stars") or 0) for x in members) or None,
+                         "notes": [n for x in members for n in x.get("notes") or []],
+                         "parts": len(members)}
+                shown_seqs.add(seq["id"])
+                rows.append((entry, record, folder))
+                if args.limit and len(rows) >= args.limit:
+                    break
+                continue
         record = _read(exports / m["id"] / "export.json")
         if not record:
             stale.append(m["id"])
@@ -356,25 +413,26 @@ def cmd_showcase(args) -> dict:
         if args.per_sport and taken.get(sport, 0) >= args.per_sport:
             continue
         taken[sport] = taken.get(sport, 0) + 1
-        rows.append((m, record))
+        rows.append((m, record, exports / m["id"]))
         if args.limit and len(rows) >= args.limit:
             break
     media = out / "media"
     media.mkdir(parents=True, exist_ok=True)
     base = (args.base_url.rstrip("/") + "/") if args.base_url else "media/"
     items = []
-    for rank, (m, record) in enumerate(rows, 1):
+    for rank, (m, record, folder) in enumerate(rows, 1):
         for name, dest in (("web.mp4", f'{m["id"]}.mp4'), ("poster.jpg", f'{m["id"]}.jpg')):
             target = media / dest
             info = record["files"][name]
             if not (target.is_file() and target.stat().st_size == info["bytes"]
                     and hm.file_sha256(target) == info["sha256"]):
-                shutil.copyfile(exports / m["id"] / name, target)
+                shutil.copyfile(folder / name, target)
         web = record["files"]["web.mp4"]
         items.append({"id": m["id"], "rank": rank, **_describe(m, titles),
                       "stars": m.get("stars"), "tier": m["tier"].removeprefix("owner_"),
                       "durationS": round((m["endMs"] - m["startMs"]) / 1000, 1),
                       "width": web.get("width"), "height": web.get("height"),
+                      **({"parts": m["parts"]} if m.get("parts") else {}),
                       "video": base + f'{m["id"]}.mp4', "poster": base + f'{m["id"]}.jpg',
                       **({"note": m["notes"][-1]} if args.include_notes and m.get("notes") else {})})
     doc = {"version": "klip-highlight-showcase-v1", "count": len(items), "highlights": items}
@@ -383,8 +441,9 @@ def cmd_showcase(args) -> dict:
     local = [{**it, "video": f'media/{it["id"]}.mp4', "poster": f'media/{it["id"]}.jpg'}
              for it in items]
     _write(out / "index.html", showcase_page(local))
-    return {"highlights": len(items), "bySport": taken, "keptButNotExported": len(stale),
-            "folder": str(out), "page": str(out / "index.html"),
+    return {"highlights": len(items), "bySport": taken, "sequences": len(shown_seqs),
+            "keptButNotExported": len(stale), "folder": str(out),
+            "page": str(out / "index.html"),
             "next": "run export first for kept moments without files" if stale else None}
 
 
@@ -494,6 +553,8 @@ def parser() -> argparse.ArgumentParser:
             s.add_argument("--top", type=int, help="only the best N moments of each sport")
             s.add_argument("--pad-s", type=float, default=4.0,
                            help="seconds of context each side when cutting from an original")
+            s.add_argument("--more-pad-s", type=float, default=20.0,
+                           help="context on a side you marked 'needs more before/after'")
         if name == "export":
             s.add_argument("--trusted-source-root", type=Path, required=True)
             s.add_argument("--tiers", nargs="+", default=["owner_best", "owner_keep"],
@@ -502,6 +563,10 @@ def parser() -> argparse.ArgumentParser:
                            "(starred-best moments always qualify)")
             s.add_argument("--limit", type=int, help="at most this many, best first")
             s.add_argument("--include-conflicts", action="store_true")
+            s.add_argument("--purpose", nargs="+", choices=["highlight", "keep", "memory", "maybe"],
+                           help="only moments rated as these (default: every kept moment)")
+            s.add_argument("--sequences", action="store_true",
+                           help="also cut each sequence of linked moments as one file")
             s.add_argument("--preset", default="veryfast",
                            help="x264 preset; slower is smaller at the same quality")
             s.add_argument("--dry-run", action="store_true")
@@ -510,6 +575,11 @@ def parser() -> argparse.ArgumentParser:
             s.add_argument("--limit", type=int, default=12)
             s.add_argument("--per-sport", type=int)
             s.add_argument("--min-stars", type=float)
+            s.add_argument("--purpose", nargs="+", default=["highlight"],
+                           choices=["highlight", "keep", "memory"],
+                           help="default: highlights only (starred best, or rated 4-5)")
+            s.add_argument("--sequences", action="store_true",
+                           help="show an exported sequence once in place of its parts")
             s.add_argument("--base-url", help="where media/ will be served from, e.g. /highlights")
             s.add_argument("--include-notes", action="store_true",
                            help="put your private review notes in highlights.json")

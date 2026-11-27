@@ -53,3 +53,18 @@ acceptance criteria: [KLIP_HIGHLIGHT_FUNNEL.md](../../docs/KLIP_HIGHLIGHT_FUNNEL
 * Fixes in `highlights/clips-library-showcase-v1`: pages report the cause of each missing
   clip; library page cuts previews from originals; exports and showcase (stage E in the
   funnel doc).
+
+## First owner review of the highlights library (2026-11-27, library page deck 0c9eb4706a4e)
+
+56 of 56 moments answered across skiing, snorkeling and kayaking: 44 keep, 4 maybe, 8 skip;
+12 with best-part marks (one with a start mark only), 33 with notes. Ratings among keeps:
+6 five-star, 4 four-star, 13 three-star, 13 two-star, 6 one-star, 2 unrated.
+
+What the notes asked for (summarised; the notes stay in the owner's labels, not here):
+* Many keeps were marked as personal memories rather than highlights, so "kept" and "show
+  it" are separate: ratings now set a purpose (highlight 4-5 or starred best, memory 1-2).
+* Several moments are parts of one action (a terrain-park line, the run before a crash) and
+  should play and export together, sometimes starting earlier than the clip shown: linked
+  sequences and "needs more before / after" were added.
+* The one start-only trim would have been dropped by import; single marks are now kept.
+* Snorkel ticks used "other animal" for needlefish, angelfish and fish schools.

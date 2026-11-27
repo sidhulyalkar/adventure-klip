@@ -140,7 +140,7 @@ def test_cli_build_page_rate_and_rebuild(tmp_path, capsys):
     assert (m["startMs"], m["endMs"], m["windowBasis"]) == (5000, 14000, "owner_trim")
     assert m["tier"] == "owner_best" and m["stars"] == 3.0 and m["what"] == ["speed"]
     assert cli.main(["top", "--reports", str(reports)]) == 0
-    assert "owner_best ★3.0 ski" in capsys.readouterr().out
+    assert "owner_best/highlight ★3.0 ski" in capsys.readouterr().out
 
 
 def test_cli_import_refuses_answers_from_another_page(tmp_path, capsys):

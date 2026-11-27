@@ -19,6 +19,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import sqlite3
+import shutil
 import subprocess
 
 from .discovery_experiment import cut_proxy
@@ -116,11 +117,13 @@ class Originals:
 
 
 def preview(originals: Originals, sha: str, start_ms: int, end_ms: int, folder: Path, *,
-            pad_ms: int = 4000, duration_ms: int | None = None) -> tuple[Path, int, int]:
-    """A review clip of [start - pad, end + pad] cut from the original (960 px, with sound).
-    Cached by window, so a rerun reuses it."""
+            pad_ms: int = 4000, after_ms: int | None = None,
+            duration_ms: int | None = None) -> tuple[Path, int, int]:
+    """A review clip of [start - pad, end + after] cut from the original (960 px, with
+    sound; after defaults to pad). Cached by window, so a rerun reuses it."""
+    after = pad_ms if after_ms is None else after_ms
     lo = max(0, start_ms - pad_ms)
-    hi = end_ms + pad_ms if duration_ms is None else min(duration_ms, end_ms + pad_ms)
+    hi = end_ms + after if duration_ms is None else min(duration_ms, end_ms + after)
     dest = Path(folder) / f"{sha[:16]}-{lo}-{hi}.mp4"
     if not dest.is_file():
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +238,61 @@ def export_moment(original: Path, moment: dict, folder: Path,
                                             "sha256": file_sha256(folder / n),
                                             **(probe(folder / n) if n.endswith(".mp4") else {})}
                                         for n in ("master.mp4", "web.mp4", "poster.jpg")}}
+    tmp = folder / "export.json.tmp"
+    tmp.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    tmp.replace(folder / "export.json")
+    return {**record, "reused": False}
+
+
+def export_sequence(parts: list[tuple[Path, dict]], folder: Path, sequence_id: str,
+                    profile: Profile = DEFAULT_PROFILE) -> dict:
+    """One file for a sequence of moments: parts on one recording are cut as one span from the
+    first start to the last end (so the footage between them is included: the rest of the
+    line, the run-up to the crash); parts on different recordings are cut and joined in
+    order. parts: (original path, moment) in time order. Same files and idempotency as
+    export_moment."""
+    spans: list[list] = []
+    for original, m in parts:
+        if spans and spans[-1][1]["sourceSha256"] == m["sourceSha256"]:
+            spans[-1][3] = max(spans[-1][3], int(m["endMs"]))
+        else:
+            spans.append([original, m, int(m["startMs"]), int(m["endMs"])])
+    folder = Path(folder)
+    want = {"sequenceId": sequence_id,
+            "spans": [{"sourceSha256": m["sourceSha256"], "startMs": a, "endMs": b}
+                      for _, m, a, b in spans], "settings": profile.settings()}
+    record = _read(folder / "export.json")
+    if record and {k: record.get(k) for k in want} == want and all(
+            (folder / n).is_file() for n in ("master.mp4", "web.mp4", "poster.jpg")):
+        return {**record, "reused": True}
+    folder.mkdir(parents=True, exist_ok=True)
+    work = folder / "parts.partial"
+    work.mkdir(exist_ok=True)
+    try:
+        pieces = []
+        for i, (original, m, a, b) in enumerate(spans):
+            sub = work / str(i)
+            export_moment(original, {"id": f"{sequence_id}-{i}", "sourceSha256": m["sourceSha256"],
+                                     "startMs": a, "endMs": b}, sub, profile)
+            pieces.append(sub)
+        for name in ("master.mp4", "web.mp4"):
+            if len(pieces) == 1:
+                (folder / f"{name}.partial").write_bytes((pieces[0] / name).read_bytes())
+            else:
+                listing = work / f"{name}.txt"
+                listing.write_text("".join(f"file '{(p / name).resolve()}'\n" for p in pieces))
+                _ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy",
+                         "-movflags", "+faststart", "-f", "mp4", "-y",
+                         str(folder / f"{name}.partial")], 60)
+            (folder / f"{name}.partial").replace(folder / name)
+        (folder / "poster.jpg").write_bytes((pieces[0] / "poster.jpg").read_bytes())
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    record = {**want, "members": [m["id"] for _, m in parts],
+              "files": {n: {"bytes": (folder / n).stat().st_size,
+                            "sha256": file_sha256(folder / n),
+                            **(probe(folder / n) if n.endswith(".mp4") else {})}
+                        for n in ("master.mp4", "web.mp4", "poster.jpg")}}
     tmp = folder / "export.json.tmp"
     tmp.write_text(json.dumps(record, indent=2), encoding="utf-8")
     tmp.replace(folder / "export.json")

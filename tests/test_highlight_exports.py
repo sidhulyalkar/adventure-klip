@@ -154,3 +154,71 @@ def test_page_cuts_from_original_then_trim_export_and_showcase(tmp_path, capsys)
     assert A not in json.dumps(doc) and "DJI_" not in json.dumps(doc)
     assert (out / "media" / f'{h["id"]}.mp4').is_file() and (out / "media" / f'{h["id"]}.jpg').is_file()
     assert "<dialog" in (out / "index.html").read_text()
+
+
+def test_a_single_trim_mark_keeps_its_meaning():
+    # A start alone runs to the moment's end; past the moment, to the clip's end.
+    assert review._trim(19048, None, 0, 40000, 10000, 30000) == ((19048, 30000), "start")
+    assert review._trim(33000, None, 0, 40000, 10000, 30000) == ((33000, 40000), "start")
+    assert review._trim(None, 15000, 0, 40000, 10000, 30000) == ((10000, 15000), "end")
+    assert review._trim(None, 5000, 0, 40000, 10000, 30000) == ((0, 5000), "end")
+    assert review._trim(9000, 8000, 0, 40000, 10000, 30000) == ((None, None), None)
+    assert review._trim(50000, None, 0, 40000, 10000, 30000) == ((None, None), None)
+
+
+def test_ratings_separate_highlights_from_memories_and_linked_moments_form_sequences():
+    from adventure_intelligence import highlight_library as lib
+    f1, f2 = "DJI_20250301100000_0001_D.MP4", "DJI_20250301100130_0002_D.MP4"   # 90 s apart
+
+    def label(sha, s, e, stars, **kw):
+        return {"item": f"{sha[:2]}{s}", "sourceSha256": sha, "startMs": s, "endMs": e,
+                "decision": "keep", "stars": stars, "what": [], **kw}
+    labels = [label(A, 10000, 20000, 5), label(A, 40000, 50000, 2),          # 20 s apart
+              label(B, 5000, 9000, 3, moreBefore=True),                       # next file
+              label(A, 70000, 75000, 1)]                                       # 20 s after
+    ctx = {A: {"sport": "ski", "outing": "o1", "file": f1}, B: {"sport": "ski", "outing": "o1", "file": f2}}
+    library = lib.build(lib.review_evidence(labels), ctx)
+    by = {(m["sourceSha256"], m["startMs"]): m for m in library["moments"]}
+    assert by[(A, 10000)]["purpose"] == "highlight" and by[(A, 40000)]["purpose"] == "memory"
+    assert by[(B, 5000)]["purpose"] == "keep" and by[(B, 5000)]["wantMore"] == {"before": True, "after": False}
+    # A 70-75 s ends at 10:01:15; B starts at 10:01:35 (+5 s): 20 s later, so one chain of four.
+    [seq] = library["sequences"]
+    assert [by[(A, 10000)]["id"], by[(A, 40000)]["id"], by[(A, 70000)]["id"], by[(B, 5000)]["id"]] == seq["members"]
+    assert by[(B, 5000)]["sequence"] == {"id": seq["id"], "index": 4, "of": 4} and seq["purpose"] == "highlight"
+    # Far apart: no sequence.
+    apart = lib.build(lib.review_evidence([label(A, 0, 5000, 4), label(A, 200000, 205000, 4)]), ctx)
+    assert apart["sequences"] == [] and all("sequence" not in m for m in apart["moments"])
+
+
+@needs_ffmpeg
+def test_a_sequence_exports_one_span_per_recording_joined_in_order(tmp_path):
+    a = _video(tmp_path / "a.mp4", 20)
+    b = _video(tmp_path / "b.mp4", 10)
+    parts = [(a, {"id": "m1", "sourceSha256": A, "startMs": 2000, "endMs": 4000}),
+             (a, {"id": "m2", "sourceSha256": A, "startMs": 7000, "endMs": 8000}),
+             (b, {"id": "m3", "sourceSha256": B, "startMs": 1000, "endMs": 2500})]
+    profile = hm.Profile(preset="ultrafast")
+    record = hm.export_sequence(parts, tmp_path / "seq", "s1", profile)
+    # A: 2-8 s (the gap between the two kept moments is included), then B: 1-2.5 s.
+    assert [(x["startMs"], x["endMs"]) for x in record["spans"]] == [(2000, 8000), (1000, 2500)]
+    assert abs(record["files"]["web.mp4"]["durationS"] - 7.5) < 0.3
+    assert not (tmp_path / "seq" / "parts.partial").exists()
+    assert hm.export_sequence(parts, tmp_path / "seq", "s1", profile)["reused"] is True
+
+
+def test_page_shows_sequence_parts_and_import_keeps_more_context_requests(tmp_path):
+    item = {"role": "library", "kind": "owner_keep", "sport": "ski", "sourceSha256": A,
+            "file": None, "day": None, "outing": "o1", "heldOut": False, "startMs": 0,
+            "endMs": 5000, "mediaStartMs": 0, "mediaEndMs": 9000,
+            "sequence": {"id": "s", "index": 2, "of": 3}}
+    deck = {"deck": "x", "order": ["m"], "items": {"m": item}}
+    page = review.page(deck, tmp_path, lambda i: tmp_path / "c.mp4")
+    assert "part 2 of 3 of a sequence (continues the clip above)" in page
+    assert page.count('aria-pressed="false"') == 2 and page.count("<fieldset>") == 4
+    answers = {"version": review.ANSWERS_VERSION, "deck": "x", "answers": {
+        "m": {"decision": "keep", "moreBefore": True, "bestStartMs": 1000}}}
+    out = review.import_answers(tmp_path, deck, answers, json.dumps(answers).encode())
+    from adventure_intelligence import owner_labels
+    [label] = owner_labels.load(tmp_path, "highlight")
+    assert out["added"] == 1 and label["moreBefore"] is True and label["moreAfter"] is False
+    assert (label["bestStartMs"], label["bestEndMs"], label["trimSides"]) == (1000, 5000, "start")
