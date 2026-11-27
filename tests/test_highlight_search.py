@@ -373,8 +373,8 @@ def test_review_page_is_blind_and_accessible(tmp_path):
     low = page.lower()
     for leak in ("audit", "rejected", "verified", "uncertain", "searchtop", "score"):
         assert leak not in low, leak
-    assert page.count("<fieldset>") == 3 * len(deck["items"]) and 'aria-live="polite"' in page
-    assert 'lang="en"' in page and page.count("<legend>") == 3 * len(deck["items"])
+    assert page.count("<fieldset>") == 4 * len(deck["items"]) and 'aria-live="polite"' in page
+    assert 'lang="en"' in page and page.count("<legend>") == 4 * len(deck["items"])
 
 
 def test_answers_become_owner_labels_and_measure_the_funnel(tmp_path):

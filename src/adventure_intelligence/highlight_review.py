@@ -26,6 +26,7 @@ from . import owner_labels
 VERSION = "klip-highlight-review-v1"
 ANSWERS_VERSION = "klip-highlight-review-answers-v1"
 DECISIONS = ("keep", "maybe", "skip")
+STARS = (1, 2, 3, 4, 5)
 WHAT = {
     "snorkeling": ["manta_ray", "eagle_ray", "stingray", "shark", "sea_turtle", "octopus",
                    "dolphin", "eel", "other_animal", "companion", "reef_or_scenery",
@@ -115,7 +116,8 @@ function entry(id) { return answers[id] = answers[id] || {what: []}; }
 function load(item) {
   const id = item.dataset.id, a = answers[id];
   if (!a) return;
-  item.querySelectorAll('input[type=radio]').forEach(r => r.checked = r.value === a.decision);
+  item.querySelectorAll('input.d').forEach(r => r.checked = r.value === a.decision);
+  item.querySelectorAll('input.s').forEach(r => r.checked = +r.value === a.stars);
   item.querySelectorAll('input[type=checkbox]').forEach(c => c.checked = (a.what||[]).includes(c.value));
   item.querySelector('input[type=text]').value = a.note || '';
   show(item);
@@ -130,8 +132,10 @@ const TOTAL = document.querySelectorAll('.item').length;
 document.querySelectorAll('.item').forEach(item => {
   const id = item.dataset.id, start = +item.dataset.start, video = item.querySelector('video');
   load(item);
-  item.querySelectorAll('input[type=radio]').forEach(r => r.addEventListener('change', () => {
+  item.querySelectorAll('input.d').forEach(r => r.addEventListener('change', () => {
     entry(id).decision = r.value; show(item); save(); }));
+  item.querySelectorAll('input.s').forEach(r => r.addEventListener('change', () => {
+    entry(id).stars = +r.value; save(); }));
   item.querySelectorAll('input[type=checkbox]').forEach(c => c.addEventListener('change', () => {
     const a = entry(id); a.what = [...item.querySelectorAll('input[type=checkbox]:checked')].map(x => x.value);
     save(); }));
@@ -155,30 +159,39 @@ save();
 
 
 def page(deck: dict, base: Path, clip_of) -> str:
-    """clip_of(item id) -> Path of the item's clip (cut to [startMs, endMs]) or None."""
+    """clip_of(item id) -> Path of a clip containing the item, or None. A clip that starts
+    before the item (mediaStartMs) plays from the item's window via a media fragment."""
     blocks = []
     for n, item_id in enumerate(deck["order"], 1):
         it = deck["items"][item_id]
         clip = clip_of(item_id)
+        media_start = it.get("mediaStartMs", it["startMs"])
         src = _h(os.path.relpath(Path(clip), base)) if clip else ""
+        if clip and (media_start != it["startMs"] or it.get("mediaEndMs", it["endMs"]) != it["endMs"]):
+            src += (f'#t={(it["startMs"] - media_start) / 1000:.2f},'
+                    f'{(it["endMs"] - media_start) / 1000:.2f}')
         video = (f'<video preload="none" controls src="{src}" '
                  f'aria-label="Clip {n}"></video>' if clip else
                  '<p role="note">Clip not cut yet: run the verify stage first.</p>')
         group = f"q{n}"
         decision = "".join(
-            f'<label><input type="radio" name="{group}-d" value="{d}"> {d}</label>'
+            f'<label><input type="radio" class="d" name="{group}-d" value="{d}"> {d}</label>'
             for d in DECISIONS)
+        stars = "".join(
+            f'<label><input type="radio" class="s" name="{group}-s" value="{v}"> {v}</label>'
+            for v in STARS)
         what = "".join(
             f'<label><input type="checkbox" value="{w}"> {w.replace("_", " ")}</label>'
             for w in WHAT.get(it["sport"], []))
         blocks.append(
-            f'<section class="item" data-id="{_h(item_id)}" data-start="{it["startMs"]}" '
+            f'<section class="item" data-id="{_h(item_id)}" data-start="{media_start}" '
             f'aria-labelledby="{group}-h">'
             f'<h2 id="{group}-h">Clip {n}</h2>'
             f'<p class="meta">{_h(it.get("file"))} at {it["startMs"] / 1000:.0f}-'
             f'{it["endMs"] / 1000:.0f} s · {_h(it.get("outing") or it.get("day") or "")}</p>'
             f'{video}'
             f'<fieldset><legend>Worth keeping?</legend>{decision}</fieldset>'
+            f'<fieldset><legend>How good, 1 to 5 (optional)</legend>{stars}</fieldset>'
             f'<fieldset><legend>What does it show? (tick all)</legend>{what}</fieldset>'
             f'<fieldset><legend>Best part (pause the clip at the moment, then press)</legend>'
             f'<button type="button" class="in">Best part starts here</button>'
@@ -211,13 +224,15 @@ def import_answers(reports: Path, deck: dict, answers_doc: dict, raw: bytes) -> 
         allowed = set(WHAT.get(it["sport"], []))
         what = sorted(w for w in a.get("what") or [] if w in allowed)
         best = [a.get("bestStartMs"), a.get("bestEndMs")]
-        ok = all(type(b) is int and it["startMs"] <= b <= it["endMs"] for b in best)
+        lo, hi = it.get("mediaStartMs", it["startMs"]), it.get("mediaEndMs", it["endMs"])
+        ok = all(type(b) is int and lo <= b <= hi for b in best)
+        stars = a.get("stars") if a.get("stars") in STARS else None
         items.append({"item": item_id, "sourceSha256": it["sourceSha256"],
                       "startMs": it["startMs"], "endMs": it["endMs"], "sport": it["sport"],
                       "decision": a["decision"], "what": what,
                       "bestStartMs": best[0] if ok and best[0] < best[1] else None,
                       "bestEndMs": best[1] if ok and best[0] < best[1] else None,
-                      "note": str(a.get("note") or "")[:300]})
+                      "stars": stars, "note": str(a.get("note") or "")[:300]})
     result = owner_labels.append(reports, "highlight", deck=deck["deck"],
                                  answers_sha256=sha256(raw).hexdigest(), items=items)
     return {**result, "skipped": skipped}

@@ -18,6 +18,20 @@ from what the owner keeps.
 | C. stories / reels | only on verified highlights | — | next: feed verified windows to `story_harness` and `highlight_compile` |
 | D. owner review | verified moments + rejected sample + random audit, blind | the owner's time, on the best | `highlight_review.py`, `review`, `import-answers`, `eval-review` |
 
+## The highlights library: where all of it lands
+
+`highlight_library.py`, `scripts/klip_highlight_library.py`. One derived list of every moment the
+owner judged worth keeping, rebuilt from the ledgers each time (never written back):
+grid ticks and stars and tap preferences (`owner-ledgers/owner-pairs.jsonl`), gallery trims
+(owner labels `boundary`), and highlights-page answers including 1-5 ratings (`highlight`).
+Overlapping windows of one recording are one moment; tiers `owner_best` (starred / 5) >
+`owner_keep` (ticked, trimmed ok, kept / 4) > `owner_maybe` > `to_review` (verified proposals
+only). Skipped-only moments are excluded; kept-and-skipped ones are flagged as conflicts.
+`page` lays the owner moments out by sport and outing on the highlights review page, each
+playing just its window inside the existing review clip; ratings and trims import back and
+the next build ranks by them. Every stage of the funnel is judged by what it adds here:
+new owner-kept moments per review minute, outings with at least a few, and the audit miss rate.
+
 ## Stage A: search
 
 * **Inputs (read only):** SigLIP2 frame embeddings every 2 s (`reports/evidence/<sha>/frames.npz`),
