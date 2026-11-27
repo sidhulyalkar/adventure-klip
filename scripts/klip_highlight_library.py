@@ -30,6 +30,7 @@ from adventure_intelligence import holdout
 from adventure_intelligence import outing_roster as roster
 from adventure_intelligence import owner_labels
 from adventure_intelligence import run_records
+from adventure_intelligence import scanned_recordings
 from adventure_intelligence import value_pairs
 
 FOLDER = "highlight-library-v1"
@@ -51,20 +52,8 @@ def _write(path: Path, doc) -> None:
 
 
 def discovery(reports: Path) -> dict[str, dict]:
-    """sha -> {file, sport, proxies: [(start, end, path)]} from every discovery folder."""
-    out: dict[str, dict] = {}
-    for folder in sorted(Path(reports).glob("discovery-*")):
-        rows = _read(folder / "judge-sources.json") or _read(folder / "sources.json") or []
-        for row in rows:
-            d = out.setdefault(row["sourceSha256"], {"file": Path(row["path"]).name,
-                                                     "sport": row["sport"], "proxies": []})
-            for p in sorted((folder / row["sourceSha256"] / "proxies").glob("*.mp4")):
-                try:
-                    a, b = (int(x) for x in p.stem.split("-"))
-                except ValueError:
-                    continue
-                d["proxies"].append((a, b, p))
-    return out
+    """sha -> {file, sport, proxies: [(start, end, path)]}, as the review app finds them."""
+    return scanned_recordings.scanned(reports)
 
 
 def search_media(reports: Path) -> tuple[list[dict], dict[str, dict]]:
@@ -88,9 +77,11 @@ def context(reports: Path, roster_doc: dict | None, disc: dict) -> dict[str, dic
     for o in (roster_doc or {}).get("outings", []):
         for row in o["sources"]:
             tags[row["sourceSha256"]] = row.get("tags") or []
+    cat = scanned_recordings.catalog(Path(reports).parent)
     out = {}
-    for sha in set(disc) | set(activity):
-        file = (disc.get(sha) or {}).get("file")
+    for sha in set(disc) | set(activity) | set(cat):
+        file = (disc.get(sha) or {}).get("file") or (
+            Path(cat[sha]["path"]).name if cat.get(sha, {}).get("path") else None)
         sport = activity.get(sha)
         if sport in (None, roster.UNLABELLED):
             sport = (disc.get(sha) or {}).get("sport")
