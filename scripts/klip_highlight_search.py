@@ -44,6 +44,7 @@ from adventure_intelligence import owner_labels
 from adventure_intelligence import outing_roster as roster
 from adventure_intelligence import run_lock
 from adventure_intelligence import run_records
+from adventure_intelligence import scanned_recordings
 
 FOLDER = "highlight-search-v1"
 DEFAULT_MODEL = "qwen3-vl:8b-instruct"
@@ -83,42 +84,15 @@ def load_queries(reports: Path) -> hs.Scorer:
 
 
 def discovery_rows(reports: Path) -> dict[str, dict]:
-    """sha -> {path, sport, folder, source, motion, audio}, judge-sources relabels first."""
-    out: dict[str, dict] = {}
-    for folder in sorted(Path(reports).glob("discovery-*")):
-        rows = _read(folder / "judge-sources.json") or _read(folder / "sources.json") or []
-        for row in rows:
-            sha = row["sourceSha256"]
-            rec = folder / sha
-            source = _read(rec / "source.json")
-            if source is None or sha in out:
-                continue
-            out[sha] = {"path": row["path"], "sport": row["sport"], "folder": folder,
-                        "source": source, "record": rec}
-    return out
-
-
-def catalog(workspace: Path) -> dict[str, dict]:
-    """sha -> path, size and duration of each imported original (read-only)."""
-    db_path = Path(workspace) / "catalog.sqlite3"
-    if db_path.is_symlink() or not db_path.is_file():
-        return {}
-    db = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
-    try:
-        db.execute("PRAGMA query_only=ON")
-        return {sha: {"path": path, "sizeBytes": size,
-                      "durationMs": round(duration * 1000) if duration else None}
-                for sha, path, size, duration in
-                db.execute("SELECT sha256,stored_path,size_bytes,duration FROM assets")}
-    finally:
-        db.close()
+    """sha -> {path, sport, folder, record, source, proxies}, as the review app finds them."""
+    return scanned_recordings.scanned(reports)
 
 
 def inventory(reports: Path, roster_doc: dict | None, scorer: hs.Scorer,
               log=lambda m: None) -> tuple[list[dict], dict]:
     """Every searchable recording: a sport, a length, and whatever evidence is stored."""
     found = discovery_rows(reports)
-    cat = catalog(Path(reports).parent)
+    cat = scanned_recordings.catalog(Path(reports).parent)
     activity = roster.activity_by_source(roster_doc) if roster_doc else {}
     outing = roster.outing_by_source(roster_doc) if roster_doc else {}
     guessed = roster.guessed_sources(roster_doc) if roster_doc else set()
@@ -150,7 +124,7 @@ def inventory(reports: Path, roster_doc: dict | None, scorer: hs.Scorer,
             notes["noFrameEmbeddings"] += 1
         if d:
             rec["durationMs"] = d["source"]["durationMs"]
-            rec["file"] = Path(d["path"]).name
+            rec["file"] = d["file"]
             rec["motion"] = (_read(d["record"] / "motion.json") or {}).get("series")
             rec["audio"] = (_read(d["record"] / "audio.json") or {}).get("series")
         elif rec["times"] is not None and len(rec["times"]):
@@ -390,18 +364,14 @@ class Sources:
     def __init__(self, reports: Path, trusted_root: Path | None):
         self.reports, self.trusted = Path(reports), trusted_root
         self.rows = discovery_rows(reports)
-        self.catalog = catalog(Path(reports).parent)
+        self.catalog = scanned_recordings.catalog(Path(reports).parent)
         self._originals = None
 
     def covering_proxy(self, c: dict):
         d = self.rows.get(c["sourceSha256"])
         if not d:
             return None
-        for p in sorted((d["record"] / "proxies").glob("*.mp4")):
-            try:
-                a, b = (int(x) for x in p.stem.split("-"))
-            except ValueError:
-                continue
+        for a, b, p in d["proxies"]:
             if a <= c["startMs"] and c["endMs"] <= b:
                 return p, a
         return None

@@ -105,6 +105,8 @@ def test_cli_build_page_rate_and_rebuild(tmp_path, capsys):
     disc = reports / "discovery-001"
     (disc / A / "proxies").mkdir(parents=True)
     (disc / A / "proxies" / "0-30000.mp4").write_bytes(b"x")
+    (disc / A / "source.json").write_text(json.dumps(
+        {"sourceSha256": A, "sport": "ski", "durationMs": 90000, "sizeBytes": 1}))
     (disc / "sources.json").write_text(json.dumps(
         [{"sourceSha256": A, "path": "/x/DJI_20260201100000_0001_D.MP4", "sport": "ski"}]))
     ledgers = reports / "owner-ledgers"
@@ -149,3 +151,31 @@ def test_cli_import_refuses_answers_from_another_page(tmp_path, capsys):
     f.write_text(json.dumps({"version": review.ANSWERS_VERSION, "deck": "nope", "answers": {}}))
     assert cli.main(["import-answers", "--reports", str(tmp_path), "--answers", str(f)]) == 3
     assert "No library page" in capsys.readouterr().err
+
+
+def test_recordings_in_folders_without_a_sources_file_are_found_via_the_catalog(tmp_path):
+    """Early discovery runs read their sources file from elsewhere: only experiment.json
+    and per-recording source.json are in the folder, as the review app expects."""
+    import sqlite3
+    from adventure_intelligence import scanned_recordings as sr
+    reports = tmp_path / "reports"
+    early, batch = reports / "discovery-001", reports / "discovery-013"
+    for folder, sha in ((early, A), (batch, B)):
+        (folder / sha / "proxies").mkdir(parents=True)
+        (folder / sha / "source.json").write_text(json.dumps(
+            {"sourceSha256": sha, "sport": "snorkeling", "durationMs": 60000, "sizeBytes": 5}))
+        (folder / "experiment.json").write_text(json.dumps({"sources": [sha]}))
+    (early / A / "proxies" / "1000-9000.mp4").write_bytes(b"x")
+    (batch / "sources.json").write_text(json.dumps(
+        [{"sourceSha256": B, "path": "/v/DJI_B.MP4", "sport": "unknown"}]))
+    (batch / "judge-sources.json").write_text(json.dumps(
+        [{"sourceSha256": B, "path": "/v/DJI_B.MP4", "sport": "ski"}]))
+    db = sqlite3.connect(tmp_path / "catalog.sqlite3")
+    db.execute("CREATE TABLE assets (sha256 TEXT, stored_path TEXT, size_bytes INTEGER, duration REAL)")
+    db.execute("INSERT INTO assets VALUES (?,?,?,?)", (A, "/v/DJI_A.MP4", 5, 60.0))
+    db.commit()
+    db.close()
+    got = sr.scanned(reports)
+    assert got[A]["file"] == "DJI_A.MP4" and got[A]["pathFrom"] == "catalog"
+    assert [(a, b) for a, b, _ in got[A]["proxies"]] == [(1000, 9000)]
+    assert got[B]["file"] == "DJI_B.MP4" and got[B]["sport"] == "ski"   # relabel wins

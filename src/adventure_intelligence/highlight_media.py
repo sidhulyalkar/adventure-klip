@@ -18,12 +18,12 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
-import sqlite3
 import shutil
 import subprocess
 
 from .discovery_experiment import cut_proxy
 from .media import require_tool
+from . import scanned_recordings
 
 EXPORT_VERSION = "klip-highlight-export-v1"
 
@@ -36,41 +36,17 @@ def _read(path: Path):
 
 
 def discovery_sources(reports: Path) -> dict[str, dict]:
-    """sha -> {path, sizeBytes, sport, proxies: [(startMs, endMs, path)]} from every
-    discovery folder (judge-sources relabels first; the first folder naming a sha wins)."""
-    out: dict[str, dict] = {}
-    for folder in sorted(Path(reports).glob("discovery-*")):
-        rows = _read(folder / "judge-sources.json") or _read(folder / "sources.json") or []
-        for row in rows:
-            sha = row["sourceSha256"]
-            source = _read(folder / sha / "source.json") or {}
-            d = out.setdefault(sha, {"path": row["path"], "sport": row.get("sport"),
-                                     "sizeBytes": source.get("sizeBytes"), "proxies": []})
-            if d["sizeBytes"] is None and source.get("sizeBytes") is not None:
-                d["sizeBytes"] = source["sizeBytes"]
-            for p in sorted((folder / sha / "proxies").glob("*.mp4")):
-                try:
-                    a, b = (int(x) for x in p.stem.split("-"))
-                except ValueError:
-                    continue
-                d["proxies"].append((a, b, p))
-    return out
+    """sha -> {path, sizeBytes, sport, proxies: [(startMs, endMs, path)]} for every recording
+    a discovery pass scanned, found the way the review app finds them (scanned_recordings:
+    experiment.json first, paths from the batch's sources files or else the catalog)."""
+    return {sha: {"path": d["path"], "sport": d["sport"], "proxies": d["proxies"],
+                  "sizeBytes": (d.get("source") or {}).get("sizeBytes")}
+            for sha, d in scanned_recordings.scanned(reports).items()}
 
 
 def catalog_sources(workspace: Path) -> dict[str, dict]:
     """sha -> {path, sizeBytes, durationMs} of each imported original (read-only)."""
-    db_path = Path(workspace) / "catalog.sqlite3"
-    if db_path.is_symlink() or not db_path.is_file():
-        return {}
-    db = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
-    try:
-        db.execute("PRAGMA query_only=ON")
-        return {sha: {"path": path, "sizeBytes": size,
-                      "durationMs": round(duration * 1000) if duration else None}
-                for sha, path, size, duration in
-                db.execute("SELECT sha256,stored_path,size_bytes,duration FROM assets")}
-    finally:
-        db.close()
+    return scanned_recordings.catalog(workspace)
 
 
 class Originals:
@@ -84,12 +60,12 @@ class Originals:
 
     def recorded(self, sha: str) -> tuple[Path, int | None]:
         d = self.discovery.get(sha)
-        if d is not None and d.get("sizeBytes") is not None:
+        if d is not None and d.get("path") and d.get("sizeBytes") is not None:
             return Path(d["path"]).expanduser(), d["sizeBytes"]
         if sha in self.catalog:          # hashed when it was imported into the catalog
             c = self.catalog[sha]
             return Path(c["path"]).expanduser(), c["sizeBytes"]
-        if d is not None:
+        if d is not None and d.get("path"):
             return Path(d["path"]).expanduser(), None
         raise ValueError("recording is in neither a discovery pass nor the catalog")
 
