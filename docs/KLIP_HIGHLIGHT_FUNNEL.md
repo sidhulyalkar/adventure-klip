@@ -132,7 +132,8 @@ verify stage first", and every review page is dark with keyboard controls
      across consecutive recordings by their file-name clocks) are linked: the page shows
      "part 2 of 3" in time order, `export --sequences` cuts each as one file (one span per
      recording, so the footage between parts is included, then joined), and
-     `showcase --sequences` shows the sequence once in place of its parts.
+     `showcase --sequences` gives a sequence one card that still plays the trimmed highlight,
+     with a "Full sequence" button for the parts together.
 3. **Export.** `export` cuts each `owner_best` and `owner_keep` moment exactly to its window
    from the original, frame-accurate (re-encoded, not stream-copied):
    * `master.mp4`: original resolution, x264 CRF 18, AAC 192k: the copy to edit from;
