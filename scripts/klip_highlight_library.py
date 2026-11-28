@@ -368,71 +368,77 @@ def _owner_rows(library: dict, args) -> list[dict]:
 
 
 def cmd_showcase(args) -> dict:
+    """One card per highlight, playing the owner's exact trim. With --sequences, a highlight
+    that is part of a linked sequence gets one card for the whole sequence: it still plays the
+    trimmed highlight, with "full sequence" to watch the parts together (the run-up, the rest
+    of the line). Only if the highlight itself was never exported does the card play the
+    sequence."""
     library = _library(args.reports)
     exports = Path(args.reports) / FOLDER / "exports"
     out = Path(args.out).expanduser() if args.out else Path(args.reports) / FOLDER / "showcase"
     titles = _titles(args.ledgers or Path(args.reports) / "owner-ledgers")
-    by_id = {m["id"]: m for m in library["moments"]}
     seqs = {s["id"]: s for s in library.get("sequences") or []} if args.sequences else {}
     taken: dict[str, int] = {}
     rows, stale, shown_seqs = [], [], set()
     for m in _owner_rows(library, args):
-        seq = m.get("sequence")
-        if seq and seq["id"] in seqs:
-            if seq["id"] in shown_seqs:
-                continue
-            record = _read(exports / f'seq-{seq["id"]}' / "export.json")
-            if record:
-                members = [by_id[i] for i in seqs[seq["id"]]["members"] if i in by_id]
-                folder = exports / f'seq-{seq["id"]}'
-                entry = {**m, "id": f'seq-{seq["id"]}', "startMs": 0,
-                         "endMs": round(record["files"]["web.mp4"].get("durationS", 0) * 1000),
-                         "what": sorted({w for x in members for w in x.get("what") or []}),
-                         "stars": max((x.get("stars") or 0) for x in members) or None,
-                         "notes": [n for x in members for n in x.get("notes") or []],
-                         "parts": len(members)}
-                shown_seqs.add(seq["id"])
-                rows.append((entry, record, folder))
-                if args.limit and len(rows) >= args.limit:
-                    break
-                continue
-        record = _read(exports / m["id"] / "export.json")
-        if not record:
+        seq = m.get("sequence") if m.get("sequence", {}).get("id") in seqs else None
+        if seq and seq["id"] in shown_seqs:
+            continue                     # the sequence already has a card
+        own = _read(exports / m["id"] / "export.json")
+        whole = _read(exports / f'seq-{seq["id"]}' / "export.json") if seq else None
+        if not own and not whole:
             stale.append(m["id"])
             continue
         sport = m.get("sport") or "unknown"
         if args.per_sport and taken.get(sport, 0) >= args.per_sport:
             continue
         taken[sport] = taken.get(sport, 0) + 1
-        rows.append((m, record, exports / m["id"]))
+        if seq:
+            shown_seqs.add(seq["id"])
+        rows.append((m, own, whole, seq))
         if args.limit and len(rows) >= args.limit:
             break
     media = out / "media"
     media.mkdir(parents=True, exist_ok=True)
     base = (args.base_url.rstrip("/") + "/") if args.base_url else "media/"
-    items = []
-    for rank, (m, record, folder) in enumerate(rows, 1):
-        for name, dest in (("web.mp4", f'{m["id"]}.mp4'), ("poster.jpg", f'{m["id"]}.jpg')):
-            target = media / dest
-            info = record["files"][name]
+
+    def copy(record: dict, folder: Path, name: str) -> None:
+        for src, dest in (("web.mp4", f"{name}.mp4"), ("poster.jpg", f"{name}.jpg")):
+            target, info = media / dest, record["files"][src]
             if not (target.is_file() and target.stat().st_size == info["bytes"]
                     and hm.file_sha256(target) == info["sha256"]):
-                shutil.copyfile(folder / name, target)
+                shutil.copyfile(folder / src, target)
+
+    items = []
+    for rank, (m, own, whole, seq) in enumerate(rows, 1):
+        seq_name = f'seq-{seq["id"]}' if seq else None
+        name = m["id"] if own else seq_name
+        record = own or whole
+        copy(record, exports / name, name)
         web = record["files"]["web.mp4"]
-        items.append({"id": m["id"], "rank": rank, **_describe(m, titles),
-                      "stars": m.get("stars"), "tier": m["tier"].removeprefix("owner_"),
-                      "durationS": round((m["endMs"] - m["startMs"]) / 1000, 1),
-                      "width": web.get("width"), "height": web.get("height"),
-                      **({"parts": m["parts"]} if m.get("parts") else {}),
-                      "video": base + f'{m["id"]}.mp4', "poster": base + f'{m["id"]}.jpg',
-                      **({"note": m["notes"][-1]} if args.include_notes and m.get("notes") else {})})
+        item = {"id": name, "rank": rank, **_describe(m, titles),
+                "stars": m.get("stars"), "tier": m["tier"].removeprefix("owner_"),
+                "durationS": round(web.get("durationS") or (m["endMs"] - m["startMs"]) / 1000, 1),
+                "width": web.get("width"), "height": web.get("height"),
+                "video": base + f"{name}.mp4", "poster": base + f"{name}.jpg",
+                **({"note": m["notes"][-1]} if args.include_notes and m.get("notes") else {})}
+        if own and whole:
+            copy(whole, exports / seq_name, seq_name)
+            item["sequence"] = {"video": base + f"{seq_name}.mp4", "parts": seq["of"],
+                                "durationS": round(whole["files"]["web.mp4"].get("durationS") or 0, 1)}
+        elif whole:
+            item["parts"] = seq["of"]
+        items.append(item)
     doc = {"version": "klip-highlight-showcase-v1", "count": len(items), "highlights": items}
     _write(out / "highlights.json", doc)
     # The local page always plays the copies next to it, wherever the site will serve them.
-    local = [{**it, "video": f'media/{it["id"]}.mp4', "poster": f'media/{it["id"]}.jpg'}
+    local = [{**it, "video": f'media/{it["id"]}.mp4', "poster": f'media/{it["id"]}.jpg',
+              **({"sequence": {**it["sequence"], "video": "media/" + it["sequence"]["video"]
+                               .rsplit("/", 1)[-1]}} if it.get("sequence") else {})}
              for it in items]
     _write(out / "index.html", showcase_page(local))
-    return {"highlights": len(items), "bySport": taken, "sequences": len(shown_seqs),
+    return {"highlights": len(items), "bySport": taken,
+            "withFullSequence": sum(1 for it in items if it.get("sequence")),
             "keptButNotExported": len(stale), "folder": str(out),
             "page": str(out / "index.html"),
             "next": "run export first for kept moments without files" if stale else None}
@@ -457,7 +463,10 @@ def showcase_page(items: list[dict]) -> str:
             f'<video muted loop playsinline preload="none" poster="{h(it["poster"])}" '
             f'src="{h(it["video"])}"></video><span class="dur">{_dur(it["durationS"])}</span></button>'
             f'<figcaption><strong>{h(it["title"])}</strong><span>{sub}</span>'
-            f'<ul class="tags">{tags}</ul></figcaption></figure>')
+            + (f'<button class="seqbtn" data-src="{h(it["sequence"]["video"])}">'
+               f'Full sequence \u00b7 {it["sequence"]["parts"]} parts \u00b7 '
+               f'{_dur(it["sequence"]["durationS"])}</button>' if it.get("sequence") else "")
+            + f'<ul class="tags">{tags}</ul></figcaption></figure>')
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
             "<title>Highlights</title><style>" + _SHOWCASE_CSS + "</style></head><body>"
@@ -483,6 +492,9 @@ h1{margin:0;font-size:28px;letter-spacing:.02em} header p{margin:4px 0 0;color:#
 .dur{position:absolute;right:8px;bottom:8px;background:#000a;padding:1px 6px;border-radius:4px;font-size:12px}
 figcaption{padding:10px 12px 12px;display:flex;flex-direction:column;gap:2px}
 figcaption span{color:#8d8d96;font-size:13px}
+.seqbtn{align-self:flex-start;margin-top:6px;font:inherit;font-size:13px;color:#e8e8e8;
+  background:#1d1d22;border:1px solid #33333a;border-radius:6px;padding:3px 10px;cursor:pointer}
+.seqbtn:hover{background:#2a2a31}
 .tags{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
 .tags li{font-size:12px;background:#1d1d22;border-radius:999px;padding:1px 8px;color:#c4c4cc}
 dialog{padding:0;border:0;background:#000;max-width:min(96vw,1600px);width:96vw}
@@ -502,6 +514,9 @@ document.querySelectorAll('.card').forEach(card => {
     dlg.showModal(); big.play().catch(() => {});
   });
 });
+document.querySelectorAll('.seqbtn').forEach(b => b.addEventListener('click', () => {
+  big.src = b.dataset.src; big.removeAttribute('poster'); dlg.showModal(); big.play().catch(() => {});
+}));
 const shut = () => { big.pause(); big.removeAttribute('src'); big.load(); dlg.close(); };
 document.getElementById('close').addEventListener('click', shut);
 dlg.addEventListener('cancel', e => { e.preventDefault(); shut(); });

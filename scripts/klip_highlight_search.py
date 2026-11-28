@@ -30,7 +30,6 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-import sqlite3
 import sys
 
 import numpy as np

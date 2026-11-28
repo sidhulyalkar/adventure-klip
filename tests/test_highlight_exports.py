@@ -222,3 +222,47 @@ def test_page_shows_sequence_parts_and_import_keeps_more_context_requests(tmp_pa
     [label] = owner_labels.load(tmp_path, "highlight")
     assert out["added"] == 1 and label["moreBefore"] is True and label["moreAfter"] is False
     assert (label["bestStartMs"], label["bestEndMs"], label["trimSides"]) == (1000, 5000, "start")
+
+
+def test_originals_use_the_catalog_path_when_a_discovery_folder_has_no_sources_file(tmp_path):
+    import sqlite3
+    reports = tmp_path / "ws" / "reports"
+    disc = reports / "discovery-002"
+    (disc / A).mkdir(parents=True)
+    (disc / "experiment.json").write_text(json.dumps({"sources": [A]}))
+    (disc / A / "source.json").write_text(json.dumps({"sizeBytes": 10, "sport": "ski"}))
+    src = tmp_path / "drive" / "DJI_2.MP4"
+    src.parent.mkdir()
+    src.write_bytes(b"x" * 10)
+    db = sqlite3.connect(tmp_path / "ws" / "catalog.sqlite3")
+    db.execute("CREATE TABLE assets (sha256, stored_path, size_bytes, duration)")
+    db.execute("INSERT INTO assets VALUES (?,?,?,?)", (A, str(src), 10, 3.0))
+    db.commit()
+    db.close()
+    assert hm.Originals(reports, tmp_path / "drive").path(A) == src
+
+
+@needs_ffmpeg
+def test_showcase_keeps_the_trimmed_highlight_and_offers_its_full_sequence(tmp_path, capsys):
+    cli = _cli()
+    original = _video(tmp_path / "drive" / "DCIM" / "DJI_20260201100000_0001_D.MP4")
+    reports = _workspace(tmp_path, original)
+    grid = {"version": "klip-owner-grid-ledger-v1", "deckSha256": "d" * 64, "index": 0,
+            "clips": [{"sourceSha256": A, "startMs": 10000, "endMs": 16000},
+                      {"sourceSha256": A, "startMs": 20000, "endMs": 24000}],
+            "keep": [0, 1], "best": 0}
+    (reports / "owner-ledgers" / "owner-pairs.jsonl").write_text(json.dumps(grid) + "\n")
+    root = str(tmp_path / "drive")
+    assert cli.main(["build", "--reports", str(reports)]) == 0
+    assert cli.main(["export", "--reports", str(reports), "--trusted-source-root", root,
+                     "--preset", "ultrafast", "--purpose", "highlight", "--sequences"]) == 0
+    capsys.readouterr()
+    out = tmp_path / "show"
+    assert cli.main(["showcase", "--reports", str(reports), "--out", str(out), "--sequences"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["highlights"] == 1 and result["withFullSequence"] == 1
+    [h] = json.loads((out / "highlights.json").read_text())["highlights"]
+    assert abs(h["durationS"] - 6.0) < 0.3                       # the highlight's own window
+    assert h["sequence"]["parts"] == 2 and abs(h["sequence"]["durationS"] - 14.0) < 0.3
+    assert (out / "media" / h["sequence"]["video"].rsplit("/", 1)[-1]).is_file()
+    assert "Full sequence" in (out / "index.html").read_text()
