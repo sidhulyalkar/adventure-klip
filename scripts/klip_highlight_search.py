@@ -30,11 +30,11 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-import sqlite3
 import sys
 
 import numpy as np
 
+from adventure_intelligence import highlight_media as hm
 from adventure_intelligence import highlight_review as review
 from adventure_intelligence import highlight_search as hs
 from adventure_intelligence import highlight_verify as hv
@@ -364,6 +364,7 @@ class Sources:
         self.reports, self.trusted = Path(reports), trusted_root
         self.rows = discovery_rows(reports)
         self.catalog = scanned_recordings.catalog(Path(reports).parent)
+        self._originals = None
 
     def covering_proxy(self, c: dict):
         d = self.rows.get(c["sourceSha256"])
@@ -375,20 +376,9 @@ class Sources:
         return None
 
     def original(self, sha: str) -> Path:
-        if self.trusted is None:
-            raise ValueError("needs --trusted-source-root (no review clip covers this window)")
-        d = self.rows.get(sha)
-        if d is not None and d.get("path"):
-            path, size = Path(d["path"]).expanduser(), d["source"]["sizeBytes"]
-        elif sha in self.catalog:     # hashed when it was imported into the catalog
-            path, size = Path(self.catalog[sha]["path"]).expanduser(), self.catalog[sha]["sizeBytes"]
-        else:
-            raise ValueError("recording is in neither a discovery pass nor the catalog")
-        if not path.resolve().is_relative_to(Path(self.trusted).expanduser().resolve()):
-            raise ValueError(f"{path.name} is not under --trusted-source-root")
-        if not path.is_file() or path.stat().st_size != size:
-            raise ValueError(f"{path.name} missing or changed since it was hashed")
-        return path
+        if self._originals is None:
+            self._originals = hm.Originals(self.reports, self.trusted)
+        return self._originals.path(sha)
 
 
 def cut_clip(sources: Sources, c: dict, dest: Path) -> None:
@@ -472,21 +462,32 @@ def cmd_review(args, log) -> dict:
     out = _home(args.reports) / "review" / deck["deck"]
     clips = _home(args.reports) / "clips"
     sources = Sources(args.reports, args.trusted_source_root)
-    missing = 0
+    missing: dict[str, str] = {}
     by_id = {c["id"]: c for c in doc["candidates"] + doc["audit"]}
     for item_id in deck["order"]:
         dest = clips / f"{item_id}.mp4"
         try:
             cut_clip(sources, by_id[item_id], dest)
         except (ValueError, OSError) as error:
-            missing += 1
+            missing[item_id] = str(error)
             log(f"{item_id}: no clip ({error})")
     _write(out / "deck.json", deck)
     page = review.page(deck, out, lambda i: clips / f"{i}.mp4" if (clips / f"{i}.mp4").is_file()
-                       else None)
+                       else None, missing)
     _write(out / "index.html", page)
-    return {"deck": deck["deck"], "counts": deck["counts"], "clipsMissing": missing,
+    return {"deck": deck["deck"], "counts": deck["counts"], "clipsMissing": len(missing),
+            "whyMissing": dict(Counter(_why(e) for e in missing.values())),
             "page": str(out / "index.html")}
+
+
+def _why(error: str) -> str:
+    """An error message without the file name, so the same cause counts once."""
+    for cause in ("not under --trusted-source-root", "not found", "changed since it was hashed",
+                  "needs --trusted-source-root", "neither a discovery pass nor the catalog",
+                  "extraction failed"):
+        if cause in error:
+            return cause
+    return error[:80]
 
 
 def _deck(reports: Path, deck_id: str | None) -> dict:

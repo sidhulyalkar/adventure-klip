@@ -24,13 +24,19 @@ The library is derived: it never rewrites a ledger and is rebuilt from them each
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta
 from hashlib import sha256
 import json
+import re
 
 VERSION = "klip-highlight-library-v1"
 TIERS = ("owner_best", "owner_keep", "owner_maybe", "to_review")
 POSITIVE = {"best": 3, "keep": 2, "maybe": 1}
 SAME_MOMENT = 0.5      # overlap, as a share of the shorter window, that makes one moment
+SEQUENCE_GAP_MS = 60_000   # kept moments closer than this in one outing play as a sequence
+HIGHLIGHT_STARS = 4        # rated this or higher (or starred best): a highlight to show
+MEMORY_STARS = 2           # kept but rated this or lower: a personal memory, not a highlight
+_DJI = re.compile(r"DJI_(\d{14})")
 
 
 def _digest(obj) -> str:
@@ -110,7 +116,8 @@ def review_evidence(labels: list[dict]) -> list[dict]:
             start, end = l["bestStartMs"], l["bestEndMs"]
         out.append(_ev(l["sourceSha256"], start, end, judgment, "review", l["item"],
                        trimmed=trimmed, what=l.get("what") or [], stars=stars,
-                       note=l.get("note") or None))
+                       note=l.get("note") or None, moreBefore=bool(l.get("moreBefore")),
+                       moreAfter=bool(l.get("moreAfter"))))
     return out
 
 
@@ -195,19 +202,85 @@ def moment(group: list[dict]) -> dict:
         tier = None                       # only soft tap preferences
     start, end, basis = _window(group)
     sha = group[0]["sourceSha256"]
+    rating = round(sum(stars) / len(stars), 2) if stars else None
     return {
         "id": sha256(f"{VERSION}|{sha}|{start}|{end}".encode()).hexdigest()[:16],
         "sourceSha256": sha, "startMs": start, "endMs": end, "windowBasis": basis,
         "tier": tier,
         "conflict": bool((counts["best"] or counts["keep"]) and counts["skip"]),
         "judgments": dict(counts),
-        "stars": round(sum(stars) / len(stars), 2) if stars else None,
+        "stars": rating,
+        "purpose": purpose(tier, rating),
+        "wantMore": {"before": any(e.get("moreBefore") for e in group),
+                     "after": any(e.get("moreAfter") for e in group)},
         "what": sorted({w for e in group for w in e.get("what") or []}),
         "notes": [e["note"] for e in group if e.get("note")],
         "preferredOver": counts["preferred"], "lostTo": counts["not_preferred"],
         "evidence": [{k: e[k] for k in ("source", "ref", "judgment", "startMs", "endMs")}
                      for e in group],
     }
+
+
+def purpose(tier: str | None, stars: float | None) -> str | None:
+    """What a kept moment is for, from the owner's rating: a highlight to show (starred best
+    or 4-5), a personal memory (kept but rated 1-2), or kept without saying (unrated or 3)."""
+    if tier not in ("owner_best", "owner_keep", "owner_maybe"):
+        return None
+    if tier == "owner_best" or (stars is not None and stars >= HIGHLIGHT_STARS):
+        return "highlight"
+    if tier == "owner_maybe":
+        return "maybe"
+    if stars is not None and stars <= MEMORY_STARS:
+        return "memory"
+    return "keep"
+
+
+def clock_ms(file: str | None) -> int | None:
+    """Milliseconds since 2000 at the start of a DJI recording, from its file name."""
+    m = _DJI.search(file or "")
+    if not m:
+        return None
+    try:
+        t = datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    return (t - datetime(2000, 1, 1)) // timedelta(milliseconds=1)
+
+
+def link_sequences(moments: list[dict], gap_ms: int = SEQUENCE_GAP_MS) -> list[dict]:
+    """Owner-kept moments of one outing that follow each other within gap_ms (on one
+    recording, or across consecutive recordings by their file-name clocks) form a sequence:
+    a line through a park, the run before a crash. Sets moment["sequence"] = {id, index,
+    of} on members of sequences of two or more and returns the sequences."""
+    rows = []
+    for m in moments:
+        if m["tier"] in ("owner_best", "owner_keep", "owner_maybe"):
+            base = clock_ms(m.get("file"))
+            key = m.get("outing") or m.get("day") or m["sourceSha256"]
+            if base is None:          # without a clock, only one recording can be ordered
+                key, base = f'{key}|{m["sourceSha256"]}', 0
+            rows.append((key, base + m["startMs"], base + m["endMs"], m))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    chains, last = [], None
+    for key, a, b, m in rows:
+        if last and last[0] == key and a - last[2] <= gap_ms:
+            chains[-1].append(m)
+            last = (key, last[1], max(last[2], b))
+        else:
+            chains.append([m])
+            last = (key, a, b)
+    out = []
+    for chain in chains:
+        if len(chain) < 2:
+            continue
+        sid = sha256("|".join(m["id"] for m in chain).encode()).hexdigest()[:12]
+        for i, m in enumerate(chain, 1):
+            m["sequence"] = {"id": sid, "index": i, "of": len(chain)}
+        out.append({"id": sid, "outing": chain[0].get("outing"), "sport": chain[0].get("sport"),
+                    "members": [m["id"] for m in chain],
+                    "purpose": "highlight" if any(m["purpose"] == "highlight" for m in chain)
+                    else "keep"})
+    return out
 
 
 def score(m: dict) -> float:
@@ -225,6 +298,7 @@ def build(evidence: list[dict], context: dict[str, dict]) -> dict:
         m.update({k: (context.get(m["sourceSha256"]) or {}).get(k)
                   for k in ("sport", "outing", "day", "file", "heldOut", "tags")})
         (moments if m["tier"] else excluded).append(m)
+    sequences = link_sequences(moments)
     rank = {t: i for i, t in enumerate(TIERS)}
     moments.sort(key=lambda m: (rank[m["tier"]], -score(m), m["sourceSha256"], m["startMs"]))
     by = lambda key: dict(Counter(f'{m["tier"]}' if key == "tier" else m.get(key) or "unknown"
@@ -239,8 +313,10 @@ def build(evidence: list[dict], context: dict[str, dict]) -> dict:
                 m.get("sport") or "unknown" for m in owner)),
                        "ownerMoments": len(owner), "conflicts": sum(m["conflict"] for m in moments),
                        "excludedSkipped": len(excluded), "outingsWithOwnerHighlights": len(per_outing),
+                       "byPurpose": dict(Counter(m["purpose"] for m in owner)),
                        "evidenceBySource": dict(Counter(e["source"] for e in evidence))},
             "perOuting": dict(per_outing.most_common()),
+            "sequences": sequences,
             "isDerivedFromOwnerLedgers": True}
 
 
@@ -270,12 +346,14 @@ def deck(library: dict, media_of, *, tiers=("owner_best", "owner_keep", "owner_m
             "mediaStartMs": found[1] if found else m["startMs"],
             "mediaEndMs": found[2] if found else m["endMs"],
             "searchTop": None, "searchScore": None, "verdict": None, "verifierAnimal": None,
-            "verifierModel": None}
+            "verifierModel": None, "sequence": m.get("sequence"),
+            "clockMs": (clock_ms(m.get("file")) or 0) + m["startMs"]}
         if found:
             media[m["id"]] = str(found[0])
     deck_id = sha256(json.dumps(sorted(items), sort_keys=True).encode()).hexdigest()[:12]
+    # In time order within an outing, so the parts of a sequence sit one after another.
     order = sorted(items, key=lambda k: (items[k]["sport"], items[k]["outing"] or "",
-                                         items[k]["sourceSha256"], items[k]["startMs"]))
+                                         items[k]["clockMs"], items[k]["sourceSha256"]))
     return {"version": review.VERSION, "deck": deck_id, "order": order, "items": items,
             "media": media, "counts": dict(Counter(v["kind"] for v in items.values())),
             "library": library["evidenceSha256"][:12]}

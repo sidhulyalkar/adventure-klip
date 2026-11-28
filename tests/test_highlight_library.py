@@ -88,7 +88,7 @@ def test_library_deck_groups_by_outing_and_plays_the_window_inside_a_longer_clip
     assert [deck["items"][i]["outing"] for i in deck["order"]] == ["o1", "o2"]
     page = review.page(deck, tmp_path, lambda i: Path(deck["media"][i]) if i in deck["media"] else None)
     assert 'src="p.mp4#t=2.00,8.00"' in page and 'data-start="10000"' in page
-    assert "How good, 1 to 5" in page and "Clip not cut yet" in page
+    assert "How good, 1 to 5" in page and "No clip yet" in page
 
 
 def _cli():
@@ -142,7 +142,7 @@ def test_cli_build_page_rate_and_rebuild(tmp_path, capsys):
     assert (m["startMs"], m["endMs"], m["windowBasis"]) == (5000, 14000, "owner_trim")
     assert m["tier"] == "owner_best" and m["stars"] == 3.0 and m["what"] == ["speed"]
     assert cli.main(["top", "--reports", str(reports)]) == 0
-    assert "owner_best ★3.0 ski" in capsys.readouterr().out
+    assert "owner_best/highlight ★3.0 ski" in capsys.readouterr().out
 
 
 def test_cli_import_refuses_answers_from_another_page(tmp_path, capsys):
